@@ -42,6 +42,7 @@ type Result struct {
 	Transport ldaptransport.Transport
 	Endpoint  string
 	Insecure  bool
+	Identity  ldaptransport.Identity
 }
 
 func BindIdentity(username, domain string) string {
@@ -65,7 +66,7 @@ func Run(ctx context.Context, cfg config.Config) (Result, error) {
 	if err != nil {
 		return Result{}, classifyBindFailure(err, cfg.InsecureSkipVerify)
 	}
-	return Result{Transport: session.Transport, Endpoint: session.Endpoint, Insecure: session.Insecure}, nil
+	return Result{Transport: session.Transport, Endpoint: session.Endpoint, Insecure: session.Insecure, Identity: session.Identity}, nil
 }
 
 // classifyBindFailure keeps the transport failure kinds distinct so a signing

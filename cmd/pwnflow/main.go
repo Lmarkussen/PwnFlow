@@ -86,12 +86,16 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if connection.Transport != ldaptransport.LDAP || connection.Insecure {
+	identityNote := ""
+	if name := connection.Identity.ServerName; name != "" && name != cfg.Target {
+		identityNote = fmt.Sprintf(", certificate verified as %s", name)
+	}
+	if connection.Transport != ldaptransport.LDAP || connection.Insecure || identityNote != "" {
 		note := ""
 		if connection.Insecure {
 			note = "; certificate verification skipped"
 		}
-		fmt.Fprintf(os.Stderr, "[i] LDAP bind over %s (%s)%s\n", connection.Transport, connection.Endpoint, note)
+		fmt.Fprintf(os.Stderr, "[i] LDAP bind over %s (%s)%s%s\n", connection.Transport, connection.Endpoint, identityNote, note)
 	}
 	db, err := storage.Open(filepath.Join(cfg.ResultsRoot(), "enumeration.db"))
 	if err != nil {

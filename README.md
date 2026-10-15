@@ -73,6 +73,34 @@ if the target's certificate cannot be validated, the opt-in
 rather than being applied silently. Simple-bind identities are normalized to the
 UPN form `username@domain` when that mechanism is used.
 
+### TLS identity for IP targets
+
+Domain controller certificates normally carry the controller's DNS name, not an
+IP SAN, so verifying a connection made to an address fails with "cannot validate
+certificate for <ip> because it doesn't contain any IP SANs". PwnFlow separates the
+two concerns: it always connects to the target you supplied, and it verifies the
+certificate against a name it can justify for that address.
+
+- A host name target is verified as given, with no lookups at all.
+- An address target is resolved to its reverse DNS name. A candidate is only used
+  when it is a valid host name, sits inside the AD domain you supplied, and
+  resolves forward back to that same address. Candidates are normalized and
+  ordered, so the choice does not depend on resolver order.
+- Nothing else is consulted: no SRV records, no sibling controller, no
+  certificate-advertised name. A reverse record on its own is never treated as
+  proof of identity, and no name is ever invented.
+- If no name can be confirmed, the connection address is verified instead and the
+  failure says so, naming the address and what discovery found.
+
+The connection destination never changes because of discovery, and verification
+is never disabled to make a mismatch go away. Trust is a separate problem: if the
+DC certificate is issued by an internal CA that Kali does not trust, discovering
+the host name does not fix the chain, and the diagnostic says which of the
+following applies — missing IP SAN, certificate not valid for a name, unknown
+issuing authority, expired certificate, failed TLS handshake, or a refused bind.
+`--insecure-skip-verify` remains the explicit, operator-approved escape hatch for
+lab testing and is reported whenever it is in effect.
+
 ### BloodHound CE and RustHound-CE
 
 PwnFlow registers NetExec BloodHound capability metadata separately from the

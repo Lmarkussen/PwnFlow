@@ -69,6 +69,7 @@ type Session struct {
 	Transport Transport
 	Endpoint  string
 	Insecure  bool
+	Identity  Identity
 }
 
 // Error aggregates every attempt that was made, so a failure explains each
@@ -76,6 +77,7 @@ type Session struct {
 type Error struct {
 	Attempts []Attempt
 	Kind     Kind
+	Identity Identity
 }
 
 func (e *Error) Error() string {
@@ -83,7 +85,11 @@ func (e *Error) Error() string {
 	for _, attempt := range e.Attempts {
 		parts = append(parts, fmt.Sprintf("%s %s: %v", attempt.Transport, attempt.Endpoint, attempt.Err))
 	}
-	return fmt.Sprintf("no LDAP transport succeeded (%s)", strings.Join(parts, "; "))
+	message := fmt.Sprintf("no LDAP transport succeeded (%s)", strings.Join(parts, "; "))
+	if e.Identity.ServerName != "" {
+		return fmt.Sprintf("%s; TLS identity %q (%s)", message, e.Identity.ServerName, e.Identity.Source)
+	}
+	return fmt.Sprintf("%s; no TLS identity was confirmed for the connection address (%s)", message, e.Identity.Detail)
 }
 
 // Unwrap exposes the last attempt's error for errors.As/Is callers.
@@ -98,6 +104,13 @@ func (e *Error) Unwrap() error {
 // operator asked for it to be skipped; nothing here disables it silently.
 type Options struct {
 	InsecureSkipVerify bool
+	// TLSServerName is the name the certificate must be valid for. When it is
+	// empty the connection address is verified instead, which is only correct for
+	// certificates that carry a matching IP SAN.
+	TLSServerName string
+	// RootCAs overrides the trust store used for verification; nil means the
+	// system trust store.
+	RootCAs *x509.CertPool
 }
 
 // Binder performs one NTLM bind over one transport. It is an interface so the
@@ -108,8 +121,9 @@ type Binder interface {
 
 // Connector applies the transport policy.
 type Connector struct {
-	Binder  Binder
-	Options Options
+	Binder   Binder
+	Options  Options
+	Resolver Resolver
 }
 
 // Connect binds with the configured credentials, following the fallback policy.
@@ -120,10 +134,16 @@ func (c Connector) Connect(ctx context.Context, cfg config.Config) (Session, err
 	if binder == nil {
 		binder = SystemBinder{}
 	}
+	identity := Identity{ServerName: c.Options.TLSServerName, Source: SourceTarget, Detail: "supplied by the caller"}
+	if identity.ServerName == "" {
+		identity = ResolveIdentity(ctx, cfg.Target, cfg.Domain, c.Resolver)
+	}
+	options := c.Options
+	options.TLSServerName = identity.ServerName
 	attempts := make([]Attempt, 0, 3)
 	attempt := func(transport Transport) bool {
 		endpoint := net.JoinHostPort(cfg.Target, transport.Port())
-		err := binder.Bind(ctx, cfg, transport, c.Options)
+		err := binder.Bind(ctx, cfg, transport, options)
 		if err == nil {
 			attempts = append(attempts, Attempt{Transport: transport, Endpoint: endpoint})
 			return true
@@ -136,36 +156,36 @@ func (c Connector) Connect(ctx context.Context, cfg config.Config) (Session, err
 	// 1. Plain LDAP, exactly as before: it is still the cheapest path and it is
 	// what a domain without a signing requirement answers to.
 	if attempt(LDAP) {
-		return sessionFor(attempts, c.Options), nil
+		return sessionFor(attempts, identity, options), nil
 	}
 	switch last().Kind {
 	case KindAuthentication, KindTLS, KindProtocol:
 		// Wrong credentials; a trust problem another transport would hit too; or a
 		// server that refuses the bind mechanism entirely. Retrying would either
 		// repeat invalid credentials or change nothing.
-		return Session{}, &Error{Attempts: attempts, Kind: last().Kind}
+		return Session{}, &Error{Attempts: attempts, Kind: last().Kind, Identity: identity}
 	}
 
 	// 2. LDAPS: a TLS channel satisfies integrity checking, so the same
 	// credentials bind where the plain connection was refused.
 	if attempt(LDAPS) {
-		return sessionFor(attempts, c.Options), nil
+		return sessionFor(attempts, identity, options), nil
 	}
 	switch last().Kind {
 	case KindAuthentication, KindTLS, KindProtocol, KindSigning:
-		return Session{}, &Error{Attempts: attempts, Kind: last().Kind}
+		return Session{}, &Error{Attempts: attempts, Kind: last().Kind, Identity: identity}
 	}
 
 	// 3. StartTLS on 389, only because LDAPS could not be reached at all.
 	if attempt(StartTLS) {
-		return sessionFor(attempts, c.Options), nil
+		return sessionFor(attempts, identity, options), nil
 	}
-	return Session{}, &Error{Attempts: attempts, Kind: last().Kind}
+	return Session{}, &Error{Attempts: attempts, Kind: last().Kind, Identity: identity}
 }
 
-func sessionFor(attempts []Attempt, options Options) Session {
+func sessionFor(attempts []Attempt, identity Identity, options Options) Session {
 	successful := attempts[len(attempts)-1]
-	return Session{Transport: successful.Transport, Endpoint: successful.Endpoint, Insecure: options.InsecureSkipVerify}
+	return Session{Transport: successful.Transport, Endpoint: successful.Endpoint, Insecure: options.InsecureSkipVerify, Identity: identity}
 }
 
 // Classify maps a bind error onto the failure kind that describes it.
@@ -245,7 +265,7 @@ func (b SystemBinder) Bind(ctx context.Context, cfg config.Config, transport Tra
 	}
 	timeout := b.timeout()
 	dialer := &net.Dialer{Timeout: timeout}
-	tlsConfig := &tls.Config{ServerName: cfg.Target, InsecureSkipVerify: options.InsecureSkipVerify} // #nosec G402 -- explicit operator opt-in, off by default
+	verification := newTLSVerification(cfg, options)
 	address := net.JoinHostPort(cfg.Target, transport.Port())
 
 	var (
@@ -254,19 +274,82 @@ func (b SystemBinder) Bind(ctx context.Context, cfg config.Config, transport Tra
 	)
 	switch transport {
 	case LDAPS:
-		client, err = ldap.DialURL("ldaps://"+address, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
+		client, err = ldap.DialURL("ldaps://"+address, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(verification.config))
 	default:
 		client, err = ldap.DialURL("ldap://"+address, ldap.DialWithDialer(dialer))
 	}
 	if err != nil {
-		return err
+		return wrapTLSFailure(err, verification.serverName, cfg.Target)
 	}
 	defer client.Close()
 	client.SetTimeout(timeout)
 	if transport == StartTLS {
-		if err := client.StartTLS(tlsConfig); err != nil {
-			return err
+		if err := client.StartTLS(verification.config); err != nil {
+			return wrapTLSFailure(err, verification.serverName, cfg.Target)
 		}
 	}
 	return client.NTLMBind(cfg.Domain, cfg.Username, cfg.Password)
+}
+
+// tlsVerification is the certificate check applied to a TLS-protected LDAP
+// connection: the name the certificate must be valid for, and the configuration
+// that performs chain, host name, expiry, and server-auth usage checks.
+type tlsVerification struct {
+	serverName string
+	config     *tls.Config
+}
+
+// newTLSVerification resolves the identity under verification and the
+// configuration that enforces it. When no DNS name was confirmed the connection
+// address is verified instead, which only succeeds for a certificate carrying a
+// matching IP SAN.
+func newTLSVerification(cfg config.Config, options Options) tlsVerification {
+	serverName := options.TLSServerName
+	if serverName == "" {
+		serverName = cfg.Target
+	}
+	return tlsVerification{
+		serverName: serverName,
+		config: &tls.Config{ // #nosec G402 -- InsecureSkipVerify is an explicit operator opt-in, off by default
+			ServerName:         serverName,
+			InsecureSkipVerify: options.InsecureSkipVerify,
+			RootCAs:            options.RootCAs,
+		},
+	}
+}
+
+// wrapTLSFailure adds an operator-facing explanation to a TLS failure while
+// preserving the original error, so classification and errors.As keep working.
+// Credentials never appear here: only the address and the name under verification.
+func wrapTLSFailure(err error, serverName, target string) error {
+	if err == nil || Classify(err) != KindTLS {
+		return err
+	}
+	return fmt.Errorf("%s: %w", ExplainTLSFailure(err, serverName, target), err)
+}
+
+// ExplainTLSFailure names the certificate problem in operator terms.
+func ExplainTLSFailure(err error, serverName, target string) string {
+	var hostnameError x509.HostnameError
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalidCertificate x509.CertificateInvalidError
+	var recordHeader tls.RecordHeaderError
+	message := strings.ToLower(err.Error())
+
+	switch {
+	case strings.Contains(message, "doesn't contain any ip sans") || strings.Contains(message, "does not contain any ip sans"):
+		return fmt.Sprintf("the certificate has no IP SAN for %s, and no DNS name for that address could be confirmed", target)
+	case errors.As(err, &hostnameError):
+		return fmt.Sprintf("the certificate is not valid for %q, the name under verification", serverName)
+	case errors.As(err, &invalidCertificate):
+		if invalidCertificate.Reason == x509.Expired {
+			return fmt.Sprintf("the certificate is expired or not yet valid (checked against %q)", serverName)
+		}
+		return fmt.Sprintf("the certificate is invalid for %q: %v", serverName, invalidCertificate.Reason)
+	case errors.As(err, &unknownAuthority):
+		return "the certificate is issued by an authority that is not in the trust store"
+	case errors.As(err, &recordHeader), strings.Contains(message, "tls handshake failed"):
+		return fmt.Sprintf("the TLS handshake with %s failed", target)
+	}
+	return fmt.Sprintf("TLS verification failed for %q", serverName)
 }

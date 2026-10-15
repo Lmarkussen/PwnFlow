@@ -22,11 +22,13 @@ type fakeBinder struct {
 	results map[Transport]error
 	calls   []Transport
 	options []Options
+	targets []string
 }
 
-func (f *fakeBinder) Bind(_ context.Context, _ config.Config, transport Transport, options Options) error {
+func (f *fakeBinder) Bind(_ context.Context, cfg config.Config, transport Transport, options Options) error {
 	f.calls = append(f.calls, transport)
 	f.options = append(f.options, options)
+	f.targets = append(f.targets, cfg.Target)
 	return f.results[transport]
 }
 
@@ -54,7 +56,7 @@ func testConfig() config.Config {
 
 func TestConnectSucceedsOverPlainLDAP(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{}}
-	session, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	session, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err != nil {
 		t.Fatalf("plain LDAP bind failed: %v", err)
 	}
@@ -70,7 +72,7 @@ func TestConnectSucceedsOverPlainLDAP(t *testing.T) {
 // bind is refused and the same credentials are retried over LDAPS.
 func TestConnectFallsBackToLDAPSWhenSigningIsRequired(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired()}}
-	session, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	session, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err != nil {
 		t.Fatalf("LDAPS fallback failed: %v", err)
 	}
@@ -85,7 +87,7 @@ func TestConnectFallsBackToLDAPSWhenSigningIsRequired(t *testing.T) {
 // An unreachable plain endpoint is also worth retrying over TLS, but only once.
 func TestConnectFallsBackToLDAPSWhenLDAPIsUnreachable(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: connectivity()}}
-	session, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	session, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err != nil {
 		t.Fatalf("LDAPS fallback failed: %v", err)
 	}
@@ -99,7 +101,7 @@ func TestConnectFallsBackToLDAPSWhenLDAPIsUnreachable(t *testing.T) {
 
 func TestConnectFallsBackToStartTLSWhenLDAPSIsUnreachable(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired(), LDAPS: connectivity()}}
-	session, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	session, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err != nil {
 		t.Fatalf("StartTLS fallback failed: %v", err)
 	}
@@ -115,7 +117,7 @@ func TestConnectFallsBackToStartTLSWhenLDAPSIsUnreachable(t *testing.T) {
 // kind stays "authentication" so it is never mistaken for a signing problem.
 func TestConnectDoesNotRetryInvalidCredentials(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: invalidCredentials()}}
-	_, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	_, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err == nil {
 		t.Fatal("invalid credentials were accepted")
 	}
@@ -132,7 +134,7 @@ func TestConnectDoesNotRetryInvalidCredentials(t *testing.T) {
 // transport problem: no other transport, and no silent skip.
 func TestConnectReportsCertificateFailureWithoutRetrying(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired(), LDAPS: certUntrusted()}}
-	_, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	_, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err == nil {
 		t.Fatal("untrusted certificate was accepted")
 	}
@@ -151,7 +153,7 @@ func TestConnectReportsCertificateFailureWithoutRetrying(t *testing.T) {
 // When both transports fail, the diagnostic explains each attempt.
 func TestConnectExplainsEveryAttemptWhenAllFail(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired(), LDAPS: certUntrusted()}}
-	_, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig())
+	_, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err == nil {
 		t.Fatal("expected failure")
 	}
@@ -165,7 +167,7 @@ func TestConnectExplainsEveryAttemptWhenAllFail(t *testing.T) {
 
 func TestConnectNeverRepeatsATransport(t *testing.T) {
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired(), LDAPS: connectivity(), StartTLS: connectivity()}}
-	if _, err := (Connector{Binder: binder}).Connect(context.Background(), testConfig()); err == nil {
+	if _, err := (Connector{Binder: binder, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig()); err == nil {
 		t.Fatal("expected failure")
 	}
 	seen := map[Transport]int{}
@@ -187,7 +189,7 @@ func TestConnectNeverRepeatsATransport(t *testing.T) {
 func TestConnectCarriesExplicitInsecureOptIn(t *testing.T) {
 	options := Options{InsecureSkipVerify: true}
 	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired()}}
-	session, err := (Connector{Binder: binder, Options: options}).Connect(context.Background(), testConfig())
+	session, err := (Connector{Binder: binder, Options: options, Resolver: &fakeResolver{}}).Connect(context.Background(), testConfig())
 	if err != nil {
 		t.Fatalf("expected success with the opt-in: %v", err)
 	}
@@ -253,7 +255,7 @@ func TestClassifyRealClientLoopbackFailures(t *testing.T) {
 // all of them, which is what an operator sees on an unreachable host.
 func TestConnectAgainstUnreachableHostExplainsEveryTransport(t *testing.T) {
 	cfg := config.Config{Target: "127.0.0.1", Domain: "corp.example", Username: "audituser", Password: "Sup3rSecret"}
-	connector := Connector{Binder: SystemBinder{Timeout: 300 * time.Millisecond}}
+	connector := Connector{Binder: SystemBinder{Timeout: 300 * time.Millisecond}, Resolver: &fakeResolver{}}
 	_, err := connector.Connect(context.Background(), cfg)
 	if err == nil {
 		t.Fatal("expected failure against loopback with nothing listening")
@@ -269,5 +271,75 @@ func TestConnectAgainstUnreachableHostExplainsEveryTransport(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("diagnostic missing %q: %s", want, err)
 		}
+	}
+}
+
+// The operator's address stays the network destination while the certificate is
+// verified against the DC name discovered for it.
+func TestConnectPinsDestinationAndVerifiesDiscoveredName(t *testing.T) {
+	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired()}}
+	resolver := &fakeResolver{
+		reverse: map[string][]string{"127.0.0.1": {"dc01.corp.example."}},
+		forward: map[string][]string{"dc01.corp.example": {"127.0.0.1"}},
+	}
+	cfg := config.Config{Target: "127.0.0.1", Domain: "corp.example", Username: "audituser", Password: "Sup3rSecret"}
+	session, err := (Connector{Binder: binder, Resolver: resolver}).Connect(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	if session.Identity.ServerName != "dc01.corp.example" || session.Identity.Source != SourceReverseDNS {
+		t.Fatalf("unexpected identity: %#v", session.Identity)
+	}
+	if session.Endpoint != "127.0.0.1:636" || session.Transport != LDAPS {
+		t.Fatalf("unexpected session: %#v", session)
+	}
+	for index, options := range binder.options {
+		if options.TLSServerName != "dc01.corp.example" {
+			t.Fatalf("attempt %d did not verify the discovered name: %#v", index, options)
+		}
+		if options.InsecureSkipVerify {
+			t.Fatalf("attempt %d disabled verification without an opt-in", index)
+		}
+		if binder.targets[index] != "127.0.0.1" {
+			t.Fatalf("attempt %d dialled %q instead of the operator's address", index, binder.targets[index])
+		}
+	}
+	if len(resolver.queries) != 2 {
+		t.Fatalf("discovery was not minimal: %v", resolver.queries)
+	}
+}
+
+// When no name can be confirmed, the failure says so instead of inventing one,
+// and credentials never appear in the diagnostic.
+func TestFailureReportsUnconfirmedIdentityWithoutSecrets(t *testing.T) {
+	binder := &fakeBinder{results: map[Transport]error{LDAP: signingRequired(), LDAPS: certUntrusted()}}
+	cfg := config.Config{Target: "198.51.100.10", Domain: "corp.example", Username: "audituser", Password: "Sup3rSecret"}
+	_, err := (Connector{Binder: binder, Resolver: &fakeResolver{reverse: map[string][]string{"198.51.100.10": {"dc01.other.example"}}}}).Connect(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "no TLS identity was confirmed") || !strings.Contains(message, "outside corp.example") {
+		t.Fatalf("unconfirmed identity is not explained: %s", message)
+	}
+	if strings.Contains(message, cfg.Password) {
+		t.Fatalf("diagnostic leaked the password: %s", message)
+	}
+}
+
+// A host name target is verified as given, with no discovery traffic at all.
+func TestConnectVerifiesHostNameTargetWithoutDiscovery(t *testing.T) {
+	binder := &fakeBinder{results: map[Transport]error{}}
+	resolver := &fakeResolver{}
+	cfg := config.Config{Target: "dc01.corp.example", Domain: "corp.example", Username: "audituser", Password: "Sup3rSecret"}
+	session, err := (Connector{Binder: binder, Resolver: resolver}).Connect(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	if session.Identity.ServerName != "dc01.corp.example" || session.Identity.Source != SourceTarget {
+		t.Fatalf("unexpected identity: %#v", session.Identity)
+	}
+	if len(resolver.queries) != 0 {
+		t.Fatalf("discovery ran for a host name target: %v", resolver.queries)
 	}
 }
