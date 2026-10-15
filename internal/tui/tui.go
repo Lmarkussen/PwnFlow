@@ -11,6 +11,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
+	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -39,6 +40,12 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	// endpoint store holds when it runs.
 	registry.Register(sccm.SCCMHunter{Resolver: sccm.SystemResolver{}})
 	registry.Register(sccm.PXEThief{})
+	// The network assessment tools sit under Network → Enumeration. NetworkHound's
+	// directory collection is registered before its scoped validation, because the
+	// collection is what an assessment starts with.
+	for _, module := range networkhound.EnumerationModules() {
+		registry.Register(module)
+	}
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
 		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)

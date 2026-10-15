@@ -42,6 +42,8 @@ const (
 	Certipy      ID = "certipy"
 	SCCMHunter   ID = "sccmhunter"
 	PXEThief     ID = "pxethief"
+	NetworkHound ID = "networkhound"
+	RelayKing    ID = "relayking"
 )
 
 // Layout locates a tool that is a source checkout with its own interpreter.
@@ -111,6 +113,12 @@ func DefaultRegistry() Registry {
 		// also accepts an existing console script, such as a pipx installation.
 		{ID: SCCMHunter, DisplayName: "SCCMhunter", Executable: "sccmhunter", Install: "install.sh --with-sccmhunter", InstallHint: "./install.sh --with-sccmhunter", InstallMethod: InstallVenv, Package: "sccmhunter", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("sccmhunter"), Script: "sccmhunter.py", Interpreters: []string{".venv/bin/python3"}}},
 		{ID: PXEThief, DisplayName: "PXEThief", Install: "install.sh --with-pxethief", InstallHint: "./install.sh --with-pxethief", InstallMethod: InstallVenv, Package: "PXEThief", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, Layout: &Layout{Roots: ToolRoots("PXEThief"), Script: "pxethief.py", Interpreters: []string{".venv/bin/python3"}}},
+		// NetworkHound and RelayKing are upstream checkouts with their own virtual
+		// environments, exactly like the SCCM tooling. They are not pinned to a
+		// revision: the installer and the runtime check that the installed checkout
+		// documents the options the registrations use.
+		{ID: NetworkHound, DisplayName: "NetworkHound", Install: "install.sh --with-networkhound", InstallHint: "./install.sh --with-networkhound", InstallMethod: InstallVenv, Package: "NetworkHound", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("NetworkHound"), Script: "NetworkHound.py", Interpreters: []string{".venv/bin/python3"}}},
+		{ID: RelayKing, DisplayName: "RelayKing", Install: "install.sh --with-relayking", InstallHint: "./install.sh --with-relayking", InstallMethod: InstallVenv, Package: "RelayKing", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, Layout: &Layout{Roots: ToolRoots("RelayKing"), Script: "relayking.py", Interpreters: []string{".venv/bin/python3"}}},
 	}}
 }
 

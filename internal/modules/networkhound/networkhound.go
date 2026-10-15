@@ -1,0 +1,496 @@
+// Package networkhound integrates NetworkHound, the AD network topology
+// collector.
+//
+// Upstream: https://github.com/MorDavid/NetworkHound (Mor David). NetworkHound is
+// distributed under a non-commercial license, so PwnFlow does not vendor or
+// redistribute it: install.sh fetches the upstream checkout into the managed tools
+// root, and this package drives the installed copy.
+//
+// Two capabilities are registered, and the difference between them is the whole
+// point of the integration:
+//
+//   - AD Network Topology reads the directory through the configured domain
+//     controller - computer objects, then DNS resolution through the same server -
+//     and writes BloodHound-compatible OpenGraph JSON. It never connects to a
+//     discovered computer.
+//   - Scoped Network & Service Validation runs the port and service validation
+//     NetworkHound normally applies to every discovered computer, but only against
+//     a network scope the operator types for that run. Nothing is derived from
+//     Active Directory, and no credential is passed: NetworkHound's manual mode
+//     ignores the LDAP options entirely.
+//
+// The upstream features that sweep without an operator-supplied scope - the
+// shadow-IT subnet sweep, automatic port scanning of AD-discovered hosts, and
+// validation against every resolved address - are deliberately not registered.
+package networkhound
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pwnflow/pwnflow/internal/dependencies"
+	"github.com/pwnflow/pwnflow/internal/modules"
+)
+
+const (
+	// toolFolder is the checkout directory install.sh creates under the managed
+	// tools root, and script is the upstream entry point inside it.
+	toolFolder = "NetworkHound"
+	script     = "NetworkHound.py"
+
+	outputFolder  = "Enumeration/NetworkHound"
+	artifactRel   = "Enumeration/NetworkHound/artifacts"
+	runTimeLayout = "20060102-150405"
+
+	// redactedValue replaces the credential in anything PwnFlow displays.
+	redactedValue = "[REDACTED]"
+
+	// topologyOutput and scopeOutput are the OpenGraph JSON file names inside one
+	// run directory.
+	topologyOutput = "network_opengraph.json"
+	scopeOutput    = "network_scope.json"
+
+	// defaultPorts is NetworkHound's own default set of common ports; naming it
+	// keeps the scan bounded to what the module documents.
+	defaultPorts = "21,22,23,25,53,80,110,135,139,143,443,445,993,995,1433,1521,3306,3389,5432,5900,5985,8080,8443"
+)
+
+// options are the upstream options this package relies on. They are matched
+// against the installed checkout's own help output, so a revision that renames or
+// drops one is reported as unsupported instead of producing a different command
+// than the module advertises.
+var (
+	topologyOptions = []string{"--dc", "--domain", "--user", "--password", "--output"}
+	scopeOptions    = []string{"--networks", "-Pn", "--port-scan", "--ports", "--scan-timeout", "--scan-threads", "--output"}
+)
+
+// scopePattern accepts a comma-separated list of CIDR blocks, address ranges and
+// single addresses - the three forms NetworkHound documents. A host name is
+// refused, because a name would resolve to addresses the operator has not named.
+var scopePattern = regexp.MustCompile(`^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(/\d{1,2}|-\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?)(,\s*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(/\d{1,2}|-\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})?)*$`)
+
+// Definition describes one registration.
+type Definition struct {
+	IDValue          string
+	NameValue        string
+	DescriptionValue string
+	SlugValue        string
+}
+
+type Module struct{ definition Definition }
+
+// EnumerationModules returns the NetworkHound registrations under
+// Network → Enumeration.
+func EnumerationModules() []Module {
+	return []Module{
+		{definition: Definition{
+			IDValue:   "networkhound-topology",
+			NameValue: "AD Network Topology",
+			SlugValue: "topology",
+			DescriptionValue: "Collects the Active Directory network topology with NetworkHound and writes BloodHound-compatible " +
+				"OpenGraph JSON: computer objects, their operating systems, and the addresses they resolve to. The collection is " +
+				"LDAP against the configured domain controller plus DNS resolution through the same server; NetworkHound's port scan, " +
+				"service validation and shadow-IT sweep are not requested, so no discovered computer is contacted.",
+		}},
+		{definition: Definition{
+			IDValue:   "networkhound-scope-validation",
+			NameValue: "Scoped Network & Service Validation",
+			SlugValue: "scope-validation",
+			DescriptionValue: "Runs NetworkHound's port and service validation against a network scope the operator supplies for this " +
+				"run: CIDR blocks, address ranges and single addresses. Nothing is derived from Active Directory and no credential is " +
+				"passed - NetworkHound's manual mode ignores the LDAP options - so the scan reaches exactly the addresses the operator " +
+				"names, and PwnFlow asks for approval before it starts.",
+		}},
+	}
+}
+
+func (m Module) ID() string                       { return m.definition.IDValue }
+func (m Module) Name() string                     { return m.definition.NameValue }
+func (m Module) ToolFamily() modules.ToolFamily   { return modules.ToolFamilyNetwork }
+func (m Module) Category() modules.Category       { return modules.CategoryEnumeration }
+func (m Module) Tool() string                     { return "NetworkHound" }
+func (m Module) Protocol() modules.Protocol       { return modules.ProtocolNA }
+func (m Module) Description() string              { return m.definition.DescriptionValue }
+func (m Module) Sensitivity() modules.Sensitivity { return modules.SensitivityStandard }
+func (m Module) ReadOnly() bool                   { return true }
+func (m Module) RequiredPrivileges() []string     { return nil }
+func (m Module) SecondaryConnections() []string   { return m.secondaryConnections() }
+func (m Module) DependencyKey() string            { return string(dependencies.NetworkHound) }
+
+func (m Module) Prerequisites() []string {
+	return []string{"NetworkHound checkout with its own virtual environment (install.sh)"}
+}
+
+func (m Module) OutputFile() string {
+	return filepath.Join(outputFolder, m.definition.SlugValue+".log")
+}
+
+// scoped reports whether this registration is the operator-scoped validation.
+func (m Module) scoped() bool { return m.definition.SlugValue == "scope-validation" }
+
+// secondaryConnections states what the module may contact, so the operator does not
+// have to infer it from the description.
+func (m Module) secondaryConnections() []string {
+	if m.scoped() {
+		return []string{
+			"connects only to the addresses in the network scope supplied for this run",
+			"does not query Active Directory and does not follow AD-discovered computers",
+		}
+	}
+	return []string{
+		"queries the configured domain controller over LDAP",
+		"resolves computer names through DNS on the configured domain controller",
+		"does not connect to the computers it discovers",
+	}
+}
+
+// MissingInputs implements modules.InputRequester: the scoped registration cannot
+// run without a scope, and PwnFlow asks for it before the batch starts.
+func (m Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
+	if !m.scoped() {
+		return nil
+	}
+	if _, ok := runtime.ModuleOption(m.ID(), "NETWORKS"); ok {
+		return nil
+	}
+	return []modules.InputField{{
+		Key:     "NETWORKS",
+		Prompt:  "which network scope should be validated? PwnFlow scans exactly these addresses.",
+		Example: "198.51.100.0/29 or 198.51.100.10-198.51.100.20",
+	}}
+}
+
+// PlanApproval implements modules.ApprovalRequester: a network scan is not
+// something a global run may start on its own, so it is named in the plan.
+func (m Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
+	if !m.scoped() {
+		return false, ""
+	}
+	scope, ok := runtime.ModuleOption(m.ID(), "NETWORKS")
+	if !ok {
+		return true, "no network scope has been supplied yet"
+	}
+	return true, fmt.Sprintf("scans the operator-supplied scope %s", scope)
+}
+
+// DetailLines implements modules.DetailProvider: the pinned configuration and the
+// scope statement, cheap enough to compute while drawing and free of secrets.
+func (m Module) DetailLines(runtime *modules.Runtime) []string {
+	lines := []string{"Transport: NetworkHound over the installed checkout (no shell)"}
+	if m.scoped() {
+		scope, ok := runtime.ModuleOption(m.ID(), "NETWORKS")
+		if !ok {
+			scope = "not supplied yet"
+		}
+		lines = append(lines,
+			"Network scope: "+scope,
+			"Ports: "+m.portList(runtime),
+			fmt.Sprintf("Concurrency and timeout: %s thread(s), %s second(s) per port", m.value(runtime, "SCAN_THREADS", "10"), m.value(runtime, "SCAN_TIMEOUT", "10")),
+			"Service validation: "+m.validationList(runtime),
+			"Not requested: shadow-IT sweep, AD-derived targets, full-domain sweeps",
+		)
+		return lines
+	}
+	lines = append(lines,
+		"Collection: LDAP and DNS against the configured domain controller",
+		"Not requested: --port-scan, --valid-http, --valid-smb, --ssl, --shadow-it, --networks",
+		"Output: BloodHound-compatible OpenGraph JSON",
+	)
+	return lines
+}
+
+func (m Module) value(runtime *modules.Runtime, key, fallback string) string {
+	if value, ok := runtime.ModuleOption(m.ID(), key); ok {
+		return value
+	}
+	return fallback
+}
+
+func (m Module) portList(runtime *modules.Runtime) string {
+	return m.value(runtime, "PORTS", defaultPorts)
+}
+
+// validationList names the service checks this run will perform.
+func (m Module) validationList(runtime *modules.Runtime) string {
+	checks := make([]string, 0, 3)
+	if enabled(runtime, m.ID(), "VALIDATE_HTTP") {
+		checks = append(checks, "HTTP/HTTPS")
+	}
+	if enabled(runtime, m.ID(), "VALIDATE_SMB") {
+		checks = append(checks, "SMB")
+	}
+	if enabled(runtime, m.ID(), "SSL_CERTIFICATES") {
+		checks = append(checks, "certificate detail")
+	}
+	if len(checks) == 0 {
+		return "port scan only (no HTTP, SMB or certificate validation requested)"
+	}
+	return strings.Join(checks, ", ")
+}
+
+func enabled(runtime *modules.Runtime, moduleID, key string) bool {
+	value, ok := runtime.ModuleOption(moduleID, key)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// status resolves the installed checkout.
+func status(ctx context.Context) (dependencies.Status, error) {
+	return dependencies.DefaultRegistry().CheckOne(ctx, dependencies.NetworkHound), nil
+}
+
+// command resolves how the tool is invoked: the checkout's own interpreter, run
+// against the entry script by path, so nothing depends on shell activation.
+func command(status dependencies.Status) (string, []string, error) {
+	if status.Interpreter != "" && status.Script != "" {
+		return status.Interpreter, []string{status.Script}, nil
+	}
+	if status.FoundExecutable != "" {
+		return status.FoundExecutable, nil, nil
+	}
+	return "", nil, fmt.Errorf("%s: installed location could not be resolved", status.DisplayName)
+}
+
+// Check validates the registration against the installed checkout before anything
+// runs.
+func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
+	if runtime == nil || strings.TrimSpace(runtime.Target) == "" {
+		return fmt.Errorf("runtime target is required")
+	}
+	found, err := status(ctx)
+	if err != nil {
+		return err
+	}
+	if !found.Available {
+		return fmt.Errorf("%s: %s", found.DisplayName, found.Detail)
+	}
+	help, err := installedHelp(ctx, found)
+	if err != nil {
+		return err
+	}
+	required := topologyOptions
+	if m.scoped() {
+		required = scopeOptions
+	}
+	for _, option := range required {
+		if !strings.Contains(help, option) {
+			return fmt.Errorf("the installed NetworkHound does not document %s, which this registration uses", option)
+		}
+	}
+	if !m.scoped() {
+		if strings.TrimSpace(runtime.Domain) == "" || strings.TrimSpace(runtime.Username) == "" {
+			return fmt.Errorf("runtime domain and username are required for the directory collection")
+		}
+		return nil
+	}
+	scope, ok := runtime.ModuleOption(m.ID(), "NETWORKS")
+	if !ok {
+		return fmt.Errorf("this registration scans a network scope and none has been supplied; set it with --module-options %s.NETWORKS=<scope>", m.ID())
+	}
+	if err := validateScope(scope); err != nil {
+		return err
+	}
+	if _, err := strconv.Atoi(m.value(runtime, "SCAN_THREADS", "10")); err != nil {
+		return fmt.Errorf("SCAN_THREADS must be a number")
+	}
+	if _, err := strconv.Atoi(m.value(runtime, "SCAN_TIMEOUT", "10")); err != nil {
+		return fmt.Errorf("SCAN_TIMEOUT must be a number of seconds")
+	}
+	return nil
+}
+
+// validateScope refuses anything that is not a literal address, CIDR block or
+// range: a name would resolve to addresses the operator did not name.
+func validateScope(scope string) error {
+	trimmed := strings.TrimSpace(scope)
+	if trimmed == "" {
+		return fmt.Errorf("the network scope is empty")
+	}
+	if !scopePattern.MatchString(trimmed) {
+		return fmt.Errorf("the network scope %q is not a list of addresses, CIDR blocks or ranges", scope)
+	}
+	// Every network and range endpoint has to parse as an address as well: the
+	// pattern alone would accept 999.1.1.1.
+	for _, item := range strings.Split(trimmed, ",") {
+		item = strings.TrimSpace(item)
+		base := item
+		if index := strings.IndexAny(item, "/"); index >= 0 {
+			base = item[:index]
+			prefix, err := strconv.Atoi(item[index+1:])
+			if err != nil {
+				return fmt.Errorf("the network scope %q has an invalid prefix length", item)
+			}
+			// Only IPv4 literals reach this point, so the prefix has to fit in a
+			// 32-bit address: /33 would be a range nobody asked for.
+			if prefix < 0 || prefix > 32 {
+				return fmt.Errorf("the network scope %q has a prefix length outside 0-32", item)
+			}
+		}
+		if index := strings.Index(item, "-"); index >= 0 {
+			base = item[:index]
+			if net.ParseIP(item[index+1:]) == nil {
+				return fmt.Errorf("the network scope %q has an invalid range end", item)
+			}
+		}
+		if net.ParseIP(base) == nil {
+			return fmt.Errorf("the network scope %q is not an IP address", base)
+		}
+	}
+	return nil
+}
+
+// installedHelp reads the checkout's own usage text.
+func installedHelp(ctx context.Context, found dependencies.Status) (string, error) {
+	program, base, err := command(found)
+	if err != nil {
+		return "", err
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(probeContext, program, append(base, "--help")...).CombinedOutput()
+	if len(output) == 0 {
+		return "", fmt.Errorf("%s did not produce usage output", found.DisplayName)
+	}
+	return string(output), nil
+}
+
+// RunArtifactDirectory is the per-run directory: one directory per run, so no run
+// overwrites another's JSON.
+func (m Module) RunArtifactDirectory(runtime *modules.Runtime, started time.Time) string {
+	return filepath.Join(runtime.ResultsRoot, artifactRel, m.definition.SlugValue+"-"+started.Format(runTimeLayout))
+}
+
+// CommandArgs builds the argument vector, which is also what the preview shows.
+func (m Module) CommandArgs(runtime *modules.Runtime) []string {
+	started := time.Now()
+	return m.commandArgs(runtime, m.RunArtifactDirectory(runtime, started))
+}
+
+func (m Module) commandArgs(runtime *modules.Runtime, runDirectory string) []string {
+	if m.scoped() {
+		scope, _ := runtime.ModuleOption(m.ID(), "NETWORKS")
+		args := []string{
+			"--networks", scope,
+			"-Pn",
+			"--port-scan",
+			"--ports", m.portList(runtime),
+			"--scan-timeout", m.value(runtime, "SCAN_TIMEOUT", "10"),
+			"--scan-threads", m.value(runtime, "SCAN_THREADS", "10"),
+			"--output", filepath.Join(runDirectory, scopeOutput),
+		}
+		if enabled(runtime, m.ID(), "VALIDATE_HTTP") {
+			args = append(args, "--valid-http")
+		}
+		if enabled(runtime, m.ID(), "VALIDATE_SMB") {
+			args = append(args, "--valid-smb")
+		}
+		if enabled(runtime, m.ID(), "SSL_CERTIFICATES") {
+			args = append(args, "--ssl")
+		}
+		return args
+	}
+	return []string{
+		"--dc", runtime.Target,
+		"--domain", runtime.Domain,
+		"--user", runtime.Username,
+		"--password", runtime.Password,
+		"--output", filepath.Join(runDirectory, topologyOutput),
+		"--verbose",
+	}
+}
+
+// CommandPreview implements modules.CommandPreviewProvider: the operator's
+// credential is never part of a preview, and the scope is always visible.
+func (m Module) CommandPreview(runtime *modules.Runtime) string {
+	args := m.CommandArgs(runtime)
+	for index := range args {
+		if index > 0 && args[index-1] == "--password" {
+			args[index] = redactedValue
+		}
+	}
+	return "NetworkHound.py " + strings.Join(args, " ")
+}
+
+// Run executes the collection in its own per-run directory. The tool writes its
+// JSON there; the same output is what the runner records as the module's artifact.
+func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
+	found, err := status(ctx)
+	if err != nil {
+		return err
+	}
+	if !found.Available {
+		return fmt.Errorf("%s: %s", found.DisplayName, found.Detail)
+	}
+	program, base, err := command(found)
+	if err != nil {
+		return err
+	}
+	started := time.Now()
+	runDirectory := m.RunArtifactDirectory(runtime, started)
+	if err := os.MkdirAll(runDirectory, 0750); err != nil {
+		return fmt.Errorf("create NetworkHound run directory: %w", err)
+	}
+	// The run directory is named in the transcript, so the operator can find this
+	// run's JSON without guessing which timestamp belongs to it.
+	outputName := topologyOutput
+	if m.scoped() {
+		outputName = scopeOutput
+	}
+	fmt.Fprintf(sink, "[i] NetworkHound %s: writing %s\n", m.definition.SlugValue, filepath.Join(runDirectory, outputName))
+	args := append(append([]string(nil), base...), m.commandArgs(runtime, runDirectory)...)
+	command := exec.CommandContext(ctx, program, args...)
+	command.Dir = runDirectory
+	command.Stdout, command.Stderr = sink, sink
+	command.WaitDelay = 2 * time.Second
+	runErr := command.Run()
+	// Whatever the tool produced is assessment data: an AD topology, not a public
+	// document. The tool writes with the process umask, so the run directory is
+	// tightened to owner-only afterwards, on the failure path as well, because a
+	// partial collection is still a finding.
+	if err := hardenRunDirectory(runDirectory); err != nil {
+		fmt.Fprintf(sink, "[i] NetworkHound artifacts could not be restricted to your account: %v\n", err)
+	}
+	if runErr != nil {
+		return fmt.Errorf("NetworkHound %s failed after %s: %w", m.definition.SlugValue, time.Since(started).Round(time.Millisecond), runErr)
+	}
+	return nil
+}
+
+// hardenRunDirectory makes one run's artifacts owner-only: directories 0750, files
+// 0600. The assessment tree already has restrictive permissions, and this closes
+// the gap the external tool leaves when it creates its own output files.
+func hardenRunDirectory(directory string) error {
+	return filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0o750)
+		}
+		return os.Chmod(path, 0o600)
+	})
+}
+
+// ValidateOptionValue reports whether an operator-supplied option value is
+// acceptable for this registration, so the interface can refuse a bad scope before
+// a batch starts.
+func (m Module) ValidateOptionValue(key, value string) error {
+	if key != "NETWORKS" {
+		return nil
+	}
+	return validateScope(value)
+}

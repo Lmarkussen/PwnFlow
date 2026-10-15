@@ -190,6 +190,50 @@ exit 0`)
 			}
 		}
 	}
+	installNetworkToolLayouts(t, bin, toolsRoot)
+}
+
+// installNetworkToolLayouts adds the NetworkHound and RelayKing checkouts the way
+// their upstream entry points behave: the help text documents the options PwnFlow
+// builds, and RelayKing prints its usage and then exits non-zero, which the
+// installer has to accept.
+func installNetworkToolLayouts(t *testing.T, bin, toolsRoot string) {
+	t.Helper()
+	tools := []struct {
+		root, script, help string
+	}{
+		{
+			root: "NetworkHound", script: "NetworkHound.py",
+			help: "--dc --domain --user --password --networks --output --port-scan --ports --scan-timeout --scan-threads",
+		},
+		{
+			root: "RelayKing", script: "relayking.py",
+			help: "--audit --protocols --dc-ip --output-file --proto-portscan --ntlmv1 --gen-relay-list --threads -o",
+		},
+	}
+	for _, tool := range tools {
+		root := filepath.Join(toolsRoot, tool.root)
+		if err := os.MkdirAll(filepath.Join(root, ".venv", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		help := tool.help
+		// The usage text is printed for any invocation, and the exit status is
+		// non-zero like RelayKing's own help: the installer judges the text, not
+		// the status.
+		writeExecutable(t, filepath.Join(root, ".venv", "bin"), "python3", "printf '%s\\n' '"+help+"'\nexit 1")
+		// A checkout that has to be prepared goes through pip; providing it keeps
+		// the fixture honest about what the installer needs.
+		writeExecutable(t, filepath.Join(root, ".venv", "bin"), "pip3", "exit 0")
+		files := map[string]string{tool.script: "# entry\n", "requirements.txt": "impacket\n", ".pwnflow-revision": "47ea549\n"}
+		for name, contents := range files {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
@@ -209,9 +253,13 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 		"NetExec already installed and functional",
 		"RustHound-CE already installed and functional",
 		"Certipy already installed and functional",
+		"NetworkHound already installed and functional",
+		"RelayKing already installed and functional",
 		"NetExec: Already installed",
 		"RustHound-CE: Already installed",
 		"Certipy: Already installed",
+		"NetworkHound: Already installed",
+		"RelayKing: Already installed",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q: %s", want, output)

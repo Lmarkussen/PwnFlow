@@ -6,11 +6,15 @@ install_netexec_requested=0
 install_certipy=0
 install_sccmhunter=0
 install_pxethief=0
+install_networkhound=0
+install_relayking=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
 certipy_status="Skipped"
 sccmhunter_status="Skipped"
 pxethief_status="Skipped"
+networkhound_status="Skipped"
+relayking_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
@@ -20,6 +24,8 @@ for argument in "$@"; do
     --with-certipy) install_certipy=1 ;;
     --with-sccmhunter) install_sccmhunter=1 ;;
     --with-pxethief) install_pxethief=1 ;;
+    --with-networkhound) install_networkhound=1 ;;
+    --with-relayking) install_relayking=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -27,12 +33,13 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking]"
       echo ""
       echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
-      echo "tooling SCCMhunter and PXEThief as source checkouts with their own"
-      echo "virtual environments. No shell activation is required."
+      echo "tooling SCCMhunter and PXEThief, and the network assessment tools"
+      echo "NetworkHound and RelayKing, as source checkouts with their own virtual"
+      echo "environments. No shell activation is required."
       echo "Kali Linux is the only supported installation target."
       exit 0
       ;;
@@ -48,6 +55,8 @@ if [[ $# -eq 0 ]]; then
   install_certipy=1
   install_sccmhunter=1
   install_pxethief=1
+  install_networkhound=1
+  install_relayking=1
 fi
 
 ensure_sudo_authenticated() {
@@ -467,6 +476,8 @@ pwnflow_tools_root() {
 
 sccmhunter_root() { printf '%s/sccmhunter\n' "$(pwnflow_tools_root)"; }
 pxethief_root() { printf '%s/PXEThief\n' "$(pwnflow_tools_root)"; }
+networkhound_root() { printf '%s/NetworkHound\n' "$(pwnflow_tools_root)"; }
+relayking_root() { printf '%s/RelayKing\n' "$(pwnflow_tools_root)"; }
 
 # checkout_interpreter reports the interpreter to use for a checkout, or nothing.
 checkout_interpreter() {
@@ -663,6 +674,142 @@ install_pxethief() {
   echo "PXEThief installed at pull/11 (${pr_head}) in ${root}"
 }
 
+# NetworkHound and RelayKing are upstream checkouts with their own virtual
+# environments, installed the same way SCCMhunter and PXEThief are. Neither is
+# pinned to a revision: PwnFlow checks that the installed checkout documents the
+# options its registrations use, so a newer upstream revision is accepted when it
+# still supports them, and a checkout that does not is reported rather than used.
+# checkout_help prints a checkout's usage text. The exit status is deliberately not
+# the test: several tools in this family print their usage and then exit non-zero,
+# so what matters is the text, which is what checkout_documents matches against.
+checkout_help() {
+  local root="$1" script="$2" flag="${3:---help}" interpreter output
+  interpreter="$(checkout_interpreter "${root}" "${script}")" || return 1
+  [[ -n "${interpreter}" ]] || return 1
+  output="$("${interpreter}" "${root}/${script}" "${flag}" 2>&1)" || true
+  [[ -n "${output}" ]] || return 1
+  printf '%s\n' "${output}"
+  return 0
+}
+
+checkout_documents() {
+  local root="$1" script="$2" flag="$3" help
+  shift 3
+  help="$(checkout_help "${root}" "${script}" "${flag}")" || return 1
+  local option
+  for option in "$@"; do
+    [[ "${help}" == *"${option}"* ]] || return 1
+  done
+  return 0
+}
+
+# recorded_revision prints the checkout's revision, which is what the report and
+# the runtime detection quote. A checkout without git metadata is still usable; the
+# revision is then simply unknown.
+checkout_revision() {
+  local root="$1"
+  git -C "${root}" rev-parse --short HEAD 2>/dev/null || printf 'unknown\n'
+}
+
+install_networkhound() {
+  local root revision diagnostics
+  root="$(networkhound_root)"
+  # The options PwnFlow builds: the LDAP topology collection, and the explicitly
+  # scoped service validation that only runs on an operator-supplied scope.
+  local required=(--dc --domain --user --password --output --port-scan --networks --scan-threads)
+  if checkout_documents "${root}" NetworkHound.py --help "${required[@]}"; then
+    revision="$(checkout_revision "${root}")"
+    echo "NetworkHound already installed and functional: ${revision} in ${root}"
+    networkhound_status="Already installed"
+    return 0
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is unavailable; NetworkHound is installed from its repository." >&2
+    networkhound_status="Failed (git is unavailable)"
+    return 1
+  fi
+  if [[ -d "${root}/.git" ]]; then
+    echo "Reusing the existing NetworkHound checkout at ${root}."
+  elif [[ -e "${root}" ]]; then
+    echo "${root} exists but is not a git checkout; move it aside and re-run." >&2
+    networkhound_status="Failed (${root} is not a git checkout)"
+    return 1
+  else
+    echo "Cloning NetworkHound into ${root}."
+    mkdir -p "$(dirname "${root}")"
+    if ! git clone https://github.com/MorDavid/NetworkHound.git "${root}"; then
+      networkhound_status="Failed (git clone failed)"
+      return 1
+    fi
+  fi
+  if ! ensure_checkout_environment "${root}"; then
+    networkhound_status="Failed (the Python environment could not be prepared)"
+    return 1
+  fi
+  if ! checkout_documents "${root}" NetworkHound.py --help "${required[@]}"; then
+    echo "The NetworkHound checkout at ${root} does not document the options the PwnFlow registrations use." >&2
+    networkhound_status="Failed (the installed NetworkHound does not document the options PwnFlow uses)"
+    return 1
+  fi
+  if ! diagnostics="$(git -C "${root}" rev-parse HEAD 2>/dev/null)"; then
+    diagnostics="unknown"
+  fi
+  printf '%s\n' "${diagnostics}" > "${root}/.pwnflow-revision"
+  chmod 600 "${root}/.pwnflow-revision"
+  networkhound_status="Installed"
+  echo "NetworkHound installed at ${diagnostics} in ${root}"
+}
+
+install_relayking() {
+  local root revision diagnostics
+  root="$(relayking_root)"
+  # The options the PwnFlow registration builds, including the audit profile the
+  # operator asked for. Coercion flags are deliberately not required: PwnFlow does
+  # not register them.
+  local required=(--audit --protocols --dc-ip --output-file --proto-portscan --ntlmv1 --gen-relay-list --threads -o)
+  if checkout_documents "${root}" relayking.py -h "${required[@]}"; then
+    revision="$(checkout_revision "${root}")"
+    echo "RelayKing already installed and functional: ${revision} in ${root}"
+    relayking_status="Already installed"
+    return 0
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is unavailable; RelayKing is installed from its repository." >&2
+    relayking_status="Failed (git is unavailable)"
+    return 1
+  fi
+  if [[ -d "${root}/.git" ]]; then
+    echo "Reusing the existing RelayKing checkout at ${root}."
+  elif [[ -e "${root}" ]]; then
+    echo "${root} exists but is not a git checkout; move it aside and re-run." >&2
+    relayking_status="Failed (${root} is not a git checkout)"
+    return 1
+  else
+    echo "Cloning RelayKing into ${root}."
+    mkdir -p "$(dirname "${root}")"
+    if ! git clone https://github.com/depthsecurity/RelayKing-Depth.git "${root}"; then
+      relayking_status="Failed (git clone failed)"
+      return 1
+    fi
+  fi
+  if ! ensure_checkout_environment "${root}"; then
+    relayking_status="Failed (the Python environment could not be prepared)"
+    return 1
+  fi
+  if ! checkout_documents "${root}" relayking.py -h "${required[@]}"; then
+    echo "The RelayKing checkout at ${root} does not document the options the PwnFlow registrations use." >&2
+    relayking_status="Failed (the installed RelayKing does not document the options PwnFlow uses)"
+    return 1
+  fi
+  if ! diagnostics="$(git -C "${root}" rev-parse HEAD 2>/dev/null)"; then
+    diagnostics="unknown"
+  fi
+  printf '%s\n' "${diagnostics}" > "${root}/.pwnflow-revision"
+  chmod 600 "${root}/.pwnflow-revision"
+  relayking_status="Installed"
+  echo "RelayKing installed at ${diagnostics} in ${root}"
+}
+
 print_summary() {
   echo ""
   echo "Installation summary:"
@@ -672,6 +819,8 @@ print_summary() {
   echo "  Certipy: ${certipy_status}"
   echo "  SCCMhunter: ${sccmhunter_status}"
   echo "  PXEThief: ${pxethief_status}"
+  echo "  NetworkHound: ${networkhound_status}"
+  echo "  RelayKing: ${relayking_status}"
 }
 
 if [[ ${install_netexec_requested} -eq 1 ]]; then
@@ -714,6 +863,24 @@ if [[ ${install_pxethief} -eq 1 ]]; then
   if ! install_pxethief; then
     if [[ ${pxethief_status} == "Skipped" ]]; then
       pxethief_status="Failed"
+    fi
+    print_summary
+    exit 1
+  fi
+fi
+if [[ ${install_networkhound} -eq 1 ]]; then
+  if ! install_networkhound; then
+    if [[ ${networkhound_status} == "Skipped" ]]; then
+      networkhound_status="Failed"
+    fi
+    print_summary
+    exit 1
+  fi
+fi
+if [[ ${install_relayking} -eq 1 ]]; then
+  if ! install_relayking; then
+    if [[ ${relayking_status} == "Skipped" ]]; then
+      relayking_status="Failed"
     fi
     print_summary
     exit 1
