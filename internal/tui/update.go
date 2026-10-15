@@ -272,6 +272,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
+	case "A":
+		if !m.running {
+			return m, m.executeAll()
+		}
 	case "q":
 		if m.running && !m.batchComplete() {
 			m.quitConfirm = true
@@ -506,6 +510,48 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.refreshFindings()
 		return m, nil
 	}
+	if m.findingCategoryView && m.findingSubcategoryView {
+		switch key {
+		case "ctrl+w":
+			m.findingsView = false
+			m.watcher = m.findingsFromWatcher || m.batch != nil
+			if m.watcher {
+				m.resizeWatcher()
+			}
+			m.findingsFromWatcher = false
+		case "esc":
+			m.findingSubcategoryView = false
+			m.findingSubcategory = ""
+			m.findingCursor = 0
+		case "up", "k":
+			m.findingCursor--
+		case "down", "j":
+			m.findingCursor++
+		case "home":
+			m.findingCursor = 0
+		case "end":
+			m.findingCursor = len(m.findingSubcategories) - 1
+		case "pgup":
+			m.findingCursor -= 5
+		case "pgdown":
+			m.findingCursor += 5
+		case "enter":
+			if len(m.findingSubcategories) > 0 {
+				m.findingSubcategory = m.findingSubcategories[m.findingCursor].Key
+				m.findingCategoryView = false
+				m.findingSubcategoryView = false
+				m.findingCursor, m.findingTop = 0, 0
+			}
+		}
+		if m.findingCursor < 0 {
+			m.findingCursor = 0
+		}
+		if m.findingCursor >= len(m.findingSubcategories) {
+			m.findingCursor = max(0, len(m.findingSubcategories)-1)
+		}
+		m.refreshFindings()
+		return m, nil
+	}
 	if m.findingCategoryView {
 		switch key {
 		case "ctrl+w":
@@ -550,7 +596,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			}
 			if len(m.findingCategories) > 0 {
 				m.findingCategory = m.findingCategories[m.findingCursor].Key
-				m.findingCategoryView = false
+				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
+				m.findingSubcategoryView = true
 				m.findingCursor = 0
 				m.findingTop = 0
 				m.refreshFindings()
@@ -600,7 +647,17 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.findingsFromWatcher = false
 	case "esc":
 		if m.findingCategory != "" {
+			if m.findingSubcategory != "" {
+				m.findingSubcategory = ""
+				m.findingSubcategoryView = true
+				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
+				m.findingCursor = 0
+				m.refreshFindings()
+				return m, nil
+			}
 			m.findingCategory = ""
+			m.findingSubcategory = ""
+			m.findingSubcategoryView = false
 			m.findingCategoryView = true
 			m.findingCursor = 0
 			m.findingDetail = false
@@ -679,6 +736,7 @@ func (m *model) reanalyzeEvidence() tea.Cmd {
 		m.status = "historical reanalysis requires the assessment database"
 		return nil
 	}
+	m.status = "Certipy historical reanalysis queued"
 	return func() tea.Msg {
 		if err := m.findings.ReanalyzeLatest(context.Background(), m.targetID, "Certipy"); err != nil {
 			return findingsReanalysisMsg{err: err}

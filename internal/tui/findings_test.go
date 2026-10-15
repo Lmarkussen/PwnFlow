@@ -164,3 +164,27 @@ func TestLegacyCertipyRecordIsObservationWithoutESC(t *testing.T) {
 		t.Fatal("explicit ESC record was downgraded to an observation")
 	}
 }
+
+func TestUppercaseAIsNotFindingsAll(t *testing.T) {
+	model := &model{findingsView: true, findingCategoryView: true, findingViewMode: "findings", width: 100, height: 24}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if model.findingViewMode == "all" {
+		t.Fatal("uppercase A was interpreted as Findings All")
+	}
+}
+
+func TestFindingsHierarchyBackNavigation(t *testing.T) {
+	model := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{{Key: "kerberos", Name: "Kerberos"}}, findingAllRows: []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "kerberoastable_account", Title: "Kerberoastable", Severity: "medium"}}}, width: 100, height: 24}
+	model.handleFindingsKey("enter")
+	if !model.findingSubcategoryView || model.findingCategory != "kerberos" {
+		t.Fatal("category did not open subcategories")
+	}
+	model.handleFindingsKey("enter")
+	if model.findingSubcategoryView || model.findingSubcategory != "kerberoastable" {
+		t.Fatal("subcategory did not open findings")
+	}
+	model.handleFindingsKey("esc")
+	if !model.findingSubcategoryView || model.findingCategory != "kerberos" {
+		t.Fatal("Esc did not restore subcategory view")
+	}
+}

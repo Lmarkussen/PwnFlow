@@ -566,3 +566,17 @@ func TestSelectionBatchOrderIsDeterministic(t *testing.T) {
 		t.Fatalf("unexpected order: %v", got)
 	}
 }
+
+func TestUppercaseAStartsGlobalYOLO(t *testing.T) {
+	log := &executionLog{}
+	model := selectionModel(t, log)
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	if model.batch == nil && !model.running && model.status == "" {
+		t.Fatal("uppercase A did not enter the global YOLO path")
+	}
+	if model.batch != nil {
+		if err := model.batch.Wait(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

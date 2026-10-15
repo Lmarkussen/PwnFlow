@@ -15,48 +15,51 @@ import (
 )
 
 type model struct {
-	ctx                 context.Context
-	cfg                 config.Config
-	db                  *storage.DB
-	findings            *findingengine.Manager
-	findingsView        bool
-	findingsFromWatcher bool
-	findingDetail       bool
-	findingRows         []storage.Finding
-	findingCursor       int
-	findingTop          int
-	findingSearch       string
-	findingSearchMode   bool
-	findingSeverity     string
-	findingViewMode     string
-	findingCategoryView bool
-	findingCategory     string
-	findingCategories   []findingCategory
-	findingAllRows      []storage.Finding
-	modules             []modules.Module
-	moduleIDs           []int64
-	moduleKeys          []int
-	allModules          []modules.Module
-	allModuleIDs        []int64
-	endpoints           modules.EndpointStore
-	availability        map[string]string
-	toolFamilies        []modules.ToolFamily
-	toolFamilyIndex     int
-	categories          []modules.Category
-	categoryIndex       int
-	protocols           []modules.Protocol
-	protocolIndex       int
-	targetID            int64
-	selected, cursor    int
-	selectedModules     map[string]bool
-	running             bool
-	watcher             bool
-	focusBeforeWatcher  paneFocus
-	quitConfirm         bool
-	quitAfterCancel     bool
-	quitCancelDeadline  time.Time
-	elevationPrompt     bool
-	elevationModules    []string
+	ctx                    context.Context
+	cfg                    config.Config
+	db                     *storage.DB
+	findings               *findingengine.Manager
+	findingsView           bool
+	findingsFromWatcher    bool
+	findingDetail          bool
+	findingRows            []storage.Finding
+	findingCursor          int
+	findingTop             int
+	findingSearch          string
+	findingSearchMode      bool
+	findingSeverity        string
+	findingViewMode        string
+	findingCategoryView    bool
+	findingCategory        string
+	findingSubcategoryView bool
+	findingSubcategory     string
+	findingSubcategories   []findingSubcategory
+	findingCategories      []findingCategory
+	findingAllRows         []storage.Finding
+	modules                []modules.Module
+	moduleIDs              []int64
+	moduleKeys             []int
+	allModules             []modules.Module
+	allModuleIDs           []int64
+	endpoints              modules.EndpointStore
+	availability           map[string]string
+	toolFamilies           []modules.ToolFamily
+	toolFamilyIndex        int
+	categories             []modules.Category
+	categoryIndex          int
+	protocols              []modules.Protocol
+	protocolIndex          int
+	targetID               int64
+	selected, cursor       int
+	selectedModules        map[string]bool
+	running                bool
+	watcher                bool
+	focusBeforeWatcher     paneFocus
+	quitConfirm            bool
+	quitAfterCancel        bool
+	quitCancelDeadline     time.Time
+	elevationPrompt        bool
+	elevationModules       []string
 	// elevationRenewal carries a privileged module's request for fresh sudo
 	// authorization while the batch waits before it. The module blocks on the
 	// reply channel; the model answers after the terminal handoff.

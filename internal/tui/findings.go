@@ -21,6 +21,28 @@ type findingCategory struct {
 	Highest      string
 }
 
+type findingSubcategory struct {
+	Key, Name, Description string
+	Findings, Observations int
+}
+
+var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string }{
+	"credentials": {{"credentials", "Exposed Credentials", "Task-sequence and other confirmed credential exposures"}},
+	"kerberos": {
+		{"kerberoastable", "Kerberoastable Users", "Accounts with directly evidenced service principals"},
+		{"asrep", "AS-REP Roastable Users", "Accounts with preauthentication disabled where evidenced"},
+		{"kerberos_material", "Collected Kerberos Material", "Explicitly collected ticket or AS-REP material"},
+	},
+	"acl":        {{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"}},
+	"adcs":       {{"adcs", "Vulnerable Templates", "Explicit ESC conditions reported by Certipy"}},
+	"delegation": {{"delegation", "Delegation", "Delegation configurations and related observations"}},
+	"network": {
+		{"smb", "SMB Signing", "SMB signing conditions"},
+		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
+		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
+	},
+}
+
 var findingCategoryOrder = []struct {
 	Key, Name, Description string
 }{
@@ -51,6 +73,51 @@ func findingCategoryKey(finding storage.Finding) string {
 	default:
 		return "other"
 	}
+}
+
+func findingSubcategoryKey(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType + " " + finding.Title)
+	switch {
+	case strings.Contains(typ, "asrep"), strings.Contains(typ, "as-rep"):
+		return "asrep"
+	case strings.Contains(typ, "kerberoast"):
+		return "kerberoastable"
+	case strings.Contains(typ, "kerberos") || strings.Contains(typ, "krb5"):
+		return "kerberos_material"
+	case strings.Contains(typ, "smb"):
+		return "smb"
+	case strings.Contains(typ, "ldap") || strings.Contains(typ, "channel"):
+		return "ldap"
+	case strings.Contains(typ, "relay"):
+		return "relay"
+	default:
+		return findingCategoryKey(finding)
+	}
+}
+
+func buildFindingSubcategories(category string, rows []storage.Finding) []findingSubcategory {
+	definitions := findingSubcategoryOrder[category]
+	result := make([]findingSubcategory, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, findingSubcategory{Key: definition.Key, Name: definition.Name, Description: definition.Description})
+	}
+	for _, finding := range rows {
+		if findingCategoryKey(finding) != category {
+			continue
+		}
+		key := findingSubcategoryKey(finding)
+		for index := range result {
+			if result[index].Key != key {
+				continue
+			}
+			if actionableFinding(finding) {
+				result[index].Findings++
+			} else {
+				result[index].Observations++
+			}
+		}
+	}
+	return result
 }
 
 func buildFindingCategories(rows []storage.Finding) []findingCategory {
@@ -104,6 +171,9 @@ func (m *model) refreshFindings() {
 			continue
 		}
 		if m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
+			continue
+		}
+		if m.findingSubcategory != "" && findingSubcategoryKey(finding) != m.findingSubcategory {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(strings.Join([]string{finding.Title, finding.AffectedObject, finding.RelatedObject, finding.SourceTool, finding.FindingType}, " ")), search) {
@@ -210,6 +280,9 @@ func severityRank(value string) int {
 func (m *model) findingsViewRender() string {
 	width := max(40, m.width-4)
 	if m.findingCategoryView {
+		if m.findingSubcategoryView {
+			return m.findingSubcategoryOverview(width)
+		}
 		return m.findingCategoryOverview(width)
 	}
 	var content strings.Builder
@@ -234,7 +307,7 @@ func (m *model) findingsViewRender() string {
 		}
 		content.WriteString(fmt.Sprintf("Source: %s  Execution: %d\n", finding.SourceTool, finding.SourceExecution))
 		content.WriteString(fmt.Sprintf("Evidence: %s %s\n", finding.ArtifactPath, finding.ArtifactRef))
-		content.WriteString(fmt.Sprintf("\n%s\n\nRemediation/review: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(finding.Description, width-4)))
+		content.WriteString(fmt.Sprintf("\nCondition: %s\n\nImpact: %s\n\nRemediation: %s\n\nConfidence/limitations: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(findingImpact(finding), width-4), wrapPaneText(findingRemediation(finding), width-4), wrapPaneText(finding.Confidence, width-4)))
 		content.WriteString(dim.Render("Esc Back   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
@@ -260,6 +333,61 @@ func (m *model) findingsViewRender() string {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}
 	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze Certipy   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func findingImpact(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	switch {
+	case strings.Contains(typ, "asrep"):
+		return "The account may be exposed to offline AS-REP password guessing; collected material does not prove the password was cracked."
+	case strings.Contains(typ, "kerberoast"):
+		return "The service account may be targeted for ticket-based offline password guessing; this does not prove compromise."
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return "Certipy reported a potential AD CS misconfiguration; exploitation and all prerequisites remain unverified."
+	case strings.Contains(typ, "pxethief"), strings.Contains(typ, "credential"):
+		return "A credential-bearing deployment value was recovered and should be treated as exposed."
+	case strings.HasPrefix(typ, "ad_acl_"):
+		return "The named principal has a directly observed permission relationship; effective access and abuse paths require separate review."
+	default:
+		return "The source evidence records a security-relevant condition requiring operator review."
+	}
+}
+
+func findingRemediation(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	switch {
+	case strings.Contains(typ, "asrep"):
+		return "Enable Kerberos preauthentication where appropriate, use a strong managed secret, and review the account's purpose."
+	case strings.Contains(typ, "kerberoast"):
+		return "Review the SPN, remove unnecessary service principals, reduce privilege, and use a strong managed service-account secret where supported."
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return "Review the exact ESC condition, restrict enrollment or template administration as applicable, and remove unnecessary issuance paths."
+	case strings.Contains(typ, "pxethief"), strings.Contains(typ, "credential"):
+		return "Rotate exposed credentials, restrict task-sequence access, and remove secrets from deployment content where possible."
+	case strings.HasPrefix(typ, "ad_acl_"):
+		return "Review and restrict the named principal's direct permissions on the affected object."
+	default:
+		return "Review the affected configuration and apply the source tool's recommended hardening."
+	}
+}
+
+func (m *model) findingSubcategoryOverview(width int) string {
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
+	content.WriteString(dim.Render("Select a security condition group; evidence remains in its findings.") + "\n\n")
+	for index, subcategory := range m.findingSubcategories {
+		prefix := "  "
+		if index == m.findingCursor {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s%-30s %8d findings  %8d observations", prefix, subcategory.Name, subcategory.Findings, subcategory.Observations)
+		if index == m.findingCursor {
+			line = lipgloss.NewStyle().Bold(true).Render(line)
+		}
+		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
+	}
+	content.WriteString(dim.Render("\nEnter Open Group   Esc Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
