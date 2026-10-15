@@ -140,9 +140,20 @@ func (m PXEThief) plannedEndpoints(ctx context.Context, runtime *modules.Runtime
 }
 
 // DetailLines reports the dependency, the stored endpoint count, the mode this run
-// would use, and where per-endpoint output goes.
+// would use, and where per-endpoint output goes. Like SCCMhunter it only reads the
+// snapshot a refresh computed, so no probe, revision check or store read happens while
+// a frame is drawn.
 func (m PXEThief) DetailLines(runtime *modules.Runtime) []string {
-	ctx := context.Background()
+	lines, _ := details.snapshot(detailKey(moduleIDPXEThief, runtime))
+	return lines
+}
+
+// RefreshDetails recomputes that snapshot off the render path.
+func (m PXEThief) RefreshDetails(ctx context.Context, runtime *modules.Runtime) {
+	refreshDetail(moduleIDPXEThief, runtime, m.computeDetailLines)
+}
+
+func (m PXEThief) computeDetailLines(ctx context.Context, runtime *modules.Runtime) []string {
 	endpoints, endpointErr := m.plannedEndpoints(ctx, runtime)
 	total, _, roles := endpointCounts(ctx, runtime)
 	mode := "mode 1 (DHCP PXE broadcast discovery): no stored endpoint address for this assessment"
@@ -272,8 +283,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	if err := prepareDirectory(runDirectory); err != nil {
 		return fmt.Errorf("create PXEThief run directory: %w", err)
 	}
-	output := newRedactingSink(sink)
-	defer output.Flush()
+	output := sink
 	if len(endpoints) == 0 {
 		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) as explicitly requested.")
 		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, elevated, output); err != nil {
@@ -312,7 +322,7 @@ func (m PXEThief) runOne(ctx context.Context, program string, base, args []strin
 	if err := copySettings(installRoot, directory); err != nil {
 		return err
 	}
-	log, err := newArtifactLog(filepath.Join(directory, "pxethief.log"), password)
+	log, err := newArtifactLog(filepath.Join(directory, "pxethief.log"))
 	if err != nil {
 		return fmt.Errorf("create %s log: %w", label, err)
 	}

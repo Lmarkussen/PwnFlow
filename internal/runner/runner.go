@@ -64,7 +64,7 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 		return result
 	}
 	defer latest.Close()
-	redactor := security.NewRedactor(r.Secrets...)
+	redactor := security.NewArgumentRedactor(r.Secrets...)
 	buffer := shared
 	if buffer == nil {
 		buffer = NewBuffer(r.BufferLimit)
@@ -97,7 +97,7 @@ func statusForCheck(ctx context.Context, err error) string {
 }
 
 type safeSink struct {
-	redactor       *security.Redactor
+	redactor       *security.ArgumentRedactor
 	displayWriters []io.Writer
 	persistWriters []io.Writer
 }

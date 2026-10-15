@@ -549,17 +549,28 @@ exit 0`
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("expected one per-endpoint log, got %v (%v)", logs, err)
 	}
+	// Findings are evidence: complete, and readable only by their owner.
+	if info, statErr := os.Stat(logs[0]); statErr != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("artifact permissions are not owner-only: %v %v", info.Mode().Perm(), statErr)
+	}
 	persisted, err := os.ReadFile(logs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"Sup3rSecret", "recovered-secret", "another-secret"} {
-		if strings.Contains(output.String(), secret) {
-			t.Fatalf("a secret reached the TUI output (%s): %s", secret, output.String())
+	// Findings reach the operator exactly as the tool produced them: recovered
+	// credentials are never rewritten, and neither is a value that happens to match the
+	// authentication input.
+	for _, finding := range []string{"recovered-secret", "another-secret"} {
+		if !strings.Contains(string(persisted), finding) {
+			t.Fatalf("a recovered finding was rewritten (%s):\n%s", finding, persisted)
 		}
-		if strings.Contains(string(persisted), secret) {
-			t.Fatalf("a secret reached the persisted log (%s):\n%s", secret, persisted)
+		if !strings.Contains(output.String(), finding) {
+			t.Fatalf("a recovered finding was withheld from the pane (%s):\n%s", finding, output.String())
 		}
+	}
+	// PwnFlow's own command preview keeps protecting the authentication input.
+	if preview := (&PXEThief{}).CommandPreview(runtime); strings.Contains(preview, runtime.Password) {
+		t.Fatalf("the preview exposed the authentication password: %s", preview)
 	}
 	// The labels survive, so the operator still sees what the tool reported.
 	if !strings.Contains(string(persisted), "Network Access Account Password") {

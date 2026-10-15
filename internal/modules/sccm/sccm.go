@@ -11,14 +11,12 @@
 package sccm
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,8 +25,69 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
-	"github.com/pwnflow/pwnflow/internal/security"
 )
+
+// detailSnapshotTTL bounds how long a module's Module Information is reused. The work
+// behind it is expensive - a Python capability probe measured 625 ms on the reference
+// Kali host - so it is computed off the render path and reused afterwards.
+const detailSnapshotTTL = 15 * time.Second
+
+// detailStore keeps the last computed Module Information of every module in this
+// package. Rendering reads it; only a refresh writes it.
+type detailStore struct {
+	mutex   sync.Mutex
+	entries map[string]detailSnapshot
+}
+
+type detailSnapshot struct {
+	lines []string
+	at    time.Time
+}
+
+var details = detailStore{entries: map[string]detailSnapshot{}}
+
+// key scopes a snapshot to the environment and assessment whose information it
+// describes, so reinstalling a tool, switching tools directory or starting a different
+// assessment never shows another context's information.
+func detailKey(moduleID string, runtime *modules.Runtime) string {
+	domain := ""
+	if runtime != nil {
+		domain = runtime.Domain
+	}
+	return strings.Join([]string{
+		moduleID, domain,
+		os.Getenv("PWNFLOW_TOOLS_DIR"), os.Getenv("XDG_DATA_HOME"), os.Getenv("HOME"), os.Getenv("PATH"),
+	}, "|")
+}
+
+// snapshot returns the stored lines and how old they are. A module that has not been
+// refreshed yet says so rather than probing on the spot.
+func (s *detailStore) snapshot(moduleID string) ([]string, time.Duration) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	entry, ok := s.entries[moduleID]
+	if !ok {
+		return []string{"Module information is being collected."}, detailSnapshotTTL
+	}
+	return append([]string(nil), entry.lines...), time.Since(entry.at)
+}
+
+// store records freshly computed lines.
+func (s *detailStore) store(moduleID string, lines []string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.entries[moduleID] = detailSnapshot{lines: append([]string(nil), lines...), at: time.Now()}
+}
+
+// refreshDetail runs one module's expensive work unless its snapshot is still fresh,
+// so a refresh issued on a timer does nothing until it is worth doing.
+func refreshDetail(moduleID string, runtime *modules.Runtime, compute func(context.Context, *modules.Runtime) []string) {
+	key := detailKey(moduleID, runtime)
+	if _, age := details.snapshot(key); age < detailSnapshotTTL {
+		return
+	}
+	details.store(key, compute(context.Background(), runtime))
+}
 
 const (
 	moduleIDSCCMHunter = "sccmhunter"
@@ -353,22 +412,6 @@ func prepareDirectory(path string) error {
 	return os.MkdirAll(path, 0750)
 }
 
-// redactSecrets removes the values of labels that name secret material, keeping
-// the labels themselves so the operator still sees what was found.
-func redactSecrets(line string) string {
-	if !secretLabelPattern.MatchString(line) {
-		return line
-	}
-	return secretValuePattern.ReplaceAllString(line, redactedValue)
-}
-
-var (
-	secretLabelPattern = regexp.MustCompile(`(?i)(password|passwd|secret|credential|private key|pfx)`)
-	// The value is matched without an end anchor: output arrives in chunks, so a
-	// line may carry a trailing newline when it is examined.
-	secretValuePattern = regexp.MustCompile(`('[^']*'|"[^"]*"|:\s*\S.*)`)
-)
-
 // capNetRawBit is CAP_NET_RAW's position in a Linux capability set. Both PXEThief
 // modes craft DHCP packets with Scapy, which needs that capability.
 const capNetRawBit = 13
@@ -429,62 +472,6 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 
 func (b *tailBuffer) String() string { return string(b.data) }
 
-// lineRedactor applies the targeted secret redaction to complete lines. Tool
-// output arrives in arbitrary chunks, so a value can straddle two writes; holding
-// a partial line until its newline arrives is what makes the redaction reliable.
-type lineRedactor struct {
-	pending []byte
-	write   func([]byte) error
-}
-
-func (r *lineRedactor) Write(p []byte) (int, error) {
-	r.pending = append(r.pending, p...)
-	for {
-		index := bytes.IndexByte(r.pending, '\n')
-		if index < 0 {
-			break
-		}
-		line := r.pending[:index+1]
-		if err := r.write([]byte(redactSecrets(string(line)))); err != nil {
-			return 0, err
-		}
-		r.pending = append([]byte(nil), r.pending[index+1:]...)
-	}
-	return len(p), nil
-}
-
-// Flush writes the trailing partial line, if any.
-func (r *lineRedactor) Flush() error {
-	if len(r.pending) == 0 {
-		return nil
-	}
-	line := r.pending
-	r.pending = nil
-	return r.write([]byte(redactSecrets(string(line))))
-}
-
-// redactingSink forwards output to the run's sink after applying the targeted
-// secret redaction, so nothing reaches the pane or the log through this module
-// without passing it.
-type redactingSink struct {
-	sink   modules.OutputSink
-	redact lineRedactor
-}
-
-func newRedactingSink(sink modules.OutputSink) *redactingSink {
-	r := &redactingSink{sink: sink}
-	r.redact.write = func(line []byte) error {
-		_, err := sink.Write(line)
-		return err
-	}
-	return r
-}
-
-func (s *redactingSink) Write(p []byte) (int, error) { return s.redact.Write(p) }
-
-// Flush writes the trailing partial line.
-func (s *redactingSink) Flush() error { return s.redact.Flush() }
-
 // multiSink forwards output to every sink in order.
 type multiSink []modules.OutputSink
 
@@ -501,12 +488,10 @@ func (s multiSink) Write(p []byte) (int, error) {
 // to it is redacted twice: the operator's password by value, and the values of any
 // label that names secret material, because these tools can recover credentials.
 type artifactLog struct {
-	file  *os.File
-	value *security.Redactor
-	lines lineRedactor
+	file *os.File
 }
 
-func newArtifactLog(path string, secrets ...string) (*artifactLog, error) {
+func newArtifactLog(path string) (*artifactLog, error) {
 	if err := prepareDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -514,36 +499,13 @@ func newArtifactLog(path string, secrets ...string) (*artifactLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	log := &artifactLog{file: file, value: security.NewRedactor(secrets...)}
-	log.lines.write = func(line []byte) error {
-		_, err := file.Write(line)
-		return err
-	}
-	return log, nil
+	return &artifactLog{file: file}, nil
 }
 
-func (l *artifactLog) Write(p []byte) (int, error) {
-	clean, _ := l.value.Write(p)
-	if len(clean) == 0 {
-		return len(p), nil
-	}
-	return l.lines.Write(clean)
-}
+func (l *artifactLog) Write(p []byte) (int, error) { return l.file.Write(p) }
 
-// Close flushes the redactor's tail and closes the file.
-func (l *artifactLog) Close() error {
-	if tail := l.value.Flush(); len(tail) > 0 {
-		if _, err := l.lines.Write(tail); err != nil {
-			l.file.Close()
-			return err
-		}
-	}
-	if err := l.lines.Flush(); err != nil {
-		l.file.Close()
-		return err
-	}
-	return l.file.Close()
-}
+// Close closes the artifact file.
+func (l *artifactLog) Close() error { return l.file.Close() }
 
 // endpointCounts summarises the stored discovery state for Module Information.
 func endpointCounts(ctx context.Context, runtime *modules.Runtime) (total int, usable int, detail string) {

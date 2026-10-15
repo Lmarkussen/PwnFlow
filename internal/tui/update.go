@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -13,6 +14,38 @@ import (
 )
 
 var ErrQuit = errors.New("quit")
+
+// detailsRefreshedMsg reports that a module's Module Information snapshot was
+// recomputed; the frame after it shows the new content.
+type detailsRefreshedMsg struct{}
+
+// detailsRefreshInterval throttles the asynchronous refresh. The module decides
+// whether the work is actually needed, so this only bounds how often the question is
+// asked.
+const detailsRefreshInterval = time.Second
+
+// refreshDetailsCommand recomputes the Module Information of the visible modules off
+// the render path. The work behind it - a Python capability probe, a revision check, a
+// store read - must never run while a frame is drawn, and it is skipped entirely while
+// the snapshots are fresh.
+func (m *model) refreshDetailsCommand() tea.Cmd {
+	refreshers := make([]modules.DetailRefresher, 0, len(m.modules))
+	for _, module := range m.modules {
+		if refresher, ok := module.(modules.DetailRefresher); ok {
+			refreshers = append(refreshers, refresher)
+		}
+	}
+	if len(refreshers) == 0 {
+		return nil
+	}
+	runtime := m.moduleRuntime()
+	return func() tea.Msg {
+		for _, refresher := range refreshers {
+			refresher.RefreshDetails(context.Background(), runtime)
+		}
+		return detailsRefreshedMsg{}
+	}
+}
 
 // sudoAuthorisedMsg carries the outcome of the terminal handover that lets sudo
 // authenticate the operator. PwnFlow never sees the password: sudo reads it from the
@@ -55,11 +88,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if quit != nil {
 			return m, quit
 		}
+		// Module Information is recomputed away from rendering, and only when it is
+		// stale, so arrow navigation never waits on a probe.
+		if time.Since(m.detailsRefreshed) >= detailsRefreshInterval {
+			m.detailsRefreshed = time.Now()
+			if refresh := m.refreshDetailsCommand(); refresh != nil {
+				return m, tea.Batch(tickCmd(), refresh)
+			}
+		}
 		return m, tickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case sudoAuthorisedMsg:
 		return m, m.finishElevation(msg.err)
+	case detailsRefreshedMsg:
+		return m, nil
 	}
 	return m, nil
 }
@@ -587,6 +630,7 @@ func (m *model) syncBatch() tea.Cmd {
 			}
 			m.batchRecorded = true
 			m.batchElevation = map[string]bool{}
+			m.detailsRefreshed = time.Time{}
 			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", m.batchName, len(states), finished.Format("15:04:05"))
 		}
 		if m.quitAfterCancel {

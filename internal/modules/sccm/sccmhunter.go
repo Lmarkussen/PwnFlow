@@ -95,14 +95,26 @@ func (SCCMHunter) RunDirectory(runtime *modules.Runtime, started time.Time) stri
 	return artifactDirectory(runtime, sccmHunterFolder, started)
 }
 
-// DetailLines reports the configuration for Module Information.
+// DetailLines reports the configuration for Module Information. It only reads the
+// snapshot a refresh computed: probing here would put a Python capability check on the
+// frame-rendering path, which measured 625 ms on the reference host.
 func (m SCCMHunter) DetailLines(runtime *modules.Runtime) []string {
+	lines, _ := details.snapshot(detailKey(moduleIDSCCMHunter, runtime))
+	return lines
+}
+
+// RefreshDetails recomputes that snapshot off the render path.
+func (m SCCMHunter) RefreshDetails(ctx context.Context, runtime *modules.Runtime) {
+	refreshDetail(moduleIDSCCMHunter, runtime, m.computeDetailLines)
+}
+
+func (m SCCMHunter) computeDetailLines(ctx context.Context, runtime *modules.Runtime) []string {
 	target, domain := "-", "-"
 	if runtime != nil {
 		target, domain = runtime.Target, runtime.Domain
 	}
-	dependencyLine := dependencyLine(context.Background(), dependencies.SCCMHunter, "SCCMhunter", "./install.sh --with-sccmhunter")
-	total, usable, detail := endpointCounts(context.Background(), runtime)
+	dependencyLine := dependencyLine(ctx, dependencies.SCCMHunter, "SCCMhunter", "./install.sh --with-sccmhunter")
+	total, usable, detail := endpointCounts(ctx, runtime)
 	return []string{
 		"Execution: enabled",
 		dependencyLine,
@@ -184,8 +196,7 @@ func (m SCCMHunter) Run(ctx context.Context, runtime *modules.Runtime, sink modu
 		return fmt.Errorf("create SCCMhunter data directory: %w", err)
 	}
 
-	output := newRedactingSink(sink)
-	defer output.Flush()
+	output := sink
 	if err := runCommand(ctx, program, append(append([]string(nil), base...), m.CommandArgs(runtime)...), runDirectory, home, output); err != nil {
 		// A non-zero exit is a discovery failure, which is not the same as a
 		// successful discovery with no results.
@@ -203,7 +214,7 @@ func (m SCCMHunter) Run(ctx context.Context, runtime *modules.Runtime, sink modu
 		return err
 	}
 	showPath := filepath.Join(runDirectory, discoveryShowFile)
-	if err := writeRedactedFile(showPath, showOutput, runtime.Password); err != nil {
+	if err := writeArtifactFile(showPath, showOutput); err != nil {
 		return fmt.Errorf("store SCCMhunter output: %w", err)
 	}
 
@@ -255,10 +266,10 @@ func dedupeRecords(records []discoveredRecord) []discoveredRecord {
 	return unique
 }
 
-// writeRedactedFile writes tool output to an artifact with the password and any
-// secret-labelled value removed.
-func writeRedactedFile(path string, contents []byte, secrets ...string) error {
-	log, err := newArtifactLog(path, secrets...)
+// writeArtifactFile preserves tool output verbatim in an artifact only the owner can
+// read: it is assessment evidence and must not be rewritten.
+func writeArtifactFile(path string, contents []byte) error {
+	log, err := newArtifactLog(path)
 	if err != nil {
 		return err
 	}

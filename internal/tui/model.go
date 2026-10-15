@@ -42,6 +42,7 @@ type model struct {
 	pendingIndices      []int
 	pendingName         string
 	batchElevation      map[string]bool
+	detailsRefreshed    time.Time
 	buffer              *runner.Buffer
 	last                []byte
 	status              string

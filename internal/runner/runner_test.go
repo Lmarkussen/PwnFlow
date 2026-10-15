@@ -31,7 +31,10 @@ func (testModule) Run(_ context.Context, _ *modules.Runtime, sink modules.Output
 	return err
 }
 
-func TestExecuteRedactsOutput(t *testing.T) {
+// Tool output is assessment evidence: a bare occurrence of a value is preserved. Only a
+// credential sitting in an option position is masked, which the echoing test below
+// covers.
+func TestExecutePreservesToolOutput(t *testing.T) {
 	dir := t.TempDir()
 	result := (Runner{Secrets: []string{"secret"}, BufferLimit: 100}).Execute(context.Background(), testModule{}, &modules.Runtime{}, dir)
 	if result.Status != "completed" {
@@ -44,7 +47,7 @@ func TestExecuteRedactsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "before [REDACTED] after" {
+	if string(data) != "before secret after" {
 		t.Fatalf("%q", data)
 	}
 }
@@ -110,4 +113,36 @@ func TestExecuteRedactsErrorSummaryRecordedInHistory(t *testing.T) {
 	if !strings.Contains(result.Err.Error(), "[REDACTED]") {
 		t.Fatalf("error summary was not redacted: %v", result.Err)
 	}
+}
+
+// A recovered credential in tool output is evidence, whether it matches the runtime
+// password exactly or only partially.
+func TestExecutePreservesRecoveredCredentials(t *testing.T) {
+	for name, finding := range map[string]string{
+		"identical to the input password": "[!] Task sequence password: Sup3rSecret",
+		"contains the input password":     "[!] Task sequence password: Sup3rSecret-tail",
+		"unrelated recovered value":       "[!] Network Access Account Password: 'fictional-recovered'",
+	} {
+		t.Run(name, func(t *testing.T) {
+			module := recoveringModule{finding: finding}
+			result := (Runner{Secrets: []string{"Sup3rSecret"}, BufferLimit: 4096}).Execute(context.Background(), module, &modules.Runtime{}, t.TempDir())
+			persisted, err := os.ReadFile(result.OutputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(persisted), finding) {
+				t.Fatalf("the finding was rewritten: %q", string(persisted))
+			}
+		})
+	}
+}
+
+type recoveringModule struct {
+	testModule
+	finding string
+}
+
+func (m recoveringModule) Run(_ context.Context, _ *modules.Runtime, sink modules.OutputSink) error {
+	_, err := sink.Write([]byte(m.finding + "\n"))
+	return err
 }

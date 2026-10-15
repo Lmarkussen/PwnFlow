@@ -110,6 +110,14 @@ type EndpointStore interface {
 	Endpoints(ctx context.Context, domain string) ([]Endpoint, error)
 }
 
+// DetailRefresher is implemented by modules whose Module Information needs work that
+// is far too expensive to repeat while a frame is being drawn: a dependency probe, a
+// revision check, a store read. DetailLines then only reads what this stored, and the
+// TUI calls it off the render path.
+type DetailRefresher interface {
+	RefreshDetails(ctx context.Context, runtime *Runtime)
+}
+
 // ElevationPolicy is the operator's decision about running a module's external tool
 // through sudo. The TUI asks for it before a batch starts; a module consults it at
 // run time and never elevates itself, and a module that never asks is unaffected.

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -227,6 +228,7 @@ func TestSCCMModuleInformation(t *testing.T) {
 	m.width, m.height = 170, 54
 	m.resizeOutput()
 	m.setToolFamily(sccmFamilyIndex)
+	refreshDetails(t, m)
 
 	m.cursor = rowOf(t, m, "sccmhunter")
 	frame := renderFrame(m)
@@ -244,6 +246,20 @@ func TestSCCMModuleInformation(t *testing.T) {
 	}
 	if strings.Contains(frame, "Sup3rSecret") {
 		t.Fatal("Module Information leaked a credential")
+	}
+}
+
+// refreshDetails runs the Module Information refresh the ticker issues, so a test can
+// assert what the pane shows once the snapshot has been collected off the render path.
+func refreshDetails(t *testing.T, m *model) {
+	t.Helper()
+	m.detailsRefreshed = time.Time{}
+	command := m.refreshDetailsCommand()
+	if command == nil {
+		return
+	}
+	if msg := command(); msg != nil {
+		m.Update(msg)
 	}
 }
 
@@ -486,5 +502,108 @@ func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
 		if id == "pxethief-like" {
 			t.Fatal("the privileged module ran without approval")
 		}
+	}
+}
+
+// Navigation must not run the tools' capability probes: the expensive work belongs to
+// the refresh, and the refresh is skipped while the snapshot is fresh.
+func TestNavigationDoesNotProbeTheTools(t *testing.T) {
+	record := sccmTooling(t)
+	database, err := storage.Open(filepath.Join(t.TempDir(), "enumeration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	registered := []modules.Module{sccm.SCCMHunter{Resolver: sccmResolver{"pxe01.example.test": {"198.51.100.41"}}}, sccm.PXEThief{}}
+	m := newModel(context.Background(), testConfig(t), database, registered, []int64{1, 2}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+	m.focus = focusModules
+	refreshDetails(t, m)
+
+	countInvocations := func() int {
+		contents, readErr := os.ReadFile(record)
+		if readErr != nil {
+			return 0
+		}
+		lines := strings.Split(strings.TrimSpace(string(contents)), "\n")
+		if len(lines) == 1 && lines[0] == "" {
+			return 0
+		}
+		return len(lines)
+	}
+	before := countInvocations()
+	if before == 0 {
+		t.Fatal("the initial refresh did not probe the tool, so this test would prove nothing")
+	}
+
+	start := time.Now()
+	for i := 0; i < 40; i++ {
+		m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+		_ = m.View()
+		m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+		_ = m.View()
+	}
+	elapsed := time.Since(start)
+	if after := countInvocations(); after != before {
+		t.Fatalf("navigation probed the tools: %d invocations before, %d after", before, after)
+	}
+	if perFrame := elapsed / 80; perFrame > 20*time.Millisecond {
+		t.Fatalf("a frame took %v, which means work is still on the render path", perFrame)
+	}
+}
+
+// Module Information is filled by the refresh, not by rendering.
+func TestModuleInformationComesFromTheSnapshot(t *testing.T) {
+	sccmTooling(t)
+	database, err := storage.Open(filepath.Join(t.TempDir(), "enumeration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	registered := []modules.Module{sccm.SCCMHunter{Resolver: sccmResolver{}}, sccm.PXEThief{}}
+	m := newModel(context.Background(), testConfig(t), database, registered, []int64{1, 2}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+
+	// Before any refresh the pane says so instead of probing.
+	if frame := renderFrame(m); !strings.Contains(frame, "being collected") {
+		t.Fatalf("the pane probed before a refresh:\n%s", frame)
+	}
+	refreshDetails(t, m)
+	m.cursor = rowOf(t, m, "sccmhunter")
+	if frame := renderFrame(m); !strings.Contains(frame, "SCCMhunter: installed") {
+		t.Fatalf("the refresh did not fill the pane:\n%s", frame)
+	}
+}
+
+// BenchmarkSCCMNavigationFrame measures one rendered frame in the SCCM scope, which is
+// the cost an arrow key pays.
+func BenchmarkSCCMNavigationFrame(b *testing.B) {
+	tools := b.TempDir()
+	os.Setenv("PWNFLOW_TOOLS_DIR", tools)
+	for _, tool := range []struct{ root, script string }{{"sccmhunter", "sccmhunter.py"}, {"PXEThief", "pxethief.py"}} {
+		if err := os.MkdirAll(filepath.Join(tools, tool.root, ".venv", "bin"), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		interpreter := "#!/bin/sh\ncase \"$1\" in\n--help) echo \"Commands:\"; echo \"  find\"; echo \"  show\"; exit 0 ;;\nfind) echo \"-u -p -d -dc-ip -ldaps\"; exit 0 ;;\n-h) echo \"pxethief.py 1\"; exit 0 ;;\nesac\nexit 0\n"
+		if err := os.WriteFile(filepath.Join(tools, tool.root, ".venv", "bin", "python3"), []byte(interpreter), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tools, tool.root, tool.script), []byte("# entry\n"), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	registered := []modules.Module{sccm.SCCMHunter{}, sccm.PXEThief{}}
+	cfg := config.Config{Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret", Root: b.TempDir()}
+	model := newModel(context.Background(), cfg, nil, registered, []int64{1, 2}, 1, "bench")
+	model.width, model.height = 170, 54
+	model.resizeOutput()
+	model.setToolFamily(sccmFamilyIndex)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = model.View()
 	}
 }

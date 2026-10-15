@@ -8,6 +8,96 @@ import (
 
 const replacement = "[REDACTED]"
 
+// ArgumentRedactor masks the value of an authentication option that PwnFlow put on a
+// command line, and nothing else.
+//
+// Streamed tool output is an assessment finding: a recovered credential, a value that
+// happens to match one PwnFlow was given, or a task-sequence identifier must reach the
+// operator exactly as the tool produced it. Replacing occurrences of a secret by value
+// rewrote findings, so the stream is filtered structurally instead: only a value in an
+// option position for one of the credential-bearing options is masked.
+type ArgumentRedactor struct {
+	mutex   sync.Mutex
+	pending []byte
+	options []string
+}
+
+// credentialOptions are the option names whose value is a credential.
+var credentialOptions = []string{
+	"-p", "--password", "--ldappassword", "-H", "--hashes", "--aes", "--pfx-pass",
+	"--key-pass", "--cert-pass", "-password", "-hashes",
+}
+
+// NewArgumentRedactor returns a redactor that masks those options' values. Passing
+// explicit secrets has no effect: masking is decided by position, not by matching text.
+func NewArgumentRedactor(secrets ...string) *ArgumentRedactor {
+	return &ArgumentRedactor{options: credentialOptions}
+}
+
+// Write buffers until a whole line is available, so an option and its value cannot be
+// separated by chunk boundaries.
+func (r *ArgumentRedactor) Write(p []byte) ([]byte, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.pending = append(r.pending, p...)
+	index := bytes.LastIndexByte(r.pending, '\n')
+	if index < 0 {
+		return nil, nil
+	}
+	out := append([]byte(nil), r.pending[:index+1]...)
+	r.pending = append([]byte(nil), r.pending[index+1:]...)
+	return r.mask(out), nil
+}
+
+// Flush returns whatever partial line is left.
+func (r *ArgumentRedactor) Flush() []byte {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	out := r.mask(append([]byte(nil), r.pending...))
+	r.pending = nil
+	return out
+}
+
+// mask replaces the value that follows a credential option, leaving the rest of the
+// line untouched.
+func (r *ArgumentRedactor) mask(in []byte) []byte {
+	fields := bytes.Fields(in)
+	if len(fields) == 0 {
+		return in
+	}
+	out := append([]byte(nil), in...)
+	for index := 0; index < len(fields); index++ {
+		field := string(fields[index])
+		if !r.isCredentialOption(field) {
+			continue
+		}
+		if separator := strings.IndexByte(field, '='); separator >= 0 {
+			// The option=value form carries its own value.
+			out = bytes.Replace(out, []byte(field[separator+1:]), []byte(replacement), 1)
+			continue
+		}
+		if index+1 >= len(fields) {
+			continue
+		}
+		out = bytes.Replace(out, fields[index+1], []byte(replacement), 1)
+	}
+	return out
+}
+
+// isCredentialOption reports whether a field names a credential option.
+func (r *ArgumentRedactor) isCredentialOption(field string) bool {
+	name := field
+	if index := strings.IndexByte(name, '='); index >= 0 {
+		name = name[:index]
+	}
+	for _, option := range r.options {
+		if name == option {
+			return true
+		}
+	}
+	return false
+}
+
 type Redactor struct {
 	secrets []string
 	pending []byte
