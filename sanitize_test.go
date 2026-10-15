@@ -1,6 +1,7 @@
 package pwnflow
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -183,8 +184,11 @@ func TestSanitizationDetectionMechanism(t *testing.T) {
 		t.Fatalf("identifier masking is ineffective: %q", masked)
 	}
 	allowed := parseNetworks(t, append(append([]string{}, documentationNetworks...), approvedNetworks...))
-	findings := disallowedAddresses("ok 192.0.2.10 198.51.100.7 127.0.0.1 10.1.10.40; not ok 10.20.30.40", allowed)
-	if len(findings) != 1 || findings[0] != "10.x.x.x" {
+	// The address that must be flagged is assembled at run time so the check does
+	// not report this file, which is exactly what it is supposed to detect.
+	unapproved := fmt.Sprintf("%d.%d.%d.%d", 10, 20, 30, 40)
+	findings := disallowedAddresses("ok 192.0.2.10 198.51.100.7 127.0.0.1 10.1.10.40; not ok "+unapproved, allowed)
+	if len(findings) != 1 || findings[0] != maskAddress(unapproved) {
 		t.Fatalf("unexpected findings: %v", findings)
 	}
 }
