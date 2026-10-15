@@ -162,8 +162,35 @@ func readLoggedTMPDIR(t *testing.T, logPath string) string {
 
 // The default invocation must only manage the supported Kali dependencies and
 // must not reach for APT, sudo, pipx, or any BloodHound component.
+
+// installSCCMToolLayouts puts a functional SCCMhunter and PXEThief layout in the
+// tools root, so a default installer run reuses them instead of installing.
+func installSCCMToolLayouts(t *testing.T, bin string) {
+	t.Helper()
+	// A verified checkout reports its recorded revision through git.
+	writeExecutable(t, bin, "git", `case "$*" in *"rev-parse HEAD"*) echo "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0" ;; esac; exit 0`)
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	for _, tool := range []struct{ root, script string }{{"sccmhunter", "sccmhunter.py"}, {"PXEThief", "pxethief.py"}} {
+		if err := os.MkdirAll(filepath.Join(toolsRoot, tool.root, ".venv", "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(toolsRoot, tool.root, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeExecutable(t, filepath.Join(toolsRoot, tool.root, ".venv", "bin"), "python3", `case "$2" in --help) echo help; exit 0 ;; esac; exit 0`)
+		files := map[string]string{tool.script: "# entry\n", "requirements.txt": "scapy\n", "settings.ini": "auto_exploit_blank_password = 0\n", ".pwnflow-pr11": "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0\n"}
+		for name, contents := range files {
+			if err := os.WriteFile(filepath.Join(toolsRoot, tool.root, name), []byte(contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
+	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
@@ -240,6 +267,7 @@ func TestInstallerRefusesRetiredBloodHoundFlagsWithoutInstalling(t *testing.T) {
 
 func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	bin := t.TempDir()
+	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
@@ -265,6 +293,7 @@ func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	// messaging, no retired installer rows, and no summary entry. The mock
 	// directory is named after this test, so it is normalised away first.
 	narrated := strings.ReplaceAll(stdout, bin, "<mock>")
+	narrated = strings.ReplaceAll(narrated, os.Getenv("PWNFLOW_TOOLS_DIR"), "<tools>")
 	if strings.Contains(narrated, "BloodHound") {
 		t.Errorf("installer still displays obsolete BloodHound messaging: %s", narrated)
 	}
@@ -735,5 +764,109 @@ func TestInstallerSkipsCertipyUnlessRequested(t *testing.T) {
 		if strings.Contains(output, unwanted) {
 			t.Errorf("unselected Certipy still performed installation work: %s", output)
 		}
+	}
+}
+
+// writeSCCMToolMocks provides the git, python3, and pip3 stand-ins the SCCM
+// installation paths use, and records every call.
+func writeSCCMToolMocks(t *testing.T, bin, log string) {
+	t.Helper()
+	writeExecutable(t, bin, "git", `printf '%s\n' "$*" >> "`+log+`"
+case "$1" in
+clone)
+  target="${!#}"
+  mkdir -p "$target"
+  printf '%s\n' '#!/bin/sh' 'echo "fake tool help"' > "$target/requirements.txt.junk"
+  printf '%s\n' 'requirements' > "$target/requirements.txt"
+  printf '%s\n' '# entry script' > "$target/sccmhunter.py"
+  printf '%s\n' '# entry script' > "$target/pxethief.py"
+  printf '%s\n' '[GENERAL SETTINGS]' > "$target/settings.ini"
+  ;;
+esac
+case "$*" in
+*"rev-parse HEAD"*) echo "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0" ;;
+esac
+exit 0`)
+	writeExecutable(t, bin, "python3", `printf '%s\n' "python3 $*" >> "`+log+`"
+if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+  mkdir -p "$3/.venv/bin"
+  cat > "$3/.venv/bin/python3" <<'MOCK'
+#!/bin/sh
+case "$2" in --help) echo "fake help"; exit 0 ;; esac
+exit 0
+MOCK
+  cat > "$3/.venv/bin/pip3" <<'MOCK'
+#!/bin/sh
+exit 0
+MOCK
+  chmod 700 "$3/.venv/bin/python3" "$3/.venv/bin/pip3"
+fi
+exit 0`)
+}
+
+// A checkout on another revision, or one whose environment is damaged, is
+// diagnosed rather than assumed to work.
+func TestInstallerDiagnosesDamagedPXEThiefCheckout(t *testing.T) {
+	bin := t.TempDir()
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	writeExecutable(t, bin, "chmod", `exec /bin/chmod "$@"`)
+	writeExecutable(t, bin, "git", `case "$*" in
+*"rev-parse HEAD"*) echo "0123456789abcdef0123456789abcdef01234567" ;;
+*fetch*) echo "fatal: couldn't find remote ref pull/11/head" >&2; exit 128 ;;
+esac
+exit 0`)
+	writeFailingPackageManagerMocks(t, bin)
+	if err := os.MkdirAll(filepath.Join(toolsRoot, "PXEThief", ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(toolsRoot, "PXEThief", ".venv", "bin"), "python3", `exit 0`)
+	if err := os.WriteFile(filepath.Join(toolsRoot, "PXEThief", "pxethief.py"), []byte("# entry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(toolsRoot, "PXEThief", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsRoot, "PXEThief", ".pwnflow-pr11"), []byte("8ca8a7905c3aec98b9b1e610c03688cbd361ddb0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runInstallerSplit(t, bin, "--with-pxethief")
+	if err == nil {
+		t.Fatalf("a checkout on another revision was accepted:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "couldn't find remote ref") {
+		t.Errorf("the actual git error was not reported: %s", stderr)
+	}
+	if !strings.Contains(stdout, "PXEThief: Failed (pull/11 could not be fetched)") {
+		t.Errorf("the failure was not recorded accurately: %s", stdout)
+	}
+}
+
+// The default invocation manages the SCCM tools too, and an unselected tool is
+// reported as skipped without installation work.
+func TestInstallerSCCMToolSelection(t *testing.T) {
+	bin := t.TempDir()
+	installSCCMToolLayouts(t, bin)
+	writeFailingPackageManagerMocks(t, bin)
+	output, err := runInstaller(t, bin, "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--with-sccmhunter", "--with-pxethief"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("help missing %s: %s", want, output)
+		}
+	}
+	skipped, err := runInstaller(t, bin, "--with-netexec")
+	if err == nil {
+		// nxc is absent in this mock set, so a failure is expected; what matters is
+		// that the SCCM tools were not touched.
+		_ = skipped
+	}
+	if strings.Contains(skipped, "SCCMhunter: Installed") || strings.Contains(skipped, "PXEThief: Installed") {
+		t.Errorf("unselected SCCM tools were installed: %s", skipped)
+	}
+	if !strings.Contains(skipped, "SCCMhunter: Skipped") || !strings.Contains(skipped, "PXEThief: Skipped") {
+		t.Errorf("unselected SCCM tools were not reported as skipped: %s", skipped)
 	}
 }

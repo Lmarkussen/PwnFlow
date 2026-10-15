@@ -1,6 +1,9 @@
 package modules
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type ToolFamily string
 
@@ -8,11 +11,12 @@ const (
 	ToolFamilyNetExec         ToolFamily = "NetExec"
 	ToolFamilyADCS            ToolFamily = "AD CS"
 	ToolFamilyActiveDirectory ToolFamily = "Active Directory"
+	ToolFamilySCCM            ToolFamily = "SCCM"
 	ToolFamilyNetwork         ToolFamily = "Network"
 )
 
 func ToolFamilies() []ToolFamily {
-	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilyNetwork}
+	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork}
 }
 
 type Category string
@@ -48,6 +52,8 @@ func CategoriesForFamily(family ToolFamily) []Category {
 		return []Category{CategoryEnumeration, Category("Configuration Auditing"), CategoryPrivilegeEscalation}
 	case ToolFamilyActiveDirectory:
 		return []Category{CategoryEnumeration, Category("Permissions Auditing"), CategoryPrivilegeEscalation}
+	case ToolFamilySCCM:
+		return []Category{CategoryEnumeration}
 	case ToolFamilyNetwork:
 		return []Category{Category("Host Discovery"), Category("Service Enumeration"), Category("Security Auditing")}
 	default:
@@ -79,7 +85,39 @@ const (
 	SensitivitySensitive Sensitivity = "sensitive"
 )
 
-type Runtime struct{ Target, Domain, Username, Password, ResultsRoot string }
+// Endpoint is one SCCM-related system discovered during an assessment.
+//
+// Address is the validated IP address a prober can be pointed at; it is empty
+// when discovery produced only a name that did not resolve, in which case the
+// record is still kept so the operator can see what was found. Role and Source
+// carry the provenance needed to explain why an address is in the list, and
+// Domain scopes the record to the assessment it was discovered in. Credentials
+// are never part of an endpoint.
+type Endpoint struct {
+	Address      string
+	Hostname     string
+	Role         string
+	Source       string
+	Domain       string
+	DiscoveredAt time.Time
+}
+
+// EndpointStore persists and reports endpoints discovered by the current
+// assessment. Discovery state is scoped by domain so a run can never consume
+// another assessment's results.
+type EndpointStore interface {
+	RecordEndpoints(ctx context.Context, endpoints []Endpoint) error
+	Endpoints(ctx context.Context, domain string) ([]Endpoint, error)
+}
+
+type Runtime struct {
+	Target, Domain, Username, Password, ResultsRoot string
+	// Endpoints is the assessment's discovery store. It is optional: a runtime
+	// built without one still runs modules, which then report that discovery
+	// cannot be persisted or read.
+	Endpoints EndpointStore
+}
+
 type OutputSink interface{ Write([]byte) (int, error) }
 type Module interface {
 	ID() string
@@ -115,6 +153,13 @@ type CommandPreviewProvider interface {
 // contributes several modules under one installed program.
 type DependencyKeyProvider interface {
 	DependencyKey() string
+}
+
+// BatchPrerequisiteProvider is implemented by modules that must run after other
+// modules in the same batch, such as a prober that consumes a discovery module's
+// freshly written results. The named modules are matched by their IDs.
+type BatchPrerequisiteProvider interface {
+	BatchPrerequisites() []string
 }
 
 // DetailProvider is implemented by modules that expose their fixed configuration

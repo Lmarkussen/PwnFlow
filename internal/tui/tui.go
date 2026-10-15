@@ -10,6 +10,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
+	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
@@ -25,6 +26,11 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)
 	}
+	// SCCMhunter is registered before PXEThief: a batch that selects both has to
+	// discover before it probes, and PXEThief consumes whatever the assessment's
+	// endpoint store holds when it runs.
+	registry.Register(sccm.SCCMHunter{Resolver: sccm.SystemResolver{}})
+	registry.Register(sccm.PXEThief{})
 	registered := registry.All()
 	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
 	if err != nil {

@@ -136,7 +136,7 @@ func (m *model) infoView() string {
 		}
 	}
 	command := fmt.Sprintf("%s %s %s -u %s -p [REDACTED] ...", module.Tool(), strings.ToLower(string(module.Protocol())), m.cfg.Target, m.cfg.Username)
-	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
+	runtime := m.moduleRuntime()
 	if preview, ok := module.(modules.CommandPreviewProvider); ok {
 		command = preview.CommandPreview(runtime)
 	}

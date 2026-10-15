@@ -400,6 +400,7 @@ func (m *model) startBatch(indices []int, name string) tea.Cmd {
 		m.status = "no eligible modules to run"
 		return nil
 	}
+	items = orderBatch(items)
 	m.batchItems = items
 	m.batch = runner.NewBatchRun(items)
 	m.batchRecorded = false
@@ -409,10 +410,43 @@ func (m *model) startBatch(indices []int, name string) tea.Cmd {
 	m.started = time.Now()
 	m.outputRawChange = time.Time{}
 	m.outputFollow = true
-	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, Password: m.cfg.Password, ResultsRoot: m.cfg.ResultsRoot()}
+	runtime := m.moduleRuntime()
+	runtime.Password = m.cfg.Password
 	r := runner.Runner{Secrets: []string{m.cfg.Password}, BufferLimit: 512 * 1024}
 	m.batch.Start(m.ctx, items, runtime, m.cfg.ResultsRoot(), r)
 	return nil
+}
+
+// orderBatch keeps the batch in registry order except where a module declares that
+// it must run after another one, such as a prober that consumes a discovery
+// module's fresh results. The relation is resolved by a stable topological pass, so
+// the order stays deterministic whatever order the items arrived in.
+func orderBatch(items []runner.BatchItem) []runner.BatchItem {
+	position := make(map[string]int, len(items))
+	for index, item := range items {
+		position[item.Module.ID()] = index
+	}
+	ordered := make([]runner.BatchItem, 0, len(items))
+	placed := make(map[int]bool, len(items))
+	var visit func(index int)
+	visit = func(index int) {
+		if placed[index] {
+			return
+		}
+		placed[index] = true
+		if provider, ok := items[index].Module.(modules.BatchPrerequisiteProvider); ok {
+			for _, required := range provider.BatchPrerequisites() {
+				if requiredIndex, found := position[required]; found && requiredIndex != index {
+					visit(requiredIndex)
+				}
+			}
+		}
+		ordered = append(ordered, items[index])
+	}
+	for index := range items {
+		visit(index)
+	}
+	return ordered
 }
 
 func (m *model) syncBatch() tea.Cmd {

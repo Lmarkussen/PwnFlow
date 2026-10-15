@@ -21,11 +21,17 @@ const (
 	InstallOfficialBinary      InstallMethod = "official binary/release"
 	InstallOfficialApplication InstallMethod = "official application"
 	InstallCargo               InstallMethod = "cargo"
+	InstallVenv                InstallMethod = "python virtual environment"
 )
 
 const (
 	DetectExecutable    DetectionMethod = "executable"
 	DetectDebianPackage DetectionMethod = "debian-package"
+	// DetectToolLayout finds a tool shipped as a source checkout with its own
+	// interpreter, such as a Python virtual environment created inside the
+	// checkout. The interpreter is invoked by path, so no shell activation is
+	// involved.
+	DetectToolLayout DetectionMethod = "tool-layout"
 )
 
 const (
@@ -34,7 +40,19 @@ const (
 	BloodHoundPy ID = "bloodhound-ce-python"
 	RustHoundCE  ID = "rusthound-ce"
 	Certipy      ID = "certipy"
+	SCCMHunter   ID = "sccmhunter"
+	PXEThief     ID = "pxethief"
 )
+
+// Layout locates a tool that is a source checkout with its own interpreter.
+type Layout struct {
+	// Roots are candidate checkout directories, in order.
+	Roots []string
+	// Script is the entry script inside a root.
+	Script string
+	// Interpreters are candidate interpreter paths inside a root, in order.
+	Interpreters []string
+}
 
 type Definition struct {
 	ID                   ID
@@ -42,17 +60,21 @@ type Definition struct {
 	Executable           string
 	ExecutableCandidates []string
 	Install              string
-	InstallMethod        InstallMethod
-	Package              string
-	Required             bool
-	ProbeArgs            []string
-	VersionArgs          []string
-	Detection            DetectionMethod
+	// InstallHint, when set, is the operator-facing remedy verbatim.
+	InstallHint   string
+	InstallMethod InstallMethod
+	Package       string
+	Required      bool
+	ProbeArgs     []string
+	VersionArgs   []string
+	Detection     DetectionMethod
 	// ProbeMustContain lists text the capability probe must report. It exists so
 	// a definition can require the tool to identify itself, which keeps an
 	// unrelated program that happens to share a command name from counting as
 	// installed.
 	ProbeMustContain []string
+	// Layout is used when Detection is DetectToolLayout.
+	Layout *Layout
 }
 
 type Status struct {
@@ -62,6 +84,10 @@ type Status struct {
 	Detail          string
 	Version         string
 	FoundExecutable string
+	// Root, Interpreter, and Script describe a tool found through a Layout.
+	Root        string
+	Interpreter string
+	Script      string
 }
 
 type Registry struct{ definitions []Definition }
@@ -80,7 +106,29 @@ func DefaultRegistry() Registry {
 		// tried, and the probe has to show the AD CS tool's own banner so an
 		// unrelated command named certipy is never mistaken for it.
 		{ID: Certipy, DisplayName: "Certipy (AD CS)", Executable: "certipy-ad", ExecutableCandidates: []string{"certipy"}, Install: "install.sh --with-certipy", InstallMethod: InstallAPT, Package: "certipy-ad", Required: false, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}, ProbeMustContain: []string{"Active Directory Certificate Services"}},
+		// SCCMhunter and PXEThief are installed as source checkouts with their own
+		// virtual environment, so the interpreter is invoked by path. SCCMhunter
+		// also accepts an existing console script, such as a pipx installation.
+		{ID: SCCMHunter, DisplayName: "SCCMhunter", Executable: "sccmhunter", Install: "install.sh --with-sccmhunter", InstallHint: "./install.sh --with-sccmhunter", InstallMethod: InstallVenv, Package: "sccmhunter", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("sccmhunter"), Script: "sccmhunter.py", Interpreters: []string{".venv/bin/python3"}}},
+		{ID: PXEThief, DisplayName: "PXEThief", Install: "install.sh --with-pxethief", InstallHint: "./install.sh --with-pxethief", InstallMethod: InstallVenv, Package: "PXEThief", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, Layout: &Layout{Roots: ToolRoots("PXEThief"), Script: "pxethief.py", Interpreters: []string{".venv/bin/python3"}}},
 	}}
+}
+
+// ToolRoots returns the candidate checkout directories for a PwnFlow-managed
+// tool, in order: an explicitly configured tools directory, then the user's data
+// directory. install.sh resolves the same roots.
+func ToolRoots(name string) []string {
+	if configured := strings.TrimSpace(os.Getenv("PWNFLOW_TOOLS_DIR")); configured != "" {
+		return []string{filepath.Join(configured, name)}
+	}
+	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
+		return []string{filepath.Join(dataHome, "pwnflow", "tools", name)}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return []string{filepath.Join(home, ".local", "share", "pwnflow", "tools", name)}
 }
 
 func (r Registry) All() []Definition { return append([]Definition(nil), r.definitions...) }
@@ -105,6 +153,9 @@ func (r Registry) CheckOne(ctx context.Context, id ID) Status {
 func check(ctx context.Context, definition Definition) Status {
 	if definition.Detection == DetectDebianPackage {
 		return checkDebianPackage(ctx, definition)
+	}
+	if definition.Detection == DetectToolLayout {
+		return checkToolLayout(ctx, definition)
 	}
 	status := Status{Definition: definition, State: "missing"}
 	path, executable, err := findExecutable(ctx, definition)
@@ -155,6 +206,109 @@ func check(ctx context.Context, definition Definition) Status {
 	}
 	status.Detail = path
 	return status
+}
+
+// toolCommand is the resolved invocation of a tool found through a Layout.
+func (s Status) toolCommand() (string, []string, bool) {
+	if s.Interpreter == "" || s.Script == "" {
+		return "", nil, false
+	}
+	return s.Interpreter, []string{s.Script}, true
+}
+
+// checkToolLayout detects a tool that lives in a source checkout with its own
+// interpreter. An existing console script on PATH is accepted first, so a tool the
+// operator installed another way is reused instead of reinstalled.
+func checkToolLayout(ctx context.Context, definition Definition) Status {
+	status := Status{Definition: definition, State: "missing"}
+	if definition.Layout == nil {
+		status.State = "broken"
+		status.Detail = fmt.Sprintf("%s has no tool layout to search", definition.DisplayName)
+		return status
+	}
+	if definition.Executable != "" {
+		if path, _, err := findExecutable(ctx, definition); err == nil {
+			status.FoundExecutable = path
+			status.Root = filepath.Dir(path)
+			if !probeSucceeds(ctx, path, definition.ProbeArgs, &status) {
+				return status
+			}
+			status.Detail = path
+			return status
+		}
+	}
+	probeArgs := definition.ProbeArgs
+	if len(probeArgs) == 0 {
+		probeArgs = []string{"--help"}
+	}
+	reasons := make([]string, 0, len(definition.Layout.Roots))
+	for _, root := range definition.Layout.Roots {
+		script := filepath.Join(root, definition.Layout.Script)
+		if !isRegularFile(script) {
+			reasons = append(reasons, fmt.Sprintf("%s is missing", script))
+			continue
+		}
+		interpreterPath := ""
+		for _, candidate := range definition.Layout.Interpreters {
+			if isExecutableFile(filepath.Join(root, candidate)) {
+				interpreterPath = filepath.Join(root, candidate)
+				break
+			}
+		}
+		if interpreterPath == "" {
+			reasons = append(reasons, fmt.Sprintf("%s has no usable interpreter (%s); re-run %s", root, strings.Join(definition.Layout.Interpreters, ", "), installationDescription(definition)))
+			continue
+		}
+		status.Root, status.Interpreter, status.Script = root, interpreterPath, script
+		if !probeSucceeds(ctx, interpreterPath, append([]string{script}, probeArgs...), &status) {
+			return status
+		}
+		status.Detail = interpreterPath + " " + script
+		return status
+	}
+	status.Detail = fmt.Sprintf("%s is not installed; install with %s", definition.DisplayName, installationDescription(definition))
+	if len(reasons) > 0 {
+		status.Detail = status.Detail + " (" + strings.Join(reasons, "; ") + ")"
+	}
+	return status
+}
+
+// probeSucceeds runs the capability probe and records a broken state when the
+// installed tool cannot run.
+func probeSucceeds(ctx context.Context, program string, arguments []string, status *Status) bool {
+	var stdout, stderr bytes.Buffer
+	probe := exec.CommandContext(ctx, program, arguments...)
+	probe.Stdout, probe.Stderr = &stdout, &stderr
+	if err := probe.Run(); err != nil {
+		status.State = "broken"
+		if ctx.Err() != nil {
+			status.State = "check failed"
+		}
+		status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", status.DisplayName, strings.Join(append([]string{program}, arguments...), " "), diagnostic(stdout.String(), stderr.String(), err))
+		status.Available = false
+		return false
+	}
+	for _, required := range status.ProbeMustContain {
+		if !strings.Contains(stdout.String(), required) && !strings.Contains(stderr.String(), required) {
+			status.State = "broken"
+			status.Detail = fmt.Sprintf("%s at %s did not identify itself during the capability probe (expected %q)", status.DisplayName, program, required)
+			status.Available = false
+			return false
+		}
+	}
+	status.Available = true
+	status.State = "installed"
+	return true
+}
+
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
 }
 
 func checkDebianPackage(ctx context.Context, definition Definition) Status {
@@ -280,6 +434,9 @@ func RefreshExecutablePath(ctx context.Context) error {
 }
 
 func installationDescription(definition Definition) string {
+	if definition.InstallHint != "" {
+		return definition.InstallHint
+	}
 	if definition.InstallMethod == "" {
 		return definition.Install
 	}

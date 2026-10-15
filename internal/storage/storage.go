@@ -26,8 +26,13 @@ func Open(path string) (*DB, error) {
 	}
 	return d, nil
 }
+
+// migrate creates the schema. The endpoints table holds SCCM discovery state:
+// addresses and host names only, scoped by assessment domain, with the role and
+// provenance that explain where each record came from. Credentials are never
+// stored here.
 func (d *DB) migrate() error {
-	_, err := d.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, target_address TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL, protocol TEXT NOT NULL, description TEXT NOT NULL, output_filename TEXT NOT NULL); CREATE TABLE IF NOT EXISTS executions (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, module_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, status TEXT NOT NULL, exit_code INTEGER, output_path TEXT, error_summary TEXT, FOREIGN KEY(target_id) REFERENCES targets(id), FOREIGN KEY(module_id) REFERENCES modules(id)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, FOREIGN KEY(target_id) REFERENCES targets(id));`)
+	_, err := d.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, target_address TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL, protocol TEXT NOT NULL, description TEXT NOT NULL, output_filename TEXT NOT NULL); CREATE TABLE IF NOT EXISTS executions (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, module_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, status TEXT NOT NULL, exit_code INTEGER, output_path TEXT, error_summary TEXT, FOREIGN KEY(target_id) REFERENCES targets(id), FOREIGN KEY(module_id) REFERENCES modules(id)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, FOREIGN KEY(target_id) REFERENCES targets(id)); CREATE TABLE IF NOT EXISTS endpoints (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, address TEXT NOT NULL, hostname TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, source TEXT NOT NULL, discovered_at TEXT NOT NULL, UNIQUE(domain, address, role, hostname));`)
 	return err
 }
 func (d *DB) UpsertTarget(ctx context.Context, domain, address string) error {
@@ -62,4 +67,62 @@ func (d *DB) RecordExecutionFor(ctx context.Context, domain, address, moduleName
 		return err
 	}
 	return d.RecordExecution(ctx, targetID, moduleID, started, finished, status, exitCode, output, summary)
+}
+
+// EndpointRecord is one stored discovery record. It mirrors the assessment's
+// endpoint model: a validated address (when discovery produced one), the name it
+// was discovered as, the SCCM role, the provenance, and when it was seen.
+type EndpointRecord struct {
+	Address      string
+	Hostname     string
+	Role         string
+	Source       string
+	Domain       string
+	DiscoveredAt time.Time
+}
+
+// RecordEndpoints stores discovery results for one domain, replacing any earlier
+// record for the same domain, address, role, and hostname so repeated runs do not
+// duplicate rows.
+func (d *DB) RecordEndpoints(ctx context.Context, endpoints []EndpointRecord) error {
+	transaction, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	statement, err := transaction.PrepareContext(ctx, `INSERT INTO endpoints(domain,address,hostname,role,source,discovered_at) VALUES(?,?,?,?,?,?) ON CONFLICT(domain,address,role,hostname) DO UPDATE SET source=excluded.source, discovered_at=excluded.discovered_at`)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+	for _, endpoint := range endpoints {
+		hostname := endpoint.Hostname
+		if _, err := statement.ExecContext(ctx, endpoint.Domain, endpoint.Address, hostname, endpoint.Role, endpoint.Source, endpoint.DiscoveredAt.UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
+
+// Endpoints returns the stored discovery records of one domain, ordered by role
+// and address so callers get deterministic results.
+func (d *DB) Endpoints(ctx context.Context, domain string) ([]EndpointRecord, error) {
+	rows, err := d.QueryContext(ctx, `SELECT address, hostname, role, source, domain, discovered_at FROM endpoints WHERE domain=? ORDER BY role ASC, address ASC, hostname ASC`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]EndpointRecord, 0)
+	for rows.Next() {
+		var record EndpointRecord
+		var discovered string
+		if err := rows.Scan(&record.Address, &record.Hostname, &record.Role, &record.Source, &record.Domain, &discovered); err != nil {
+			return nil, err
+		}
+		if parsed, parseErr := time.Parse(time.RFC3339, discovered); parseErr == nil {
+			record.DiscoveredAt = parsed
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }

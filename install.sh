@@ -4,9 +4,13 @@ set -euo pipefail
 install_rusthound_ce=0
 install_netexec_requested=0
 install_certipy=0
+install_sccmhunter=0
+install_pxethief=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
 certipy_status="Skipped"
+sccmhunter_status="Skipped"
+pxethief_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
@@ -14,6 +18,8 @@ for argument in "$@"; do
     --with-netexec) install_netexec_requested=1 ;;
     --with-rusthound-ce) install_rusthound_ce=1 ;;
     --with-certipy) install_certipy=1 ;;
+    --with-sccmhunter) install_sccmhunter=1 ;;
+    --with-pxethief) install_pxethief=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -21,10 +27,12 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief]"
       echo ""
       echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
-      echo "Certipy (AD CS enumeration, from the certipy-ad package)."
+      echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
+      echo "tooling SCCMhunter and PXEThief as source checkouts with their own"
+      echo "virtual environments. No shell activation is required."
       echo "Kali Linux is the only supported installation target."
       exit 0
       ;;
@@ -38,6 +46,8 @@ if [[ $# -eq 0 ]]; then
   install_netexec_requested=1
   install_rusthound_ce=1
   install_certipy=1
+  install_sccmhunter=1
+  install_pxethief=1
 fi
 
 ensure_sudo_authenticated() {
@@ -442,6 +452,190 @@ install_certipy() {
   echo "Certipy installed and functional at ${executable}: $(certipy_banner "$executable")"
 }
 
+# SCCMhunter and PXEThief are source checkouts with their own virtual
+# environment. They are invoked through that environment's interpreter by path, so
+# nothing depends on shell activation, and PwnFlow resolves the same roots.
+pwnflow_tools_root() {
+  if [[ -n "${PWNFLOW_TOOLS_DIR:-}" ]]; then
+    printf '%s\n' "${PWNFLOW_TOOLS_DIR}"
+  elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s/pwnflow/tools\n' "${XDG_DATA_HOME}"
+  else
+    printf '%s/.local/share/pwnflow/tools\n' "${HOME}"
+  fi
+}
+
+sccmhunter_root() { printf '%s/sccmhunter\n' "$(pwnflow_tools_root)"; }
+pxethief_root() { printf '%s/PXEThief\n' "$(pwnflow_tools_root)"; }
+
+# checkout_interpreter reports the interpreter to use for a checkout, or nothing.
+checkout_interpreter() {
+  local root="$1" interpreter="${1}/.venv/bin/python3"
+  if [[ -x "${interpreter}" && -f "${root}/${2}" ]]; then
+    printf '%s\n' "${interpreter}"
+  fi
+}
+
+# checkout_functional requires a usable interpreter, the entry script, and a
+# working help command: a present but damaged environment is not "installed".
+checkout_functional() {
+  local root="$1" script="$2" interpreter
+  interpreter="$(checkout_interpreter "${root}" "${script}")" || return 1
+  [[ -n "${interpreter}" ]] || return 1
+  "${interpreter}" "${root}/${script}" --help >/dev/null 2>&1
+}
+
+# ensure_checkout_environment creates the virtual environment and installs the
+# checkout's requirements, reporting whatever the tools say on failure.
+ensure_checkout_environment() {
+  local root="$1" diagnostics
+  if [[ ! -x "${root}/.venv/bin/python3" ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "python3 is unavailable; install it before installing ${root}." >&2
+      return 1
+    fi
+    echo "Creating the virtual environment in ${root}/.venv"
+    if ! python3 -m venv "${root}/.venv"; then
+      echo "python3 -m venv failed for ${root}." >&2
+      return 1
+    fi
+  fi
+  if [[ ! -f "${root}/requirements.txt" ]]; then
+    echo "${root} has no requirements.txt; the checkout looks incomplete." >&2
+    return 1
+  fi
+  echo "Installing the Python requirements of ${root} into its own environment."
+  if ! diagnostics="$("${root}/.venv/bin/pip3" install -r "${root}/requirements.txt" 2>&1)"; then
+    printf '%s\n' "${diagnostics}" >&2
+    return 1
+  fi
+  return 0
+}
+
+install_sccmhunter() {
+  local root interpreter
+  root="$(sccmhunter_root)"
+  interpreter="$(checkout_interpreter "${root}" sccmhunter.py)"
+  if [[ -n "${interpreter}" ]] && checkout_functional "${root}" sccmhunter.py; then
+    echo "SCCMhunter already installed and functional: ${interpreter} ${root}/sccmhunter.py"
+    sccmhunter_status="Already installed"
+    return 0
+  fi
+  if command -v sccmhunter >/dev/null 2>&1 && sccmhunter --help >/dev/null 2>&1; then
+    echo "SCCMhunter already installed and functional: $(command -v sccmhunter)"
+    sccmhunter_status="Already installed"
+    return 0
+  fi
+  if [[ -d "${root}" ]]; then
+    if [[ ! -f "${root}/sccmhunter.py" ]]; then
+      echo "${root} exists but is not an SCCMhunter checkout; move it aside and re-run." >&2
+      sccmhunter_status="Failed (${root} is not an SCCMhunter checkout)"
+      return 1
+    fi
+    echo "Reusing the existing SCCMhunter checkout at ${root}."
+  else
+    if ! command -v git >/dev/null 2>&1; then
+      echo "git is unavailable; SCCMhunter is installed from its repository." >&2
+      sccmhunter_status="Failed (git is unavailable)"
+      return 1
+    fi
+    echo "Cloning SCCMhunter into ${root}."
+    mkdir -p "$(dirname "${root}")"
+    if ! git clone https://github.com/garrettfoster13/sccmhunter.git "${root}"; then
+      sccmhunter_status="Failed (git clone failed)"
+      return 1
+    fi
+  fi
+  if ! ensure_checkout_environment "${root}"; then
+    sccmhunter_status="Failed (the Python environment could not be prepared)"
+    return 1
+  fi
+  if ! checkout_functional "${root}" sccmhunter.py; then
+    echo "SCCMhunter was installed at ${root} but does not run; check the output above." >&2
+    sccmhunter_status="Failed (${root}/.venv/bin/python3 ${root}/sccmhunter.py failed)"
+    return 1
+  fi
+  sccmhunter_status="Installed"
+  echo "SCCMhunter installed and functional: $(checkout_interpreter "${root}" sccmhunter.py) ${root}/sccmhunter.py"
+}
+
+# pxethief_verified reports the recorded pull/11 revision when the checkout is at
+# exactly that commit. The marker is written only after a successful fetch and
+# checkout, so a checkout on another revision is never treated as verified.
+pxethief_verified() {
+  local root="$1" recorded head
+  [[ -f "${root}/.pwnflow-pr11" ]] || return 1
+  # Read in the shell so verification needs nothing beyond the interpreter.
+  IFS= read -r recorded < "${root}/.pwnflow-pr11" || return 1
+  [[ -n "${recorded}" ]] || return 1
+  head="$(git -C "${root}" rev-parse HEAD 2>/dev/null)" || return 1
+  [[ "${head}" == "${recorded}" ]]
+}
+
+install_pxethief() {
+  local root pr_head diagnostics
+  root="$(pxethief_root)"
+  if pxethief_verified "${root}" && checkout_functional "${root}" pxethief.py; then
+    local recorded
+    IFS= read -r recorded < "${root}/.pwnflow-pr11"
+    echo "PXEThief already installed at the required revision: ${recorded} in ${root}"
+    pxethief_status="Already installed"
+    return 0
+  fi
+  if [[ -f "${root}/.pwnflow-pr11" ]]; then
+    echo "The PXEThief checkout at ${root} is incomplete or no longer at its recorded revision; re-fetching pull/11."
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is unavailable; PXEThief is installed from its repository." >&2
+    pxethief_status="Failed (git is unavailable)"
+    return 1
+  fi
+  if [[ -d "${root}/.git" ]]; then
+    echo "Reusing the existing PXEThief checkout at ${root}."
+  elif [[ -e "${root}" ]]; then
+    echo "${root} exists but is not a git checkout; move it aside and re-run." >&2
+    pxethief_status="Failed (${root} is not a git checkout)"
+    return 1
+  else
+    echo "Cloning PXEThief into ${root}."
+    mkdir -p "$(dirname "${root}")"
+    if ! git clone https://github.com/MWR-CyberSec/PXEThief.git "${root}"; then
+      pxethief_status="Failed (git clone failed)"
+      return 1
+    fi
+  fi
+  # The operational version is the pull request, never the default branch.
+  if ! diagnostics="$(git -C "${root}" fetch origin pull/11/head:pr-11 2>&1)"; then
+    printf '%s\n' "${diagnostics}" >&2
+    echo "The required pull/11 revision could not be fetched; no other revision was substituted." >&2
+    pxethief_status="Failed (pull/11 could not be fetched)"
+    return 1
+  fi
+  if ! diagnostics="$(git -C "${root}" checkout pr-11 2>&1)"; then
+    printf '%s\n' "${diagnostics}" >&2
+    pxethief_status="Failed (pull/11 could not be checked out)"
+    return 1
+  fi
+  if ! pr_head="$(git -C "${root}" rev-parse HEAD 2>/dev/null)"; then
+    echo "The pull/11 checkout has no readable commit." >&2
+    pxethief_status="Failed (the pull/11 revision could not be read)"
+    return 1
+  fi
+  printf '%s\n' "${pr_head}" > "${root}/.pwnflow-pr11"
+  chmod 600 "${root}/.pwnflow-pr11"
+  if ! ensure_checkout_environment "${root}"; then
+    pxethief_status="Failed (the Python environment could not be prepared)"
+    return 1
+  fi
+  if ! checkout_functional "${root}" pxethief.py; then
+    echo "PXEThief was installed at ${root} but does not run; check the output above." >&2
+    pxethief_status="Failed (${root}/.venv/bin/python3 ${root}/pxethief.py failed)"
+    return 1
+  fi
+  pxethief_status="Installed"
+  echo "PXEThief installed at pull/11 (${pr_head}) in ${root}"
+}
+
 print_summary() {
   echo ""
   echo "Installation summary:"
@@ -449,6 +643,8 @@ print_summary() {
   echo "  RustHound-CE: ${rusthound_ce_status}"
   echo "  Cargo: ${cargo_status}"
   echo "  Certipy: ${certipy_status}"
+  echo "  SCCMhunter: ${sccmhunter_status}"
+  echo "  PXEThief: ${pxethief_status}"
 }
 
 if [[ ${install_netexec_requested} -eq 1 ]]; then
@@ -473,6 +669,24 @@ if [[ ${install_certipy} -eq 1 ]]; then
   if ! install_certipy; then
     if [[ ${certipy_status} == "Skipped" ]]; then
       certipy_status="Failed"
+    fi
+    print_summary
+    exit 1
+  fi
+fi
+if [[ ${install_sccmhunter} -eq 1 ]]; then
+  if ! install_sccmhunter; then
+    if [[ ${sccmhunter_status} == "Skipped" ]]; then
+      sccmhunter_status="Failed"
+    fi
+    print_summary
+    exit 1
+  fi
+fi
+if [[ ${install_pxethief} -eq 1 ]]; then
+  if ! install_pxethief; then
+    if [[ ${pxethief_status} == "Skipped" ]]; then
+      pxethief_status="Failed"
     fi
     print_summary
     exit 1

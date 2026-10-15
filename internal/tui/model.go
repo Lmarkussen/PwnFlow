@@ -21,6 +21,7 @@ type model struct {
 	moduleKeys          []int
 	allModules          []modules.Module
 	allModuleIDs        []int64
+	endpoints           modules.EndpointStore
 	availability        map[string]string
 	toolFamilies        []modules.ToolFamily
 	toolFamilyIndex     int
@@ -78,9 +79,20 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 		moduleAvailability = availability[0]
 	}
 	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24}
+	m.endpoints = newEndpointStore(db)
 	m.refreshNavigation()
 	m.resizeOutput()
 	return m
+}
+
+// moduleRuntime is the configuration modules run and report with: the operator's
+// target, domain, and credentials, and the assessment's discovery store.
+func (m *model) moduleRuntime() *modules.Runtime {
+	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
+	if m.endpoints != nil {
+		runtime.Endpoints = m.endpoints
+	}
+	return runtime
 }
 
 func (m *model) refreshNavigation() {
