@@ -9,6 +9,13 @@ import (
 
 type ToolFamily string
 
+type NavigationMode uint8
+
+const (
+	NavigationNested NavigationMode = iota
+	NavigationFlat
+)
+
 const (
 	ToolFamilyNetExec         ToolFamily = "NetExec"
 	ToolFamilyADCS            ToolFamily = "AD CS"
@@ -19,6 +26,18 @@ const (
 
 func ToolFamilies() []ToolFamily {
 	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork}
+}
+
+// NavigationModeForFamily describes how the browser presents a family. Module
+// categories remain part of the registry metadata, but these families do not
+// need an extra operator-facing folder to reach their small set of modules.
+func NavigationModeForFamily(family ToolFamily) NavigationMode {
+	switch family {
+	case ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork:
+		return NavigationFlat
+	default:
+		return NavigationNested
+	}
 }
 
 type Category string

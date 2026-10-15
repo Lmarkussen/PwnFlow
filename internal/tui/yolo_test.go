@@ -63,10 +63,10 @@ func TestYoloPlanCoversEveryFamilyFromAnyScope(t *testing.T) {
 		"SCCM enumeration": func(t *testing.T, m *model) {
 			navigateTo(t, m, modules.ToolFamilySCCM, modules.CategoryEnumeration)
 		},
-		"an empty AD CS audit scope": func(t *testing.T, m *model) {
-			navigateTo(t, m, modules.ToolFamilyADCS, modules.Category("Configuration Auditing"))
-			if len(m.modules) != 0 {
-				t.Fatalf("the scope under test is not empty: %v", moduleIDs(m.modules))
+		"flat AD CS family": func(t *testing.T, m *model) {
+			navigateTo(t, m, modules.ToolFamilyADCS, modules.CategoryEnumeration)
+			if len(m.modules) != 1 || m.modules[0].ID() != "adcs-discovery" {
+				t.Fatalf("the flat AD CS scope is wrong: %v", moduleIDs(m.modules))
 			}
 		},
 	}

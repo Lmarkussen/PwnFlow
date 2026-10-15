@@ -79,9 +79,9 @@ func TestCategorySwitchingFiltersModulesAndPreservesSelection(t *testing.T) {
 	}
 }
 
-// YOLO is global: an empty or inactive scope does not empty the plan, because the
-// plan comes from the registry rather than from what is on screen.
-func TestYoloFromAnEmptyScopeStillPlansTheEntireRegistry(t *testing.T) {
+// YOLO is global: a flat family view does not narrow the plan, because the plan
+// comes from the registry rather than from what is on screen.
+func TestYoloFromAFlatScopeStillPlansTheEntireRegistry(t *testing.T) {
 	log := &executionLog{}
 	registered := []modules.Module{
 		selectionModule{id: "nxc-ldap-users", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log},
@@ -93,10 +93,9 @@ func TestYoloFromAnEmptyScopeStillPlansTheEntireRegistry(t *testing.T) {
 	m.width, m.height = 140, 45
 	m.resizeOutput()
 	m.focus = focusModules
-	// An empty scope: the AD CS family offers no Configuration Auditing modules.
-	navigateTo(t, m, modules.ToolFamilyADCS, modules.Category("Configuration Auditing"))
-	if len(m.modules) != 0 {
-		t.Fatalf("the scope under test is not empty: %v", moduleIDs(m.modules))
+	navigateTo(t, m, modules.ToolFamilyADCS, modules.CategoryEnumeration)
+	if len(m.modules) != 1 || m.modules[0].ID() != "adcs-discovery" {
+		t.Fatalf("the flat AD CS scope is wrong: %v", moduleIDs(m.modules))
 	}
 	press(t, m, "a")
 	waitForBatch(t, m)

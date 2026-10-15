@@ -94,8 +94,12 @@ func (m *model) navigationView() string {
 		value string
 	}{
 		{"TOOL FAMILY", navigationValue(m.toolFamilies, m.toolFamilyIndex)},
-		{"CATEGORY", navigationValue(m.categories, m.categoryIndex)},
-		{"PROTOCOL", navigationValue(m.protocols, m.protocolIndex)},
+	}
+	if !m.isFlatFamily() {
+		rows = append(rows,
+			struct{ label, value string }{"CATEGORY", navigationValue(m.categories, m.categoryIndex)},
+			struct{ label, value string }{"PROTOCOL", navigationValue(m.protocols, m.protocolIndex)},
+		)
 	}
 	for index, row := range rows {
 		prefix := "  "

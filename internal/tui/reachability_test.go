@@ -23,6 +23,12 @@ func reachableModules(t *testing.T, m *model) map[string]string {
 	reachable := make(map[string]string)
 	for familyIndex, family := range m.toolFamilies {
 		m.setToolFamily(familyIndex)
+		if modules.NavigationModeForFamily(family) == modules.NavigationFlat {
+			for _, module := range m.modules {
+				reachable[module.ID()] = string(family)
+			}
+			continue
+		}
 		categories := append([]modules.Category(nil), m.categories...)
 		for categoryIndex, category := range categories {
 			m.setCategory(categoryIndex)
@@ -63,9 +69,8 @@ func TestEveryRegisteredModuleIsReachableThroughTheBrowser(t *testing.T) {
 	}
 }
 
-// The Network family is a first-class family: its registrations are reachable
-// there, they are not hidden by their availability state, and the ones that need a
-// decision or a value are still listed.
+// Flat families expose their registrations directly, without requiring a
+// category or protocol selection.
 func TestNetworkFamilyShowsItsRegistrations(t *testing.T) {
 	registered := fullRegistry()
 	m := newModel(context.Background(), testConfig(t), nil, registered, make([]int64, len(registered)), 1, "test")
@@ -82,15 +87,15 @@ func TestNetworkFamilyShowsItsRegistrations(t *testing.T) {
 		t.Fatalf("the Network family is not offered: %v", m.toolFamilies)
 	}
 	m.setToolFamily(familyIndex)
+	if m.navigationRows() != 1 {
+		t.Fatalf("Network still exposes nested navigation rows: %d", m.navigationRows())
+	}
+	if len(m.modules) != 4 {
+		t.Fatalf("Network did not show all modules directly: %v", moduleIDs(m.modules))
+	}
 	visible := make(map[string]bool)
-	for _, category := range append([]modules.Category(nil), m.categories...) {
-		m.setCategory(categoryIndex(t, m, category))
-		for _, protocol := range append([]modules.Protocol(nil), m.protocols...) {
-			m.setProtocol(protocolIndex(t, m, protocol))
-			for _, module := range m.modules {
-				visible[module.ID()] = true
-			}
-		}
+	for _, module := range m.modules {
+		visible[module.ID()] = true
 	}
 
 	want := []string{
@@ -134,6 +139,36 @@ func TestNetworkFamilyShowsItsRegistrations(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("a scope-dependent registration is missing from the global plan")
+	}
+}
+
+func TestNonNetExecFamiliesUseDirectModuleNavigation(t *testing.T) {
+	registered := fullRegistry()
+	m := newModel(context.Background(), testConfig(t), nil, registered, make([]int64, len(registered)), 1, "test")
+	m.width, m.height = 140, 45
+	m.resizeOutput()
+	want := map[modules.ToolFamily]int{
+		modules.ToolFamilyNetwork:         4,
+		modules.ToolFamilySCCM:            2,
+		modules.ToolFamilyADCS:            3,
+		modules.ToolFamilyActiveDirectory: 1,
+	}
+	for family, count := range want {
+		familyIndex := -1
+		for index, candidate := range m.toolFamilies {
+			if candidate == family {
+				familyIndex = index
+				break
+			}
+		}
+		m.setToolFamily(familyIndex)
+		if m.navigationRows() != 1 || len(m.modules) != count {
+			t.Fatalf("%s navigation is not flat: rows=%d modules=%d", family, m.navigationRows(), len(m.modules))
+		}
+		frame := ansi.Strip(m.View())
+		if strings.Contains(frame, "CATEGORY") || strings.Contains(frame, "PROTOCOL") {
+			t.Fatalf("%s still renders intermediary navigation:\n%s", family, frame)
+		}
 	}
 }
 

@@ -261,10 +261,11 @@ func TestRunsAcrossAnEmptyVisibleScope(t *testing.T) {
 	navigateTo(t, m, modules.ToolFamilyADCS, modules.CategoryEnumeration)
 	selectInScope(t, m, "adcs-discovery")
 
-	// Network has no registered modules in this registry, so the scope is empty.
+	// The flat Network family is visible directly; the existing selection remains
+	// registry-wide even while unrelated modules are on screen.
 	navigateTo(t, m, modules.ToolFamilyNetwork, modules.Category("Service Enumeration"))
-	if len(m.modules) != 0 {
-		t.Fatalf("expected an empty scope, got %v", moduleIDs(m.modules))
+	if len(m.modules) != 1 || m.modules[0].ID() != "network-hosts" {
+		t.Fatalf("unexpected flat Network scope: %v", moduleIDs(m.modules))
 	}
 	press(t, m, "r")
 	if got := batchIDs(m); strings.Join(got, ",") != "nxc-ldap-users,adcs-discovery" {
@@ -281,8 +282,8 @@ func TestWatcherOpensForABatchStartedElsewhere(t *testing.T) {
 	m := selectionModel(t, &executionLog{})
 	selectInScope(t, m, "nxc-ldap-users")
 	navigateTo(t, m, modules.ToolFamilyNetwork, modules.Category("Service Enumeration"))
-	if len(m.modules) != 0 {
-		t.Fatalf("expected an empty scope, got %v", moduleIDs(m.modules))
+	if len(m.modules) != 1 || m.modules[0].ID() != "network-hosts" {
+		t.Fatalf("unexpected flat Network scope: %v", moduleIDs(m.modules))
 	}
 	press(t, m, "r")
 	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlW})

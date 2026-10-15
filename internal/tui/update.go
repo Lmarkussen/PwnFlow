@@ -319,9 +319,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.focus == focusNavigation {
 		switch key {
 		case "up", "k":
-			m.navigationRow = (m.navigationRow + 2) % 3
+			rows := m.navigationRows()
+			m.navigationRow = (m.navigationRow + rows - 1) % rows
 		case "down", "j":
-			m.navigationRow = (m.navigationRow + 1) % 3
+			m.navigationRow = (m.navigationRow + 1) % m.navigationRows()
 		case "left", "h", "right", "l":
 			if !m.running {
 				delta := 1

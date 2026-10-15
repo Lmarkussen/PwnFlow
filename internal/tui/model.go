@@ -189,6 +189,13 @@ func (m *model) refreshNavigation() {
 	if m.toolFamilyIndex >= len(m.toolFamilies) {
 		m.toolFamilyIndex = 0
 	}
+	if modules.NavigationModeForFamily(m.toolFamilies[m.toolFamilyIndex]) == modules.NavigationFlat {
+		m.categories = modules.CategoriesForFamily(m.toolFamilies[m.toolFamilyIndex])
+		m.categoryIndex, m.protocolIndex, m.navigationRow = 0, 0, 0
+		m.protocols = modules.ProtocolsForScope(m.allModules, m.toolFamilies[m.toolFamilyIndex], m.categories[0])
+		m.filterModules()
+		return
+	}
 	m.categories = modules.CategoriesForFamily(m.toolFamilies[m.toolFamilyIndex])
 	if len(m.categories) == 0 {
 		m.categoryIndex, m.protocolIndex = 0, 0
@@ -250,10 +257,25 @@ func (m *model) changeNavigationValue(delta int) {
 	}
 }
 
+func (m *model) isFlatFamily() bool {
+	return m.toolFamilyIndex >= 0 && m.toolFamilyIndex < len(m.toolFamilies) && modules.NavigationModeForFamily(m.toolFamilies[m.toolFamilyIndex]) == modules.NavigationFlat
+}
+
+func (m *model) navigationRows() int {
+	if m.isFlatFamily() {
+		return 1
+	}
+	return 3
+}
+
 func (m *model) filterModules() {
 	m.modules, m.moduleIDs, m.moduleKeys = nil, nil, nil
 	for globalIndex, module := range m.allModules {
-		if m.toolFamilyIndex < len(m.toolFamilies) && m.categoryIndex < len(m.categories) && m.protocolIndex < len(m.protocols) && module.ToolFamily() == m.toolFamilies[m.toolFamilyIndex] && module.Category() == m.categories[m.categoryIndex] && module.Protocol() == m.protocols[m.protocolIndex] {
+		inScope := m.toolFamilyIndex < len(m.toolFamilies) && module.ToolFamily() == m.toolFamilies[m.toolFamilyIndex]
+		if !m.isFlatFamily() {
+			inScope = inScope && m.categoryIndex < len(m.categories) && m.protocolIndex < len(m.protocols) && module.Category() == m.categories[m.categoryIndex] && module.Protocol() == m.protocols[m.protocolIndex]
+		}
+		if inScope {
 			m.modules = append(m.modules, module)
 			m.moduleIDs = append(m.moduleIDs, m.allModuleIDs[globalIndex])
 			m.moduleKeys = append(m.moduleKeys, globalIndex)
