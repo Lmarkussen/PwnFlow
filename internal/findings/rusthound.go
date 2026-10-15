@@ -56,10 +56,13 @@ type rustHoundExport struct {
 }
 
 type collectedObject struct {
-	ID        string
-	Name      string
-	Type      string
-	HighValue bool
+	ID         string
+	Name       string
+	Type       string
+	HighValue  bool
+	Properties map[string]json.RawMessage
+	Artifact   string
+	RefPrefix  string
 }
 
 type collectedACE struct {
@@ -170,6 +173,8 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 				report.Skipped = append(report.Skipped, fmt.Sprintf("%s#/data/%d missing ObjectIdentifier", item.path, objectPos))
 				continue
 			}
+			object.Artifact = item.path
+			object.RefPrefix = fmt.Sprintf("/data/%d/Properties", objectPos)
 			objects[object.ID] = object
 			report.Objects++
 			for acePos, ace := range aceValues {
@@ -179,6 +184,14 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	}
 
 	findings := make([]storage.FindingInput, 0, len(aces))
+	for _, object := range objects {
+		if object.Type == "users" {
+			findings = append(findings, identityFindings(object, assessmentID, executionID, now)...)
+		}
+		if object.Type == "users" || object.Type == "computers" {
+			findings = append(findings, delegationFindings(object, assessmentID, executionID, now)...)
+		}
+	}
 	for _, ace := range aces {
 		if err := ctx.Err(); err != nil {
 			return nil, report, err
@@ -318,8 +331,8 @@ func decodeObject(raw json.RawMessage, objectType string) (collectedObject, []ma
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return collectedObject{}, nil, err
 	}
-	object := collectedObject{ID: rawString(fields, "ObjectIdentifier"), Type: objectType}
 	properties := rawObject(fields, "Properties")
+	object := collectedObject{ID: rawString(fields, "ObjectIdentifier"), Type: objectType, Properties: properties}
 	object.Name = firstString(properties, "name", "samaccountname", "distinguishedname", "dn")
 	object.HighValue = rawBool(properties, "highvalue")
 	var aces []map[string]json.RawMessage
@@ -397,4 +410,128 @@ func rawInt(raw json.RawMessage) (int, error) {
 	var value int
 	err := json.Unmarshal(raw, &value)
 	return value, err
+}
+
+func identityFindings(object collectedObject, assessmentID, executionID int64, now time.Time) []storage.FindingInput {
+	props := object.Properties
+	name := object.Name
+	enabled, enabledKnown := rawBoolValue(props, "enabled")
+	if enabledKnown && !enabled {
+		return nil
+	}
+	spns := rawStringSlice(props, "serviceprincipalnames")
+	hasSPN, hasSPNKnown := rawBoolValue(props, "hasspn")
+	if !hasSPNKnown {
+		hasSPNKnown = len(spns) > 0
+	}
+	var result []storage.FindingInput
+	if hasSPN {
+		confidence := "observed-directory-properties"
+		severity := "medium"
+		if !enabledKnown {
+			confidence = "candidate-enabled-unknown"
+			severity = "informational"
+		}
+		evidence, _ := json.Marshal(map[string]any{"account_id": object.ID, "account_name": name, "enabled": enabled, "enabled_known": enabledKnown, "spn_count": len(spns), "service_principal_names": spns, "ticket_material_collected": false})
+		result = append(result, storage.FindingInput{FindingKey: stableSourceKey(assessmentID, "rusthound-kerberoastable", object.ID, map[string]any{"spn_count": len(spns)}), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "kerberoastable_account", Title: "Kerberoastable account: " + name, Description: "The directory export shows an enabled user account with one or more service principal names. This supports service-ticket eligibility; it does not prove a ticket was requested or cracked.", Severity: severity, Confidence: confidence, AffectedObjectID: object.ID, AffectedObject: name, EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/serviceprincipalnames", ObservedAt: now, Status: "open", ParserVersion: ParserVersion})
+	}
+	dontReq, dontReqKnown := rawBoolValue(props, "dontreqpreauth")
+	if !dontReq && dontReqKnown {
+		return result
+	}
+	if !dontReqKnown {
+		if uac, ok := rawIntValue(props, "useraccountcontrol"); ok {
+			dontReq = uac&0x400000 != 0
+			dontReqKnown = true
+		}
+	}
+	if dontReq {
+		confidence := "observed-directory-properties"
+		severity := "medium"
+		if !enabledKnown {
+			confidence = "configuration-enabled-unknown"
+			severity = "informational"
+		}
+		evidence, _ := json.Marshal(map[string]any{"account_id": object.ID, "account_name": name, "dontreqpreauth": true, "enabled": enabled, "enabled_known": enabledKnown, "material_collected": false})
+		result = append(result, storage.FindingInput{FindingKey: stableSourceKey(assessmentID, "rusthound-asrep", object.ID, "dontreqpreauth"), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "asrep_roastable_account", Title: "AS-REP roastable account: " + name, Description: "The directory export indicates Kerberos preauthentication is disabled for this user. This identifies a configuration exposure; no AS-REP material was requested by this parser.", Severity: severity, Confidence: confidence, AffectedObjectID: object.ID, AffectedObject: name, EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/dontreqpreauth", ObservedAt: now, Status: "open", ParserVersion: ParserVersion})
+	}
+	return result
+}
+
+func delegationFindings(object collectedObject, assessmentID, executionID int64, now time.Time) []storage.FindingInput {
+	if object.Artifact == "" {
+		return nil
+	}
+	result := make([]storage.FindingInput, 0, 2)
+	if unconstrained, known := rawBoolValue(object.Properties, "unconstraineddelegation"); known && unconstrained {
+		evidence, _ := json.Marshal(map[string]any{"object_id": object.ID, "object_name": object.Name, "delegation_type": "unconstrained", "direct_property": true})
+		result = append(result, storage.FindingInput{
+			FindingKey: stableSourceKey(assessmentID, "rusthound-unconstrained-delegation", object.ID, "unconstrained"), AssessmentID: assessmentID,
+			SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "unconstrained_delegation_configured",
+			Title: "Unconstrained delegation configured: " + objectLabel(object), Description: "RustHound directly reports unconstrained delegation on this directory object. Review whether the configuration is expected; this observation does not prove credential capture or abuse.",
+			Severity: "medium", Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: object.Name,
+			EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/unconstraineddelegation", ObservedAt: now, Status: "open", ParserVersion: ParserVersion,
+		})
+	}
+	trusted, trustedKnown := rawBoolValue(object.Properties, "trustedtoauth")
+	services := rawStringSlice(object.Properties, "allowedtodelegate")
+	if (trustedKnown && trusted) || len(services) > 0 {
+		evidence, _ := json.Marshal(map[string]any{"object_id": object.ID, "object_name": object.Name, "delegation_type": "constrained", "trusted_to_auth": trusted, "trusted_to_auth_known": trustedKnown, "allowed_to_delegate": services})
+		result = append(result, storage.FindingInput{
+			FindingKey: stableSourceKey(assessmentID, "rusthound-constrained-delegation", object.ID, services), AssessmentID: assessmentID,
+			SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "constrained_delegation_configured",
+			Title: "Constrained delegation configured: " + objectLabel(object), Description: "RustHound directly reports constrained delegation properties for this object. Review the explicitly listed services and trust boundary; exploitability and ticket abuse are not inferred.",
+			Severity: "informational", Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: object.Name,
+			EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/allowedtodelegate", ObservedAt: now, Status: "open", ParserVersion: ParserVersion,
+		})
+	}
+	return result
+}
+
+func rawBoolValue(fields map[string]json.RawMessage, key string) (bool, bool) {
+	for candidate, raw := range fields {
+		if strings.EqualFold(candidate, key) {
+			var value bool
+			if json.Unmarshal(raw, &value) == nil {
+				return value, true
+			}
+			var text string
+			if json.Unmarshal(raw, &text) == nil {
+				parsed := strings.EqualFold(text, "true") || text == "1"
+				return parsed, true
+			}
+		}
+	}
+	return false, false
+}
+func rawIntValue(fields map[string]json.RawMessage, key string) (int64, bool) {
+	for candidate, raw := range fields {
+		if strings.EqualFold(candidate, key) {
+			var value int64
+			if json.Unmarshal(raw, &value) == nil {
+				return value, true
+			}
+			var text string
+			if json.Unmarshal(raw, &text) == nil {
+				parsed, err := strconv.ParseInt(text, 0, 64)
+				return parsed, err == nil
+			}
+		}
+	}
+	return 0, false
+}
+func rawStringSlice(fields map[string]json.RawMessage, key string) []string {
+	for candidate, raw := range fields {
+		if strings.EqualFold(candidate, key) {
+			var values []string
+			if json.Unmarshal(raw, &values) == nil {
+				return values
+			}
+			var value string
+			if json.Unmarshal(raw, &value) == nil && value != "" {
+				return []string{value}
+			}
+		}
+	}
+	return nil
 }

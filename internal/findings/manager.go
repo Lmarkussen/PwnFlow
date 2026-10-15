@@ -144,6 +144,14 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeRelayKing(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "pxethief":
 		inputs, err = AnalyzePXEThief(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "netexec", "netexec (nxc)":
+		lowerPath := strings.ToLower(job.ArtifactPath)
+		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
+			inputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else {
+			_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no supported NetExec artifact extractor")
+			return
+		}
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -184,6 +192,8 @@ func ParserVersionFor(tool string) string {
 		return "relayking-v1"
 	case "pxethief":
 		return PXEThiefParserVersion
+	case "netexec", "netexec (nxc)":
+		return kerberosParserVersion
 	default:
 		return ""
 	}
@@ -221,6 +231,13 @@ func DiscoverArtifact(tool, outputPath string) string {
 			}
 		case "relayking", "pxethief":
 			if path := newestMatching(dir, "relayking-scan.json"); path != "" {
+				return path
+			}
+		case "netexec", "netexec (nxc)":
+			if path := newestMatching(dir, "kerberoast.txt"); path != "" {
+				return path
+			}
+			if path := newestMatching(dir, "asreproast.txt"); path != "" {
 				return path
 			}
 		}

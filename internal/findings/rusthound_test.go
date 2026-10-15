@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 func TestAnalyzeRustHoundACLsAndZIP(t *testing.T) {
@@ -97,4 +99,53 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return bytes
+}
+
+func TestAnalyzeRustHoundKerberosIdentityDetections(t *testing.T) {
+	root := t.TempDir()
+	collection := filepath.Join(root, "collection")
+	if err := os.Mkdir(collection, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeExport(t, filepath.Join(collection, "users.json"), "users", []map[string]any{
+		{"ObjectIdentifier": "S-1-5-21-100-1101", "Properties": map[string]any{
+			"name": "svc-sql@EXAMPLE.TEST", "enabled": true, "hasspn": true,
+			"serviceprincipalnames": []string{"MSSQLSvc/sql.example.test:1433"},
+			"dontreqpreauth":        true,
+		}},
+		{"ObjectIdentifier": "S-1-5-21-100-1102", "Properties": map[string]any{
+			"name": "disabled-service", "enabled": false, "hasspn": true,
+			"serviceprincipalnames": []string{"HTTP/disabled.example.test"}, "dontreqpreauth": true,
+		}},
+		{"ObjectIdentifier": "S-1-5-21-100-1103", "Properties": map[string]any{
+			"name": "uac-asrep", "enabled": true, "useraccountcontrol": 0x400000,
+		}},
+	})
+
+	findings, _, err := AnalyzeRustHound(context.Background(), collection, 7, 12, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 3 {
+		t.Fatalf("expected three identity findings, got %d: %+v", len(findings), findings)
+	}
+	seen := map[string]storage.FindingInput{}
+	for _, finding := range findings {
+		seen[finding.FindingType] = finding
+		if finding.ArtifactPath == "" || !strings.HasSuffix(finding.ArtifactPath, "users.json") {
+			t.Fatalf("finding lost artifact provenance: %+v", finding)
+		}
+		if strings.Contains(finding.EvidenceJSON, "password") || strings.Contains(finding.EvidenceJSON, "hash") {
+			t.Fatalf("identity evidence unexpectedly contains secret material: %s", finding.EvidenceJSON)
+		}
+	}
+	if seen["kerberoastable_account"].AffectedObject != "svc-sql@EXAMPLE.TEST" {
+		t.Fatalf("missing Kerberoastable finding: %+v", seen)
+	}
+	if seen["asrep_roastable_account"].AffectedObject != "svc-sql@EXAMPLE.TEST" && seen["asrep_roastable_account"].AffectedObject != "uac-asrep" {
+		t.Fatalf("missing AS-REP finding: %+v", seen)
+	}
+	if seen["kerberoastable_account"].ArtifactRef == "" || !strings.Contains(seen["kerberoastable_account"].ArtifactRef, "/Properties/") {
+		t.Fatalf("Kerberoastable evidence reference is not structural: %+v", seen["kerberoastable_account"])
+	}
 }
