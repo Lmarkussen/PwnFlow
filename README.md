@@ -42,7 +42,19 @@ The active executable scopes are NetExec → Enumeration, Active Directory → E
 
 LDAP-based modules prefer LDAPS. NetExec LDAP modules therefore pass `--port 636`, which is how the installed NetExec selects `ldaps://` for its LDAP protocol, while its SMB modules keep their defaults. Certipy `find` passes `-ldap-scheme ldaps -ldap-port 636`, and RustHound-CE passes `--ldaps`; none of these is downgraded to unsigned LDAP at runtime, and none requires extra certificate configuration. PwnFlow's own certificate trust decisions apply to its Go LDAP preflight only: each external tool verifies - or, for its own historical reasons, does not verify - the domain controller's certificate on its own, and PwnFlow neither changes nor claims to change that.
 
-NetExec LDAP and SMB capabilities are checked locally at execution time with `nxc <protocol> --help`; NetExec LDAP plugin modules are checked with `nxc ldap -L`. Unsupported options are marked unavailable rather than substituted. The current installed Kali lab version was inspected locally as NetExec 1.5.1. No capability check supplies a target or initiates enumeration.
+NetExec coverage follows the installed executable protocol by protocol: LDAP, SMB, WINRM, WMI, MSSQL, SSH, FTP, RDP, VNC, and NFS, each with its own transport, credential and domain flags, its native enumeration commands, and the `-M` modules that protocol advertises. A module is registered under the protocol that advertises it, and the registry is compared against `nxc <protocol> --help` and `nxc <protocol> -L` by a test, so a registration can neither name a module the build does not advertise nor drop one it does. The retired BloodHound collection registration and the LDAP modules the build marks `[REMOVED]` are gone. `docs/netexec-inventory.md` records the full matrix, what each module needs, and which parts ran against an authorized lab.
+
+Capabilities are probed once, off the render path, and cached: navigation and Module Information never wait on `nxc`, and the probe sends no target and initiates no enumeration. A module the installed build cannot run shows `UNAVAILABLE` with the reason, and execution refuses it as well. A module that needs elevated rights **on the target** shows `ADMIN-REQ` with the specific right named in Module Information; the label never blocks a run, because a module can still produce a useful partial result without those rights. Available modules carry no suffix at all. The current installed lab version was inspected as NetExec 1.5.1.
+
+Modules that need a value only the operator can supply - a registry path, a search text, the user a group query should name - take it from `--module-options <registration>.<KEY>=VALUE`, repeatable:
+
+```bash
+./bin/pwnflow --target <target> --domain <domain> --username <user> \
+  --module-options smb-reg-query.PATH='HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion' \
+  --module-options smb-reg-query.KEY=ProductName
+```
+
+Without it the module reports `UNAVAILABLE` and says exactly which option it needs; an option key no registration uses is reported at startup instead of being silently dropped. Credential-access, coercion, and remote-execution modules are filed under `Credential Dumping`, `Credential Auditing`, and `Privilege Escalation` - never under `Enumeration` - and are gated until an operator enables them deliberately, so `A` in an enumeration scope cannot reach them.
 
 Controls: Navigation uses `↑/↓` to select a row and `←/→` to change its value. Modules use `↑/↓`, `Space`, `Enter`, `R`, and `A` for YOLO mode. Output uses arrows, `PgUp`/`PgDn`, `Home`, and `End`. `Tab` cycles Navigation → Modules → Output; `Ctrl+W` opens the operator-controlled watcher; `Esc` closes it; `?` shows help; `Q` quits when idle.
 

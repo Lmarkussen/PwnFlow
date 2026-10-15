@@ -25,6 +25,11 @@ func MSSQLEnumerationModules() []modules.Module {
 			module:      "enum_logins",
 		},
 		{
+			id: "mssql-rid-brute", name: "MSSQL RID Brute",
+			description: "Enumerates SQL logins and mapped Windows accounts by walking RID values through the --rid-brute native flag. It works with the login's own rights but is loud in target logs.",
+			args:        []string{"--rid-brute"}, output: "MSSQL_rid_brute.txt",
+		},
+		{
 			id: "mssql-enum-links", name: "Enumerate Linked Servers",
 			description: "Enumerates linked SQL servers and their login configuration through -M enum_links, the map a linked-server attack path builds on.",
 			module:      "enum_links",

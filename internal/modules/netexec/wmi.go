@@ -21,6 +21,11 @@ func WMIEnumerationModules() []modules.Module {
 			module:      "ioxidresolver",
 		},
 		{
+			id: "wmi-list-snapshots", name: "List Volume Shadow Copies",
+			description: "Lists the volume shadow copies present on the target through the --list-snapshots native flag. A host without shadow copies answers with an empty list, which is itself the result.",
+			args:        []string{"--list-snapshots"}, output: "WMI_list_snapshots.txt",
+		},
+		{
 			id: "wmi-spooler", name: "Check Print Spooler",
 			description: "Detects whether the print spooler is running through -M spooler, the precondition for printer coercion.",
 			module:      "spooler",

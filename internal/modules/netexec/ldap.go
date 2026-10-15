@@ -111,8 +111,8 @@ func LDAPEnumerationModules() []modules.Module {
 		},
 		{
 			id: "groupmembership", name: "Query Group Membership",
-			description: "Queries the groups the authenticated user - or -o USER's user - belongs to, which is how nested group membership becomes visible.",
-			module:      "groupmembership", options: []string{"USER"},
+			description: "Queries the groups a named user belongs to through -M groupmembership, which is how nested group membership becomes visible. The module refuses to run without the user it should query, so the operator supplies it with --module-options.",
+			module:      "groupmembership", options: []string{"USER"}, required: []string{"USER"},
 		},
 		{
 			id: "obsolete", name: "Find Obsolete Operating Systems",
