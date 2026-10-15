@@ -62,13 +62,13 @@ type Registry struct{ definitions []Definition }
 
 func DefaultRegistry() Registry {
 	return Registry{definitions: []Definition{
-		{ID: NetExec, DisplayName: "NetExec (nxc)", Executable: "nxc", Install: "scripts/install.sh", InstallMethod: InstallAPT, Package: "netexec", Required: true, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
+		{ID: NetExec, DisplayName: "NetExec (nxc)", Executable: "nxc", Install: "install.sh", InstallMethod: InstallAPT, Package: "netexec", Required: true, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
 		// BloodHound CE is the separate graph application for importing and viewing
 		// collected data; the standalone installer deliberately does not install it,
 		// so these hints never name an installer operation.
 		{ID: BloodHoundCE, DisplayName: "BloodHound CE", Executable: "bloodhound", Install: "the official BloodHound CE application", InstallMethod: InstallOfficialApplication, Package: "bloodhound", Required: false, Detection: DetectDebianPackage},
 		{ID: BloodHoundPy, DisplayName: "BloodHound CE Python ingestor", Executable: "bloodhound-ce-python", ExecutableCandidates: []string{"bloodhound-ce-python", "bloodhound-python"}, Install: "the bloodhound-ce package", InstallMethod: InstallPipx, Package: "bloodhound-ce", Required: false, ProbeArgs: []string{"--help"}},
-		{ID: RustHoundCE, DisplayName: "RustHound-CE", Executable: "rusthound-ce", Install: "scripts/install.sh --with-rusthound-ce", InstallMethod: InstallCargo, Package: "rusthound-ce", Required: false, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
+		{ID: RustHoundCE, DisplayName: "RustHound-CE", Executable: "rusthound-ce", Install: "install.sh --with-rusthound-ce", InstallMethod: InstallCargo, Package: "rusthound-ce", Required: false, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
 	}}
 }
 

@@ -8,7 +8,12 @@ import (
 	"strings"
 )
 
-type Config struct{ Target, Domain, Username, Password, Root string }
+type Config struct {
+	Target, Domain, Username, Password, Root string
+	// InsecureSkipVerify skips LDAPS/StartTLS certificate verification. It is set
+	// only by the explicit operator flag and is never enabled by default.
+	InsecureSkipVerify bool
+}
 
 // New validates operator-supplied assessment configuration. PwnFlow is a
 // general-purpose framework: the target, domain, and credentials come from the

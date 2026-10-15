@@ -34,13 +34,13 @@ clean:
 install: build
 	install -d $(PREFIX)/bin
 	install -m 0755 $(TARGET) $(PREFIX)/bin/$(BINARY)
-	install -d $(PREFIX)/share/pwnflow/scripts
-	install -m 0755 scripts/install.sh $(PREFIX)/share/pwnflow/scripts/install.sh
+	install -d $(PREFIX)/share/pwnflow
+	install -m 0755 install.sh $(PREFIX)/share/pwnflow/install.sh
 	@echo "Installed $(PREFIX)/bin/$(BINARY)"
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(BINARY)
-	rm -f $(PREFIX)/share/pwnflow/scripts/install.sh
+	rm -f $(PREFIX)/share/pwnflow/install.sh
 	@echo "Removed $(PREFIX)/bin/$(BINARY)"
 
 deps:

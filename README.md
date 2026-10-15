@@ -13,7 +13,7 @@ Passwords are read from a hidden terminal prompt, are never stored in SQLite or 
 ```bash
 git clone git@github.com:Lmarkussen/PwnFlow.git
 cd PwnFlow
-./scripts/install.sh
+./install.sh
 make build
 ./bin/pwnflow --help
 ```
@@ -28,9 +28,9 @@ make install PREFIX="$HOME/.local"
 make uninstall PREFIX="$HOME/.local"
 ```
 
-`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `scripts/install.sh` is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec and RustHound-CE (including Cargo/build prerequisites when needed). Existing functional tools are skipped. Use `--with-netexec` or `--with-rusthound-ce` for selective installation. Kali Linux is the only supported installation target.
+`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `install.sh` in the repository root is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec and RustHound-CE (including Cargo/build prerequisites when needed). Existing functional tools are skipped. Use `--with-netexec` or `--with-rusthound-ce` for selective installation. Kali Linux is the only supported installation target.
 
-The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./scripts/install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `cd /home/kali/PwnFlow && ./scripts/install.sh`.
+The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `./install.sh`.
 
 PwnFlow is a general-purpose framework: the target, domain, and credentials are supplied by the operator at startup, so any assessment configuration is accepted. PwnFlow holds no built-in scope and never substitutes a development value. What it validates is input shape and path safety - a target must be a plain address or host name rather than something that looks like a command option, and the domain must be a safe single path component - so unusual input cannot escape `results/`. Authorization for the assessment itself is the operator's responsibility. The test suite is fully offline: build/test/check targets never connect to assessment infrastructure.
 
@@ -49,7 +49,29 @@ go test ./...
 go vet ./...
 ```
 
-The LDAP preflight intentionally requires TCP/389 and a real NTLMSSP LDAP bind, matching NetExec's LDAP authentication behavior. It does not treat an open port as successful authentication or silently downgrade TLS/signing requirements. Simple-bind identities are normalized to the UPN form `username@domain` when that mechanism is used.
+The LDAP preflight performs a real NTLMSSP bind with your credentials before the
+TUI starts, and it never treats an open port as successful authentication.
+Because domains may require LDAP signing/integrity — which an unsigned bind
+cannot satisfy and which is reported as result code 8 — the preflight negotiates
+the transport through `internal/ldaptransport`:
+
+1. plain LDAP on 389, as before;
+2. LDAPS on 636 when the server demands integrity or the plain endpoint cannot be
+   reached — a TLS channel satisfies the signing requirement, so the same
+   credentials bind;
+3. StartTLS on 389, only when LDAPS itself is unreachable.
+
+Wrong credentials are never retried: an authentication failure stops at the first
+attempt instead of repeating invalid logins. Each attempt is bounded to one per
+transport, and when every attempt fails the error explains the LDAP and LDAPS
+attempts separately. Failures stay distinct — connectivity, TLS/certificate,
+authentication, signing/integrity, protocol — so a signing requirement is never
+reported as bad credentials. The transport that carried the bind is printed when
+it was not plain LDAP. Certificates are verified against the normal trust store;
+if the target's certificate cannot be validated, the opt-in
+`--insecure-skip-verify` skips verification explicitly and is reported back,
+rather than being applied silently. Simple-bind identities are normalized to the
+UPN form `username@domain` when that mechanism is used.
 
 ### BloodHound CE and RustHound-CE
 
@@ -77,7 +99,7 @@ legacy `bloodhound-python` as exposed command names only for read-only
 detection; the installer does not install either collector.
 
 RustHound-CE is the supported BloodHound CE collector. Request it explicitly
-with `./scripts/install.sh --with-rusthound-ce`; the installer checks Cargo,
+with `./install.sh --with-rusthound-ce`; the installer checks Cargo,
 the required local build dependencies, and operator consent before running
 `cargo install rusthound-ce`. Existing functional installations are preserved.
 

@@ -1,13 +1,57 @@
-package scripts
+package pwnflow
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// The standalone installer is a repository-root file: that is the documented,
+// single location operators run, and it must stay executable.
+func TestInstallerLivesAtRepositoryRoot(t *testing.T) {
+	info, err := os.Stat("install.sh")
+	if err != nil {
+		t.Fatalf("install.sh is missing from the repository root: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("install.sh is not executable: %v", info.Mode())
+	}
+	if _, err := os.Stat(filepath.Join("scripts", "install.sh")); err == nil {
+		t.Fatal("a second installer copy still exists under scripts/")
+	}
+}
+
+// No source, documentation, or build file may still point at the old location.
+func TestNoObsoleteInstallerReferences(t *testing.T) {
+	needle := "scripts" + "/install.sh"
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "bin", "results":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(contents), needle) {
+			t.Errorf("%s still references the old installer location", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 const (
 	ampleFreeSpaceKB        = 2147483648 // 2 TiB

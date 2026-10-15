@@ -13,6 +13,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
+	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 	"github.com/pwnflow/pwnflow/internal/password"
 	"github.com/pwnflow/pwnflow/internal/preflight"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -27,6 +28,7 @@ func main() {
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
+	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
 	flag.Parse()
 	if *target == "" || *domain == "" || *username == "" {
 		fmt.Fprintln(os.Stderr, "usage: pwnflow --target ADDRESS --domain DOMAIN --username USER")
@@ -48,7 +50,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "[!] Dependency check %s: %s\n", strings.ToUpper(status.State), status.DisplayName)
 			}
 			if status.Required {
-				fmt.Fprintf(os.Stderr, "%s-dependent modules are unavailable: %s\nInstall dependencies with: cd /home/kali/PwnFlow && ./scripts/install.sh\n", status.DisplayName, status.Detail)
+				fmt.Fprintf(os.Stderr, "%s-dependent modules are unavailable: %s\nInstall dependencies with: ./install.sh\n", status.DisplayName, status.Detail)
 			}
 		}
 	}
@@ -79,8 +81,17 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if err := preflight.Run(ctx, cfg); err != nil {
+	cfg.InsecureSkipVerify = *insecureSkipVerify
+	connection, err := preflight.Run(ctx, cfg)
+	if err != nil {
 		fail(err)
+	}
+	if connection.Transport != ldaptransport.LDAP || connection.Insecure {
+		note := ""
+		if connection.Insecure {
+			note = "; certificate verification skipped"
+		}
+		fmt.Fprintf(os.Stderr, "[i] LDAP bind over %s (%s)%s\n", connection.Transport, connection.Endpoint, note)
 	}
 	db, err := storage.Open(filepath.Join(cfg.ResultsRoot(), "enumeration.db"))
 	if err != nil {
