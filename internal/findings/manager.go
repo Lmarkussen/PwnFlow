@@ -23,6 +23,7 @@ type Job struct {
 	SourceTool   string
 	ArtifactPath string
 	ObservedAt   time.Time
+	Force        bool
 }
 
 type Manager struct {
@@ -55,8 +56,13 @@ func (m *Manager) Submit(job Job) error {
 	}
 	key := jobKey(job)
 	inserted, err := m.db.QueueAnalysis(m.ctx, key, job.AssessmentID, job.ExecutionID, job.SourceTool, job.ArtifactPath)
-	if err != nil || !inserted {
+	if err != nil || (!inserted && !job.Force) {
 		return err
+	}
+	if !inserted {
+		if err := m.db.SetAnalysisStatus(m.ctx, key, storage.AnalysisPending, "", "queued for explicit reanalysis"); err != nil {
+			return err
+		}
 	}
 	m.pending.Add(1)
 	select {
@@ -136,6 +142,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeCertipy(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "relayking":
 		inputs, err = AnalyzeRelayKing(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "pxethief":
+		inputs, err = AnalyzePXEThief(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -174,6 +182,8 @@ func ParserVersionFor(tool string) string {
 		return "certipy-v1"
 	case "relayking":
 		return "relayking-v1"
+	case "pxethief":
+		return PXEThiefParserVersion
 	default:
 		return ""
 	}
@@ -209,7 +219,7 @@ func DiscoverArtifact(tool, outputPath string) string {
 			if path := newestMatching(dir, ".json"); path != "" {
 				return path
 			}
-		case "relayking":
+		case "relayking", "pxethief":
 			if path := newestMatching(dir, "relayking-scan.json"); path != "" {
 				return path
 			}

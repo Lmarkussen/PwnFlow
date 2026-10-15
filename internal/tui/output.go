@@ -99,6 +99,17 @@ func (m *model) statusText(fallback string) string {
 	return status
 }
 
+func (m *model) wrappedStatusText(fallback string, width int) string {
+	status := m.status
+	if status == "" {
+		status = fallback
+	}
+	if m.elevationPrompt {
+		return wrapPaneStyle(warn, status, width)
+	}
+	return wrapPaneText(status, width)
+}
+
 func (m *model) outputView() string {
 	m.refreshOutput()
 	// A pending question takes the pane: the operator is answering something the
@@ -128,7 +139,7 @@ func (m *model) outputView() string {
 		follow = "FOLLOW"
 	}
 	header := fmt.Sprintf("OUTPUT // %s // %s // %s", module.Name(), state, follow)
-	return paneStyle(m.focus == focusOutput).Render(paneHeaderWith(m.statusHeaderStyle(), header, m.focus == focusOutput, m.outputViewport.Width) + "\n" + m.outputViewport.View())
+	return paneStyle(m.focus == focusOutput).Render(paneHeaderWith(m.statusHeaderStyle(), header, m.focus == focusOutput, m.outputViewport.Width) + "\n" + m.outputViewport.View() + "\n" + m.wrappedStatusText("", m.outputViewport.Width))
 }
 
 func newOutputViewport() viewport.Model { return viewport.New(1, 1) }

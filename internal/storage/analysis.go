@@ -61,3 +61,9 @@ func (d *DB) ListAnalysisJobs(ctx context.Context, assessmentID int64) ([]Analys
 	}
 	return jobs, rows.Err()
 }
+
+func (d *DB) LatestExecutionForTool(ctx context.Context, assessmentID int64, tool string) (int64, error) {
+	var id int64
+	err := d.QueryRowContext(ctx, `SELECT e.id FROM executions e JOIN modules m ON m.id=e.module_id WHERE e.target_id=? AND lower(m.tool)=lower(?) ORDER BY e.id DESC LIMIT 1`, assessmentID, tool).Scan(&id)
+	return id, err
+}

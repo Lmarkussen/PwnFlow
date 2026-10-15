@@ -140,12 +140,12 @@ func (m *model) inputPromptView() string {
 	if m.planLine != "" {
 		body.WriteString(dim.Render(m.planLine) + "\n\n")
 	}
-	body.WriteString(warn.Render(m.inputField.Prompt) + "\n\n")
+	body.WriteString(wrapPaneStyle(warn, m.inputField.Prompt, m.outputViewport.Width) + "\n\n")
 	body.WriteString(m.textInput.View() + "\n\n")
 	if m.inputField.Example != "" {
 		body.WriteString(dim.Render("for example: "+m.inputField.Example) + "\n")
 	}
-	body.WriteString(dim.Render(fmt.Sprintf("Enter stores the value for this assessment   Esc skips %s   Ctrl+C cancels the whole run", m.inputRequest.module.Name())))
+	body.WriteString(wrapPaneText(fmt.Sprintf("Enter stores the value for this assessment   Esc skips %s   Ctrl+C cancels the whole run", m.inputRequest.module.Name()), m.outputViewport.Width))
 	if len(m.inputQueue) > 1 {
 		body.WriteString("\n" + dim.Render(fmt.Sprintf("%d module(s) in this plan still need input", len(m.inputQueue))))
 	}
@@ -159,14 +159,14 @@ func (m *model) approvalPromptView() string {
 	if m.planLine != "" {
 		body.WriteString(dim.Render(m.planLine) + "\n\n")
 	}
-	body.WriteString(warn.Render("This plan includes operations that are not plain enumeration:") + "\n\n")
+	body.WriteString(wrapPaneStyle(warn, "This plan includes operations that are not plain enumeration:", m.outputViewport.Width) + "\n\n")
 	for _, item := range m.pending.approvals {
 		if item.index < 0 || item.index >= len(m.allModules) {
 			continue
 		}
 		module := m.allModules[item.index]
-		body.WriteString(fmt.Sprintf("  %s (%s, %s)\n    %s\n", module.Name(), module.Category(), module.Protocol(), item.reason))
+		body.WriteString(wrapPaneText(fmt.Sprintf("  %s (%s, %s)\n    %s", module.Name(), module.Category(), module.Protocol(), item.reason), m.outputViewport.Width) + "\n")
 	}
-	body.WriteString("\n" + dim.Render("Y runs them with the rest of the plan   N skips them and runs the rest   Ctrl+C cancels the plan"))
+	body.WriteString("\n" + wrapPaneText("Y runs them with the rest of the plan   N skips them and runs the rest   Ctrl+C cancels the plan", m.outputViewport.Width))
 	return paneStyle(m.focus == focusOutput).Render(header + "\n" + body.String())
 }

@@ -133,7 +133,6 @@ test asserts this for every registration).
 | obsolete | obsolete | Enumeration | - |  |
 | sccm | sccm | Enumeration | - | BASE_DN, REC_RESOLVE |
 | subnets | subnets | Enumeration | - |  |
-| user-desc | user-desc | Credential Dumping | - |  |
 | whoami | whoami | Enumeration | - |  |
 
 ### SMB
@@ -346,6 +345,7 @@ test fails if an advertised module is neither registered nor listed as excluded.
 | Credential dumping and extraction | `sam`, `lsa`, `ntds`, `dpapi`, `sccm` (native), `lsassy`, `nanodump`, `procdump`, `handlekatz`, `hash_spider`, `dpapi_hash`, `eventlog_creds`, `iis`, `masky`, `mobaxterm`, `mremoteng`, `msol`, `ntdsutil`, `ntds-dump-raw`, `powershell_history`, `putty`, `rdcman`, `reg-winlogon`, `security-questions`, `teams_localdb`, `veeam`, `vnc`, `wam`, `wifi`, `winscp`, `notepad`, `notepad++`, `recent_files`, `recyclebin`, `snipped`, `backup_operator` | Each one reads process memory, the directory database, a credential vault, or per-user secret stores, and several need code execution on the target. They are dumping rather than enumeration |
 | Domain data read over SMB | `users`, `groups`, `computers`, `pass-pol`, `rid-brute` | The domain dataset is read over LDAP (LDAPS), which returns more attributes and needs no SAMR path. The SMB local-group, session, and logged-on-user queries stay, because a host's local data has no LDAP equivalent |
 | Native duplicate | `interfaces` (native) | `-M enum_interfaces` is the module that superseded the flag, and it is the one registered |
+| Duplicate LDAP user-description query | `user-desc` | `get-desc-users` is retained as the canonical description query because it returns the same attribute and exposes filtering and password-policy options |
 | Duplicate module on a second transport | `aws-credentials` (WinRM, SSH), `bitlocker`, `spooler`, `zerologon`, `ioxidresolver`, `enum_dns`, `get_netconnections` (WMI) | Registered once, under the protocol PwnFlow keeps for that capability |
 | Configuration, not enumeration | `test_connection` (SMB, MSSQL), `spider_plus` | `test_connection` pings a host the operator names, which is a probe rather than a read of the target; `spider_plus` is oriented at collecting files (download flags, size limits) and its crawl duplicates the operator's dedicated share tooling |
 | Superseded query | `pso` | The `--pso` native query is registered as fine-grained-password-policy |

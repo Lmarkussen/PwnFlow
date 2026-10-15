@@ -71,7 +71,7 @@ func (m *model) findingsViewRender() string {
 		}
 		content.WriteString(fmt.Sprintf("Source: %s  Execution: %d\n", finding.SourceTool, finding.SourceExecution))
 		content.WriteString(fmt.Sprintf("Evidence: %s %s\n", finding.ArtifactPath, finding.ArtifactRef))
-		content.WriteString(fmt.Sprintf("\n%s\n\nRemediation/review: %s\n", finding.Description, finding.Description))
+		content.WriteString(fmt.Sprintf("\n%s\n\nRemediation/review: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(finding.Description, width-4)))
 		content.WriteString(dim.Render("Esc Back   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
@@ -95,7 +95,7 @@ func (m *model) findingsViewRender() string {
 	if m.findingSearchMode {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}
-	content.WriteString(dim.Render("\n\nEnter Detail   / Search   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze PXE   1 High   2 Medium   3 Info   0 All   Esc Close"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

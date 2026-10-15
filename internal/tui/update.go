@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -125,6 +126,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if summary, err := m.findings.Summary(m.ctx, m.targetID); err == nil {
 				m.status = summary
 			}
+		}
+		return m, nil
+	case findingsReanalysisMsg:
+		if msg.err != nil {
+			m.status = "PXEThief reanalysis failed: " + msg.err.Error()
+		} else {
+			m.status = "PXEThief historical reanalysis queued"
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -278,6 +286,15 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resizeWatcher()
 		m.refreshWatcher()
 		return m, nil
+	case "f":
+		if m.watcher {
+			m.findingsFromWatcher = true
+			m.watcher = false
+			m.findingsView = true
+			m.findingDetail = false
+			m.refreshFindings()
+			return m, nil
+		}
 	}
 
 	if m.watcher {
@@ -431,6 +448,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = helpText
 	case "f":
 		m.findingsView = true
+		m.findingsFromWatcher = false
 		m.findingDetail = false
 		m.findingSearchMode = false
 		m.refreshFindings()
@@ -473,8 +491,20 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key {
+	case "ctrl+w":
+		m.findingsView = false
+		m.watcher = m.findingsFromWatcher || m.batch != nil
+		if m.watcher {
+			m.resizeWatcher()
+		}
+		m.findingsFromWatcher = false
 	case "esc", "f":
 		m.findingsView = false
+		if m.findingsFromWatcher {
+			m.watcher = true
+			m.resizeWatcher()
+		}
+		m.findingsFromWatcher = false
 	case "up", "k":
 		m.findingCursor--
 	case "down", "j":
@@ -501,6 +531,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.findingSeverity = "informational"
 	case "0":
 		m.findingSeverity = ""
+	case "p":
+		return m, m.reanalyzePXEThief()
 	}
 	if m.findingCursor < 0 {
 		m.findingCursor = 0
@@ -510,6 +542,21 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	}
 	m.refreshFindings()
 	return m, nil
+}
+
+func (m *model) reanalyzePXEThief() tea.Cmd {
+	if m.findings == nil || m.db == nil {
+		m.status = "PXEThief reanalysis requires the assessment database"
+		return nil
+	}
+	return func() tea.Msg {
+		executionID, err := m.db.LatestExecutionForTool(context.Background(), m.targetID, "PXEThief")
+		if err != nil {
+			return findingsReanalysisMsg{err: err}
+		}
+		artifactRoot := filepath.Join(m.cfg.ResultsRoot(), "Enumeration", "PXEThief", "artifacts")
+		return findingsReanalysisMsg{err: m.findings.Submit(findingengine.Job{AssessmentID: m.targetID, ExecutionID: executionID, SourceTool: "PXEThief", ArtifactPath: artifactRoot, ObservedAt: time.Now().UTC(), Force: true})}
+	}
 }
 
 func (m *model) cancelBatch() {

@@ -402,7 +402,7 @@ func TestWatcherAdvertisesTheAbortBinding(t *testing.T) {
 	// The confirmation is rendered inside the watcher: a question the operator
 	// cannot see is a question they cannot answer.
 	watcherKey(t, m, "x")
-	if frame := ansi.Strip(m.watcherView()); !strings.Contains(frame, "Abort Blocking Module? [y/N]") {
+	if frame := ansi.Strip(m.watcherView()); !strings.Contains(strings.ReplaceAll(frame, "\n", ""), "Abort Blocking Module? [y/N]") {
 		t.Fatalf("the watcher does not show the confirmation:\n%s", frame)
 	}
 	// Ctrl+C keeps its separate, global meaning.

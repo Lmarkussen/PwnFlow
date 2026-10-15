@@ -15,40 +15,41 @@ import (
 )
 
 type model struct {
-	ctx                context.Context
-	cfg                config.Config
-	db                 *storage.DB
-	findings           *findingengine.Manager
-	findingsView       bool
-	findingDetail      bool
-	findingRows        []storage.Finding
-	findingCursor      int
-	findingSearch      string
-	findingSearchMode  bool
-	findingSeverity    string
-	modules            []modules.Module
-	moduleIDs          []int64
-	moduleKeys         []int
-	allModules         []modules.Module
-	allModuleIDs       []int64
-	endpoints          modules.EndpointStore
-	availability       map[string]string
-	toolFamilies       []modules.ToolFamily
-	toolFamilyIndex    int
-	categories         []modules.Category
-	categoryIndex      int
-	protocols          []modules.Protocol
-	protocolIndex      int
-	targetID           int64
-	selected, cursor   int
-	selectedModules    map[string]bool
-	running            bool
-	watcher            bool
-	focusBeforeWatcher paneFocus
-	quitConfirm        bool
-	quitAfterCancel    bool
-	elevationPrompt    bool
-	elevationModules   []string
+	ctx                 context.Context
+	cfg                 config.Config
+	db                  *storage.DB
+	findings            *findingengine.Manager
+	findingsView        bool
+	findingsFromWatcher bool
+	findingDetail       bool
+	findingRows         []storage.Finding
+	findingCursor       int
+	findingSearch       string
+	findingSearchMode   bool
+	findingSeverity     string
+	modules             []modules.Module
+	moduleIDs           []int64
+	moduleKeys          []int
+	allModules          []modules.Module
+	allModuleIDs        []int64
+	endpoints           modules.EndpointStore
+	availability        map[string]string
+	toolFamilies        []modules.ToolFamily
+	toolFamilyIndex     int
+	categories          []modules.Category
+	categoryIndex       int
+	protocols           []modules.Protocol
+	protocolIndex       int
+	targetID            int64
+	selected, cursor    int
+	selectedModules     map[string]bool
+	running             bool
+	watcher             bool
+	focusBeforeWatcher  paneFocus
+	quitConfirm         bool
+	quitAfterCancel     bool
+	elevationPrompt     bool
+	elevationModules    []string
 	// elevationRenewal carries a privileged module's request for fresh sudo
 	// authorization while the batch waits before it. The module blocks on the
 	// reply channel; the model answers after the terminal handoff.
@@ -125,6 +126,7 @@ type model struct {
 
 type tickMsg time.Time
 type findingsCompleteMsg struct{ err error }
+type findingsReanalysisMsg struct{ err error }
 
 // newTextInput builds the field the interactive prompt uses. It is a single-line
 // field with a plain prompt, deliberately without suggestions or history: the

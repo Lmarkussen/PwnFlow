@@ -180,6 +180,7 @@ func (m *model) infoView() string {
 		return title.Render("MODULE INFORMATION") + "\n\nCategory inactive; no modules are available."
 	}
 	module := m.modules[m.cursor]
+	innerWidth := max(1, (m.width-4)/2-4)
 	status, statusReason := m.moduleStatus(module)
 	availability := "AVAILABLE"
 	privilege := "none beyond valid credentials"
@@ -219,7 +220,7 @@ func (m *model) infoView() string {
 	// Availability and the target-side privilege come before the free text: an
 	// operator has to be able to read what a module needs without scrolling past
 	// a description that may be longer than the pane.
-	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\nAvailability: %s\nTarget privilege: %s\n\n%s%s\n\nCommand: %s\n\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), availability, privilege, details, module.Description(), command, m.statusText(""), module.OutputFile())
+	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\nAvailability: %s\nTarget privilege: %s\n\n%s%s\n\nCommand: %s\n\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), wrapPaneText(availability, innerWidth), wrapPaneText(privilege, innerWidth), wrapPaneText(details, innerWidth), wrapPaneText(module.Description(), innerWidth), wrapPaneText(command, innerWidth), m.wrappedStatusText("", innerWidth), wrapPaneText(module.OutputFile(), innerWidth))
 }
 
 func (m *model) moduleAvailability(module modules.Module) string {

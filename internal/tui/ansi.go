@@ -60,6 +60,17 @@ func displayOutput(raw string, width int) string {
 	return wrapWatcherOutput(clean, width)
 }
 
+func wrapPaneText(value string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	return ansi.HardwrapWc(value, width, true)
+}
+
+func wrapPaneStyle(style lipgloss.Style, value string, width int) string {
+	return style.Render(wrapPaneText(value, width))
+}
+
 func highlightOutput(input string) string {
 	lines := strings.Split(input, "\n")
 	for i, line := range lines {

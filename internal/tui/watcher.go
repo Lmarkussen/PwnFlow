@@ -246,9 +246,9 @@ func (m *model) watcherStatusLine() string {
 		return "\n"
 	}
 	if m.watcherAbortConfirm {
-		return warn.Render(m.status) + "\n"
+		return wrapPaneStyle(warn, m.status, max(1, m.width-6)) + "\n"
 	}
-	return dim.Render(m.status) + "\n"
+	return wrapPaneStyle(dim, m.status, max(1, m.width-6)) + "\n"
 }
 
 // watcherFooter advertises the watcher's keys, including the abort binding, and

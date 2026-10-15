@@ -75,6 +75,7 @@ var retiredModules = map[modules.Protocol][]string{
 // coerces authentication, dumps credentials, or needs a listener is left out.
 var excludedModules = map[string]string{
 	// LDAP.
+	"ldap:user-desc":              "duplicate: get-desc-users is the canonical description query and exposes the same user attribute with filtering options",
 	"ldap:certipy-find":           "duplicate: the AD CS family runs certipy find",
 	"ldap:pso":                    "duplicate: the --pso native query is registered",
 	"ldap:computers":              "duplicate: -M dump-computers returns the OS and FQDN as well",

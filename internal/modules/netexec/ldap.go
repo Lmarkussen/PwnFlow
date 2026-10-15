@@ -169,11 +169,6 @@ func LDAPCredentialDumpingModules() []modules.Module {
 			output: "LDAP_get_users_description.txt",
 		},
 		{
-			id: "user-desc", name: "Get User Descriptions",
-			description: "Reads user descriptions through -M user-desc, the module that reports description content verbatim.",
-			module:      "user-desc", sensitive: true,
-		},
-		{
 			id: "get-userPassword", name: "Get userPassword Attribute",
 			description: "Reads the userPassword attribute of directory objects through -M get-userPassword. Finding anything requires read access to that attribute.",
 			module:      "get-userPassword", sensitive: true,
