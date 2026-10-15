@@ -8,10 +8,10 @@ import (
 )
 
 func TestBindIdentityUsesUPN(t *testing.T) {
-	if got := BindIdentity("snablr-lab-admin", "sccm.lab"); got != "snablr-lab-admin@sccm.lab" {
+	if got := BindIdentity("svc-audit", "corp.example"); got != "svc-audit@corp.example" {
 		t.Fatalf("got %q", got)
 	}
-	if got := BindIdentity("user@sccm.lab", "sccm.lab"); got != "user@sccm.lab" {
+	if got := BindIdentity("user@corp.example", "corp.example"); got != "user@corp.example" {
 		t.Fatalf("qualified identity changed to %q", got)
 	}
 }

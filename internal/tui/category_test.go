@@ -13,6 +13,12 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 )
 
+// Fixtures for arbitrary operator-supplied assessment configuration.
+const (
+	testTarget = "198.51.100.10"
+	testDomain = "example.test"
+)
+
 type categoryTestModule struct {
 	category modules.Category
 	id       string
@@ -137,7 +143,7 @@ func TestRustHoundIsActiveDirectoryScopedAndNeverYOLOEnabled(t *testing.T) {
 // Module Information must state the enabled state, the pinned configuration, the
 // expected output directory, and that the pinned scope is not a boundary.
 func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
-	cfg := config.Config{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain, Username: "audituser", Root: t.TempDir()}
+	cfg := config.Config{Target: testTarget, Domain: testDomain, Username: "audituser", Root: t.TempDir()}
 	model := newModel(context.Background(), cfg, nil, []modules.Module{rusthound.Module{}}, []int64{1}, 1, "test")
 	model.setToolFamily(2)
 	model.width, model.height = 150, 50
@@ -151,14 +157,14 @@ func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		"Output directory: ",
-		"Network scope: pinned to " + config.AuthorizedDomain + " / " + config.AuthorizedTarget,
+		"Network scope: LdapOnly against the supplied target",
 		"READY",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("Module Information is missing %q:\n%s", want, frame)
 		}
 	}
-	if strings.Contains(frame, config.AuthorizedTarget+" -c All") || strings.Contains(frame, "-c All ") {
+	if strings.Contains(frame, testTarget+" -c All") || strings.Contains(frame, "-c All ") {
 		t.Fatalf("Module Information advertises the default collection:\n%s", frame)
 	}
 }
@@ -170,7 +176,7 @@ func TestEnabledModuleOutsideNetExecRunsIndividuallyButNotInYolo(t *testing.T) {
 	registered := []modules.Module{categoryTestModule{family: modules.ToolFamilyActiveDirectory, category: modules.CategoryEnumeration, id: "admod"}}
 	// A real batch writes module output, so keep it in a temporary results root
 	// instead of the package directory.
-	cfg := config.Config{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain, Username: "audituser", Root: t.TempDir()}
+	cfg := config.Config{Target: testTarget, Domain: testDomain, Username: "audituser", Root: t.TempDir()}
 	model := newModel(context.Background(), cfg, nil, registered, []int64{1}, 1, "test")
 	model.setToolFamily(2) // Active Directory
 	if len(model.modules) != 1 {

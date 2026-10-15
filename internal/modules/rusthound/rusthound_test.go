@@ -9,8 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
+)
+
+// Fixtures for arbitrary operator-supplied assessment configuration.
+const (
+	testTarget = "198.51.100.10"
+	testDomain = "example.test"
 )
 
 // installedHelp mirrors the option surface of the installed RustHound-CE 2.5.25.
@@ -61,7 +66,7 @@ func writeFakeRustHound(t *testing.T, directory, help, body string) string {
 }
 
 func authorizedRuntime() *modules.Runtime {
-	return &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain, Username: "audituser", Password: "Sup3rSecret", ResultsRoot: "/tmp/pwnflow-results"}
+	return &modules.Runtime{Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret", ResultsRoot: "/tmp/pwnflow-results"}
 }
 
 // RustHound-CE is a normal, executable module: it starts with PwnFlow, needs no
@@ -90,13 +95,14 @@ func TestRustHoundIsRegisteredAndExecutable(t *testing.T) {
 	}
 }
 
-// The collection method is always stated explicitly and is never the CLI's
-// default All collection.
-func TestRustHoundCommandPinsAuthorizedScopeAndLdapOnly(t *testing.T) {
+// PwnFlow is general-purpose: the collector uses the target and domain supplied
+// at runtime, and the collection method is always stated explicitly rather than
+// inherited from the CLI's default All collection.
+func TestRustHoundCommandUsesRuntimeScopeAndLdapOnly(t *testing.T) {
 	module := Module{}
 	runtime := authorizedRuntime()
 	args := module.CommandArgs(runtime)
-	want := []string{"-d", "sccm.lab", "-i", "10.1.10.40", "-c", "LdapOnly", "-u", "audituser", "-p", runtime.Password, "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
+	want := []string{"-d", testDomain, "-i", testTarget, "-c", "LdapOnly", "-u", "audituser", "-p", runtime.Password, "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Fatalf("command args=%q want %q", strings.Join(args, " "), strings.Join(want, " "))
 	}
@@ -110,18 +116,18 @@ func TestRustHoundCommandPinsAuthorizedScopeAndLdapOnly(t *testing.T) {
 	}
 }
 
-// A runtime that claims another target must not be able to redirect the
-// collector: the pinned configuration constants win.
-func TestRustHoundCommandIgnoresRuntimeTargetOverride(t *testing.T) {
+// The command follows whatever the operator configured, with no fallback to a
+// built-in lab value.
+func TestRustHoundCommandFollowsRuntimeConfiguration(t *testing.T) {
 	module := Module{}
-	runtime := &modules.Runtime{Target: "192.0.2.10", Domain: "elsewhere.lab", Username: "audituser", ResultsRoot: t.TempDir()}
+	runtime := &modules.Runtime{Target: "203.0.113.7", Domain: "corp.local", Username: "audituser", ResultsRoot: t.TempDir()}
 	args := strings.Join(module.CommandArgs(runtime), " ")
-	if !strings.Contains(args, "-i "+config.AuthorizedTarget) || !strings.Contains(args, "-d "+config.AuthorizedDomain) {
-		t.Fatalf("command did not pin the authorized scope: %q", args)
+	if !strings.Contains(args, "-i 203.0.113.7") || !strings.Contains(args, "-d corp.local") {
+		t.Fatalf("command did not follow the runtime configuration: %q", args)
 	}
-	for _, unwanted := range []string{"192.0.2.10", "elsewhere.lab"} {
+	for _, unwanted := range []string{"10.1.10.40", "sccm.lab"} {
 		if strings.Contains(args, unwanted) {
-			t.Fatalf("command accepted the runtime override %q: %q", unwanted, args)
+			t.Fatalf("command fell back to a hardcoded lab value %q: %q", unwanted, args)
 		}
 	}
 }
@@ -155,7 +161,7 @@ func TestRustHoundNativePasswordIsUsedButNeverExposed(t *testing.T) {
 			t.Fatalf("%s leaked the password: %q", name, surface)
 		}
 	}
-	redacted := redactArguments([]string{"-d", "sccm.lab", "-p", "Sup3rSecret", "--ldappassword", "long-form", "-H", "aad3b435b51404ee", "--pfx-pass", "pfx-secret"})
+	redacted := redactArguments([]string{"-d", "corp.example", "-p", "Sup3rSecret", "--ldappassword", "long-form", "-H", "aad3b435b51404ee", "--pfx-pass", "pfx-secret"})
 	joined := strings.Join(redacted, " ")
 	for _, secret := range []string{"Sup3rSecret", "long-form", "aad3b435b51404ee", "pfx-secret"} {
 		if strings.Contains(joined, secret) {
@@ -177,7 +183,8 @@ func containsPair(args []string, flag, value string) bool {
 }
 
 // Module Information must state the enabled state, authentication, collection
-// method, output location, and that the pinned scope is not a network boundary.
+// method, output location, and that the chosen arguments are not a network
+// boundary.
 func TestRustHoundDetailLinesDescribeConfigurationWithoutSecrets(t *testing.T) {
 	runtime := &modules.Runtime{ResultsRoot: "/tmp/pwnflow-results", Password: "Sup3rSecret"}
 	joined := strings.Join((Module{}).DetailLines(runtime), "\n")
@@ -186,7 +193,7 @@ func TestRustHoundDetailLinesDescribeConfigurationWithoutSecrets(t *testing.T) {
 		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE"),
-		"Network scope: pinned to sccm.lab / 10.1.10.40",
+		"Network scope: LdapOnly against the supplied target",
 		"not kernel-enforced",
 	} {
 		if !strings.Contains(joined, want) {
@@ -233,10 +240,17 @@ func TestRustHoundMissingDependencyIsReported(t *testing.T) {
 	}
 }
 
-func TestRustHoundRejectsUnauthorizedTargetBeforeCapabilityCheck(t *testing.T) {
-	err := (Module{}).Check(context.Background(), &modules.Runtime{Target: "192.0.2.10", Domain: config.AuthorizedDomain})
-	if err == nil || !strings.Contains(err.Error(), "outside the authorized assessment scope") {
-		t.Fatalf("unexpected scope result: %v", err)
+// Configuration is required, but any operator-supplied values are accepted; the
+// module holds no built-in assessment scope.
+func TestRustHoundRejectsIncompleteRuntime(t *testing.T) {
+	for name, runtime := range map[string]*modules.Runtime{
+		"nil runtime":    nil,
+		"missing target": {Domain: testDomain},
+		"missing domain": {Target: testTarget},
+	} {
+		if err := (Module{}).Check(context.Background(), runtime); err == nil || !strings.Contains(err.Error(), "required") {
+			t.Fatalf("%s: unexpected result: %v", name, err)
+		}
 	}
 }
 
@@ -294,7 +308,7 @@ func TestRustHoundRunStreamsOutputAndReportsFailure(t *testing.T) {
 	// The module streams the collector's output verbatim; the runner's redacting
 	// sink is what strips credentials from displays and persisted logs (covered by
 	// the runner tests).
-	if !strings.Contains(output.String(), "-c LdapOnly") || !strings.Contains(output.String(), "-i "+config.AuthorizedTarget) {
+	if !strings.Contains(output.String(), "-c LdapOnly") || !strings.Contains(output.String(), "-i "+testTarget) {
 		t.Fatalf("pinned arguments did not reach the collector: %q", output.String())
 	}
 	if !strings.Contains(output.String(), filepath.Join(module.ArtifactDirectory(runtime))) {

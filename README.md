@@ -21,7 +21,7 @@ make build
 The development workflow is provided by the root `Makefile`:
 
 ```bash
-make run ARGS="--target 10.1.10.40 --domain sccm.lab --username audituser"
+make run ARGS="--target 198.51.100.10 --domain corp.example --username audituser"
 make test
 make check
 make install PREFIX="$HOME/.local"
@@ -32,7 +32,7 @@ make uninstall PREFIX="$HOME/.local"
 
 The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./scripts/install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `cd /home/kali/PwnFlow && ./scripts/install.sh`.
 
-Development and validation are restricted to the authorized lab target `10.1.10.40` and domain `sccm.lab`. PwnFlow rejects other target/domain combinations, and build/test/check targets do not connect to assessment infrastructure.
+PwnFlow is a general-purpose framework: the target, domain, and credentials are supplied by the operator at startup, so any assessment configuration is accepted. PwnFlow holds no built-in scope and never substitutes a development value. What it validates is input shape and path safety - a target must be a plain address or host name rather than something that looks like a command option, and the domain must be a safe single path component - so unusual input cannot escape `results/`. Authorization for the assessment itself is the operator's responsibility. The test suite is fully offline: build/test/check targets never connect to assessment infrastructure.
 
 The application root is resolved from the executable location (or the nearest `go.mod` during development), not the current working directory. Results are written to `results/<domain>/Enumeration/NetExec/`, with prior output under `history/`, and metadata in `enumeration.db`.
 
@@ -82,12 +82,13 @@ the required local build dependencies, and operator consent before running
 `cargo install rusthound-ce`. Existing functional installations are preserved.
 
 The PwnFlow module under Active Directory → Enumeration always passes
-`-c LdapOnly` and pins the domain and DC address to `sccm.lab`/`10.1.10.40`,
-so the CLI's default `All` collection is never selected and the module cannot be
-redirected by a caller. JSON artifacts are written to
-`results/sccm.lab/Enumeration/RustHoundCE/artifacts/<run timestamp>/` so a later
+`-c LdapOnly` together with the target and domain supplied to PwnFlow at startup
+(`-d <domain> -i <target>`), so the CLI's default `All` collection is never
+selected and the command always matches the operator's configuration. JSON
+artifacts are written to
+`results/<domain>/Enumeration/RustHoundCE/artifacts/<run timestamp>/` so a later
 run never overwrites an earlier one, while the sanitized terminal log stays
-separate under `results/sccm.lab/Enumeration/RustHoundCE/`. Execution history
+separate under `results/<domain>/Enumeration/RustHoundCE/`. Execution history
 keeps status, exit code, artifact path, and a redacted error summary only.
 
 RustHound-CE 2.5.25 accepts the LDAP password only as a command-line value.
@@ -100,20 +101,19 @@ output pane or the persisted log (the runner redacts by value, so both flag
 forms are covered), never stored in SQLite or the execution history, and never
 appended to an error message. No credential is committed to Git.
 
-RustHound-CE starts with everything else: `./bin/pwnflow --target 10.1.10.40
---domain sccm.lab --username USER` is the whole workflow, with no launcher
+RustHound-CE starts with everything else: `./bin/pwnflow --target <target>
+--domain <domain> --username <user>` is the whole workflow, with no launcher
 wrapper, no root privileges, no network namespace, and no firewall configuration.
-The module shows `READY` once the collector is installed and the authorized scope
-is selected, and Enter runs it.
+The module shows `READY` once the collector is installed, and Enter runs it
+against the target and domain you supplied.
 
-The pinned domain, the pinned DC address, and `-c LdapOnly` describe the
-authorized scope and narrow what the collector asks for; they are **not** a
-network boundary, and Module Information says so explicitly (`Network scope:
-pinned to sccm.lab / 10.1.10.40 with LdapOnly; not kernel-enforced`). In
-particular, name resolution follows the host resolver and LDAP referrals are
-RustHound's own behaviour, so nothing here claims that a collection cannot reach
-beyond the DC. Treat the module as an authorized-scope collector on a lab host,
-not as a confined one.
+`-c LdapOnly` plus your chosen target and domain narrow what the collector asks
+for; they are **not** a network boundary, and Module Information says so
+explicitly (`Network scope: LdapOnly against the supplied target; not
+kernel-enforced`). In particular, name resolution follows the host resolver and
+LDAP referrals are RustHound's own behaviour, so nothing here claims that a
+collection cannot reach beyond the target you named. Treat the module as an
+operator-scoped collector whose authorization you own.
 
 Cargo performs every install build in a temporary directory under `TMPDIR`, and
 Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for

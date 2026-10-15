@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
@@ -66,8 +65,8 @@ func (m Module) AvailabilityReason() string {
 }
 
 func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
-	if runtime == nil || runtime.Target != config.AuthorizedTarget || runtime.Domain != config.AuthorizedDomain {
-		return fmt.Errorf("target is outside the authorized assessment scope")
+	if runtime == nil || strings.TrimSpace(runtime.Target) == "" || strings.TrimSpace(runtime.Domain) == "" {
+		return fmt.Errorf("runtime target and domain are required")
 	}
 	dependency := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.NetExec)
 	if !dependency.Available {

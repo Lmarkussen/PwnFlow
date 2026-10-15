@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
@@ -61,11 +60,11 @@ var secretOptions = map[string]bool{
 // passed to the collector but is never displayed, logged, or recorded.
 const authNote = "native LDAP password (-p; accepted for this single-operator lab, redacted in previews and history)"
 
-// scopeNote is the informational line shown in Module Information. The pinned
-// domain and DC plus LdapOnly describe the authorized scope and narrow what the
-// collector asks for, but nothing restricts where it may connect, so the module
-// states that plainly instead of implying confinement.
-const scopeNote = "Network scope: pinned to " + config.AuthorizedDomain + " / " + config.AuthorizedTarget + " with LdapOnly; not kernel-enforced"
+// scopeNote is the informational line shown in Module Information. LdapOnly and
+// the operator-supplied target narrow what the collector asks for, but nothing
+// restricts where it may connect, so the module states that plainly instead of
+// implying confinement.
+const scopeNote = "Network scope: LdapOnly against the supplied target; not kernel-enforced"
 
 // Module describes RustHound-CE independently from the NetExec BloodHound
 // capability and from both Python collector variants.
@@ -78,7 +77,7 @@ func (Module) Category() modules.Category     { return modules.CategoryEnumerati
 func (Module) Tool() string                   { return "RustHound-CE" }
 func (Module) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (Module) Description() string {
-	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method, the authorized DC address, and native LDAP password authentication."
+	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method, the operator-supplied DC address, and native LDAP password authentication."
 }
 func (Module) Prerequisites() []string {
 	return []string{"rusthound-ce executable"}
@@ -88,7 +87,7 @@ func (Module) OutputFile() string               { return logFile }
 func (Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySensitive }
 func (Module) ReadOnly() bool                   { return true }
 func (Module) SecondaryConnections() []string {
-	return []string{"LdapOnly contacts the authorized DC over LDAP; DNS lookups and LDAP referrals are not restricted to that DC"}
+	return []string{"LdapOnly contacts the supplied DC over LDAP; DNS lookups and LDAP referrals are not restricted to that DC"}
 }
 func (Module) ExecutionEnabled() bool { return true }
 func (Module) AvailabilityReason() string {
@@ -132,8 +131,8 @@ func (m Module) RunArtifactDirectory(runtime *modules.Runtime, started time.Time
 }
 
 func (Module) Check(ctx context.Context, runtime *modules.Runtime) error {
-	if runtime == nil || runtime.Target != config.AuthorizedTarget || runtime.Domain != config.AuthorizedDomain {
-		return fmt.Errorf("target is outside the authorized assessment scope")
+	if runtime == nil || strings.TrimSpace(runtime.Target) == "" || strings.TrimSpace(runtime.Domain) == "" {
+		return fmt.Errorf("runtime target and domain are required")
 	}
 	dependency := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.RustHoundCE)
 	if !dependency.Available {
@@ -169,7 +168,16 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 }
 
 func (m Module) commandArgs(runtime *modules.Runtime, output string) []string {
-	args := []string{"-d", config.AuthorizedDomain, "-i", config.AuthorizedTarget, "-c", collectionMethod}
+	args := make([]string, 0, 10)
+	if runtime != nil {
+		if domain := strings.TrimSpace(runtime.Domain); domain != "" {
+			args = append(args, "-d", domain)
+		}
+		if target := strings.TrimSpace(runtime.Target); target != "" {
+			args = append(args, "-i", target)
+		}
+	}
+	args = append(args, "-c", collectionMethod)
 	if runtime != nil {
 		if username := strings.TrimSpace(runtime.Username); username != "" {
 			args = append(args, "-u", username)

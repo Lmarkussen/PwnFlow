@@ -66,7 +66,7 @@ func (f failingModule) Run(context.Context, *modules.Runtime, modules.OutputSink
 type echoingModule struct{ testModule }
 
 func (echoingModule) Run(_ context.Context, _ *modules.Runtime, sink modules.OutputSink) error {
-	_, err := sink.Write([]byte("rusthound-ce -d sccm.lab -u audituser -p Sup3rSecret -o artifacts\nrusthound-ce --ldappassword Sup3rSecret -c LdapOnly\n"))
+	_, err := sink.Write([]byte("rusthound-ce -d corp.example -u audituser -p Sup3rSecret -o artifacts\nrusthound-ce --ldappassword Sup3rSecret -c LdapOnly\n"))
 	return err
 }
 

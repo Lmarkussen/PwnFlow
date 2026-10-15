@@ -10,25 +10,44 @@ import (
 
 type Config struct{ Target, Domain, Username, Password, Root string }
 
-const (
-	AuthorizedTarget = "10.1.10.40"
-	AuthorizedDomain = "sccm.lab"
-)
-
+// New validates operator-supplied assessment configuration. PwnFlow is a
+// general-purpose framework: the target, domain, and credentials come from the
+// operator, so this validates the shape of the input and the safety of the path
+// components instead of comparing it against any fixed assessment scope.
 func New(target, domain, username, password, root string) (Config, error) {
-	if target == "" || domain == "" || username == "" {
+	if strings.TrimSpace(target) == "" || strings.TrimSpace(domain) == "" || strings.TrimSpace(username) == "" {
 		return Config{}, fmt.Errorf("target, domain, and username are required")
 	}
-	if strings.TrimSpace(target) != AuthorizedTarget || strings.TrimSpace(domain) != AuthorizedDomain {
-		return Config{}, fmt.Errorf("target restricted to authorized lab %s/%s", AuthorizedTarget, AuthorizedDomain)
+	cleanTarget, err := SafeTargetPart(target)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid target: %w", err)
 	}
 	clean, err := SafePathPart(domain)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid domain: %w", err)
 	}
-	return Config{Target: target, Domain: clean, Username: username, Password: password, Root: root}, nil
+	return Config{Target: cleanTarget, Domain: clean, Username: username, Password: password, Root: root}, nil
 }
 func (c Config) ResultsRoot() string { return filepath.Join(c.Root, "results", c.Domain) }
+
+// SafeTargetPart validates an operator-supplied target address. The value is
+// passed to tools as a command argument and used for connection setup, so it must
+// be non-empty, must not look like a command-line option, and must contain only
+// address characters (IPv4, IPv6, or host name).
+func SafeTargetPart(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("target is required")
+	}
+	if strings.HasPrefix(value, "-") {
+		return "", fmt.Errorf("target must not start with '-'")
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._:-]*[A-Za-z0-9])?$`).MatchString(value) {
+		return "", fmt.Errorf("unsupported target characters")
+	}
+	return value, nil
+}
+
 func SafePathPart(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || value == "." || value == ".." || strings.Contains(value, "..") || strings.ContainsAny(value, `/\\`) {

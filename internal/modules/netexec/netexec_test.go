@@ -7,8 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
+)
+
+// Fixtures for arbitrary operator-supplied assessment configuration.
+const (
+	testTarget = "198.51.100.10"
+	testDomain = "example.test"
 )
 
 func TestEnumerationDefinitionsAndArguments(t *testing.T) {
@@ -27,8 +32,8 @@ func TestEnumerationDefinitionsAndArguments(t *testing.T) {
 		t.Fatalf("got %d LDAP enumeration modules, want 17", ldapCount)
 	}
 	module := all[0].(Module)
-	args := module.CommandArgs(&modules.Runtime{Target: config.AuthorizedTarget, Username: "user", Password: "secret"})
-	want := []string{"ldap", config.AuthorizedTarget, "-u", "user", "-p", "secret", "-M", "get-info-users"}
+	args := module.CommandArgs(&modules.Runtime{Target: testTarget, Username: "user", Password: "secret"})
+	want := []string{"ldap", testTarget, "-u", "user", "-p", "secret", "-M", "get-info-users"}
 	for i := range want {
 		if args[i] != want[i] {
 			t.Fatalf("arg %d: got %q want %q", i, args[i], want[i])
@@ -53,8 +58,8 @@ func TestSMBDefinitionsUseSMBProtocolAndArguments(t *testing.T) {
 	if shares.ID() == "" {
 		t.Fatal("SMB shares module was not registered")
 	}
-	args := shares.CommandArgs(&modules.Runtime{Target: config.AuthorizedTarget, Username: "user", Password: "secret"})
-	want := []string{"smb", config.AuthorizedTarget, "-u", "user", "-p", "secret", "--shares"}
+	args := shares.CommandArgs(&modules.Runtime{Target: testTarget, Username: "user", Password: "secret"})
+	want := []string{"smb", testTarget, "-u", "user", "-p", "secret", "--shares"}
 	if len(args) != len(want) {
 		t.Fatalf("got args %#v, want %#v", args, want)
 	}
@@ -78,10 +83,10 @@ func TestCredentialAuditingModulesAreDisabledAndScoped(t *testing.T) {
 		if got := module.OutputFile(); got != wantPath {
 			t.Fatalf("%s output path = %q, want %q", module.ID(), got, wantPath)
 		}
-		if err := module.Check(context.Background(), &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain}); err == nil {
+		if err := module.Check(context.Background(), &modules.Runtime{Target: testTarget, Domain: testDomain}); err == nil {
 			t.Fatalf("%s unexpectedly enabled", module.ID())
 		}
-		if err := module.Check(context.Background(), &modules.Runtime{Target: "198.51.100.10", Domain: config.AuthorizedDomain}); err == nil {
+		if err := module.Check(context.Background(), &modules.Runtime{Target: "198.51.100.10", Domain: testDomain}); err == nil {
 			t.Fatal("scope guard bypassed")
 		}
 	}
@@ -101,7 +106,7 @@ exit 0
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	runtime := &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain}
+	runtime := &modules.Runtime{Target: testTarget, Domain: testDomain}
 	for _, raw := range CredentialAuditingModules() {
 		module := raw.(Module)
 		err := module.Check(context.Background(), runtime)
@@ -132,7 +137,7 @@ exit 0
 			kerberoasting = candidate
 		}
 	}
-	err := kerberoasting.Check(context.Background(), &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain})
+	err := kerberoasting.Check(context.Background(), &modules.Runtime{Target: testTarget, Domain: testDomain})
 	if err == nil || !strings.Contains(err.Error(), "--kerberoasting") {
 		t.Fatalf("missing capability result = %v", err)
 	}
@@ -169,7 +174,7 @@ exit 0
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	err := bloodhound.Check(context.Background(), &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain})
+	err := bloodhound.Check(context.Background(), &modules.Runtime{Target: testTarget, Domain: testDomain})
 	if err == nil || !strings.Contains(err.Error(), "scope restricted") {
 		t.Fatalf("unexpected BloodHound check result: %v", err)
 	}
@@ -191,7 +196,7 @@ exit 0
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	runtime := &modules.Runtime{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain}
+	runtime := &modules.Runtime{Target: testTarget, Domain: testDomain}
 	var users, active, shares Module
 	for _, raw := range EnumerationModules() {
 		module := raw.(Module)

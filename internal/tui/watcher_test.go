@@ -12,7 +12,7 @@ import (
 )
 
 func TestWrapWatcherOutputPreservesLongLines(t *testing.T) {
-	input := "LDAP  10.1.10.40  389  DC  [+] sccm.lab\\snablr-lab-admin: [REDACTED] (Pwn3d!)"
+	input := "LDAP  198.51.100.10  389  DC  [+] corp.example\\svc-audit: [REDACTED] (Pwn3d!)"
 	wrapped := wrapWatcherOutput(input, 24)
 	if strings.ReplaceAll(wrapped, "\n", "") != input {
 		t.Fatalf("wrapped output lost characters: %q", wrapped)
