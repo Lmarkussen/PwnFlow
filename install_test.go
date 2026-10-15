@@ -767,41 +767,190 @@ func TestInstallerSkipsCertipyUnlessRequested(t *testing.T) {
 	}
 }
 
-// writeSCCMToolMocks provides the git, python3, and pip3 stand-ins the SCCM
-// installation paths use, and records every call.
+// pr11Head is the pull/11 revision the installer fixtures record. It is the commit
+// upstream published for that pull request.
+const pr11Head = "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0"
+
+// writeSCCMToolMocks provides the git, python3, mkdir, and chmod stand-ins the SCCM
+// installation paths use, and records every call so a test can assert both what was
+// run and what was deliberately not run. Nothing contacts a network.
 func writeSCCMToolMocks(t *testing.T, bin, log string) {
 	t.Helper()
-	writeExecutable(t, bin, "git", `printf '%s\n' "$*" >> "`+log+`"
+	writeExecutable(t, bin, "mkdir", `exec /usr/bin/mkdir "$@"`)
+	writeExecutable(t, bin, "chmod", `exec /bin/chmod "$@"`)
+	writeExecutable(t, bin, "dirname", `exec /usr/bin/dirname "$@"`)
+	writeExecutable(t, bin, "git", `printf '%s\n' "git $*" >> "`+log+`"
 case "$1" in
 clone)
-  target="${!#}"
-  mkdir -p "$target"
-  printf '%s\n' '#!/bin/sh' 'echo "fake tool help"' > "$target/requirements.txt.junk"
-  printf '%s\n' 'requirements' > "$target/requirements.txt"
-  printf '%s\n' '# entry script' > "$target/sccmhunter.py"
-  printf '%s\n' '# entry script' > "$target/pxethief.py"
-  printf '%s\n' '[GENERAL SETTINGS]' > "$target/settings.ini"
+  /usr/bin/mkdir -p "$3/.git"
+  printf '%s\n' 'requirements' > "$3/requirements.txt"
+  printf '%s\n' '# entry script' > "$3/sccmhunter.py"
+  printf '%s\n' '# entry script' > "$3/pxethief.py"
+  printf '%s\n' '[GENERAL SETTINGS]' > "$3/settings.ini"
   ;;
 esac
 case "$*" in
-*"rev-parse HEAD"*) echo "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0" ;;
+*"rev-parse HEAD"*) echo "$FAKE_PR_HEAD" ;;
 esac
 exit 0`)
 	writeExecutable(t, bin, "python3", `printf '%s\n' "python3 $*" >> "`+log+`"
 if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
-  mkdir -p "$3/.venv/bin"
-  cat > "$3/.venv/bin/python3" <<'MOCK'
-#!/bin/sh
-case "$2" in --help) echo "fake help"; exit 0 ;; esac
-exit 0
-MOCK
-  cat > "$3/.venv/bin/pip3" <<'MOCK'
-#!/bin/sh
-exit 0
-MOCK
-  chmod 700 "$3/.venv/bin/python3" "$3/.venv/bin/pip3"
+  # $3 is the environment directory itself: <root>/.venv
+  /usr/bin/mkdir -p "$3/bin"
+  printf '%s\n' '#!/bin/sh' 'case "$2" in --help) echo help; exit 0 ;; esac' 'exit 0' > "$3/bin/python3"
+  printf '%s\n' '#!/bin/sh' 'echo "pip3 $*" >> "`+log+`"' 'exit 0' > "$3/bin/pip3"
+  /bin/chmod 700 "$3/bin/python3" "$3/bin/pip3"
 fi
 exit 0`)
+}
+
+// createCheckoutLayout lays out a checkout exactly as the installer leaves it: a
+// git checkout, its entry script and requirements, and a working environment.
+func createCheckoutLayout(t *testing.T, root, script, recordedRevision string) {
+	t.Helper()
+	for _, directory := range []string{filepath.Join(root, ".venv", "bin"), filepath.Join(root, ".git")} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeExecutable(t, filepath.Join(root, ".venv", "bin"), "python3", `case "$2" in --help) echo help; exit 0 ;; esac; exit 0`)
+	files := map[string]string{script: "# entry script\n", "requirements.txt": "scapy\n", "settings.ini": "auto_exploit_blank_password = 0\n"}
+	if recordedRevision != "" {
+		files[".pwnflow-pr11"] = recordedRevision + "\n"
+	}
+	for name, contents := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A fresh installation clones both tools into their own checkouts, builds each
+// virtual environment, and pins PXEThief to the pull/11 revision rather than the
+// default branch.
+func TestInstallerInstallsSCCMToolsFromTheirExactSources(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls.log")
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	t.Setenv("FAKE_PR_HEAD", pr11Head)
+	writeSCCMToolMocks(t, bin, log)
+	writeFailingPackageManagerMocks(t, bin)
+
+	output, err := runInstaller(t, bin, "--with-sccmhunter", "--with-pxethief")
+	if err != nil {
+		t.Fatalf("SCCM tool installation failed: %v\n%s", err, output)
+	}
+	sccmRoot := filepath.Join(toolsRoot, "sccmhunter")
+	pxeRoot := filepath.Join(toolsRoot, "PXEThief")
+	calls, readErr := os.ReadFile(log)
+	if readErr != nil {
+		t.Fatalf("no tool calls were recorded: %v", readErr)
+	}
+	recorded := string(calls)
+	for _, want := range []string{
+		"clone https://github.com/garrettfoster13/sccmhunter.git " + sccmRoot,
+		"clone https://github.com/MWR-CyberSec/PXEThief.git " + pxeRoot,
+		"-C " + pxeRoot + " fetch origin pull/11/head:pr-11",
+		"-C " + pxeRoot + " checkout pr-11",
+		"python3 -m venv " + filepath.Join(sccmRoot, ".venv"),
+		"python3 -m venv " + filepath.Join(pxeRoot, ".venv"),
+		"pip3 install -r " + filepath.Join(sccmRoot, "requirements.txt"),
+		"pip3 install -r " + filepath.Join(pxeRoot, "requirements.txt"),
+	} {
+		if !strings.Contains(recorded, want) {
+			t.Errorf("expected call %q is missing:\n%s", want, recorded)
+		}
+	}
+	for _, forbidden := range []string{"checkout main", "checkout master", "checkout origin/HEAD"} {
+		if strings.Contains(recorded, forbidden) {
+			t.Errorf("a default branch was made the operational version (%q):\n%s", forbidden, recorded)
+		}
+	}
+	marker, markerErr := os.ReadFile(filepath.Join(pxeRoot, ".pwnflow-pr11"))
+	if markerErr != nil || strings.TrimSpace(string(marker)) != pr11Head {
+		t.Errorf("the verified pull/11 revision was not recorded: %q %v", string(marker), markerErr)
+	}
+	for _, want := range []string{"SCCMhunter: Installed", "PXEThief: Installed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("the summary is missing %q: %s", want, output)
+		}
+	}
+	for _, unwanted := range []string{"apt-should-not-run", "sudo-should-not-run"} {
+		if strings.Contains(output, unwanted) {
+			t.Errorf("the SCCM tools were installed through the system package manager: %s", output)
+		}
+	}
+}
+
+// A verified installation is reused: nothing is cloned, fetched, or installed
+// again, and the environment is left alone.
+func TestInstallerReusesVerifiedSCCMInstallations(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls.log")
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	t.Setenv("FAKE_PR_HEAD", pr11Head)
+	writeSCCMToolMocks(t, bin, log)
+	writeFailingPackageManagerMocks(t, bin)
+	createCheckoutLayout(t, filepath.Join(toolsRoot, "sccmhunter"), "sccmhunter.py", pr11Head)
+	createCheckoutLayout(t, filepath.Join(toolsRoot, "PXEThief"), "pxethief.py", pr11Head)
+
+	output, err := runInstaller(t, bin, "--with-sccmhunter", "--with-pxethief")
+	if err != nil {
+		t.Fatalf("existing SCCM tools were not reused: %v\n%s", err, output)
+	}
+	for _, want := range []string{"SCCMhunter already installed and functional", "PXEThief already installed at the required revision", "SCCMhunter: Already installed", "PXEThief: Already installed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output is missing %q: %s", want, output)
+		}
+	}
+	calls, _ := os.ReadFile(log)
+	for _, forbidden := range []string{"clone", "fetch", "checkout", "venv", "pip3 install"} {
+		if strings.Contains(string(calls), forbidden) {
+			t.Errorf("a working installation was touched (%q):\n%s", forbidden, calls)
+		}
+	}
+}
+
+// When the pull request cannot be fetched the installer reports the git error and
+// leaves the working SCCMhunter installation alone.
+func TestInstallerKeepsWorkingSCCMHunterWhenPullRequestFetchFails(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls.log")
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	writeExecutable(t, bin, "mkdir", `exec /usr/bin/mkdir "$@"`)
+	writeExecutable(t, bin, "chmod", `exec /bin/chmod "$@"`)
+	writeExecutable(t, bin, "dirname", `exec /usr/bin/dirname "$@"`)
+	writeExecutable(t, bin, "git", `printf '%s\n' "git $*" >> "`+log+`"
+case "$*" in
+*" fetch "*) echo "fatal: couldn't find remote ref pull/11/head" >&2; exit 128 ;;
+esac
+exit 0`)
+	writeFailingPackageManagerMocks(t, bin)
+	createCheckoutLayout(t, filepath.Join(toolsRoot, "sccmhunter"), "sccmhunter.py", "")
+	// The PXEThief checkout exists but is on another revision, so the installer has
+	// to fetch pull/11 to make it operational.
+	createCheckoutLayout(t, filepath.Join(toolsRoot, "PXEThief"), "pxethief.py", "0123456789abcdef0123456789abcdef01234567")
+
+	stdout, stderr, err := runInstallerSplit(t, bin, "--with-sccmhunter", "--with-pxethief")
+	if err == nil {
+		t.Fatalf("a failed pull/11 fetch was reported as success:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "couldn't find remote ref") {
+		t.Errorf("the actual git error was not reported: %s", stderr)
+	}
+	if !strings.Contains(stdout, "SCCMhunter: Already installed") {
+		t.Errorf("a working SCCMhunter installation was not preserved: %s", stdout)
+	}
+	if !strings.Contains(stdout, "PXEThief: Failed (pull/11 could not be fetched)") {
+		t.Errorf("the failure was not recorded accurately: %s", stdout)
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "pip3 install") || strings.Contains(string(calls), "checkout ") {
+		t.Errorf("the installer substituted another revision or reinstalled a working tool:\n%s", calls)
+	}
 }
 
 // A checkout on another revision, or one whose environment is damaged, is
@@ -811,6 +960,7 @@ func TestInstallerDiagnosesDamagedPXEThiefCheckout(t *testing.T) {
 	toolsRoot := t.TempDir()
 	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
 	writeExecutable(t, bin, "chmod", `exec /bin/chmod "$@"`)
+	writeExecutable(t, bin, "dirname", `exec /usr/bin/dirname "$@"`)
 	writeExecutable(t, bin, "git", `case "$*" in
 *"rev-parse HEAD"*) echo "0123456789abcdef0123456789abcdef01234567" ;;
 *fetch*) echo "fatal: couldn't find remote ref pull/11/head" >&2; exit 128 ;;

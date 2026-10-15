@@ -36,7 +36,7 @@ PwnFlow is a general-purpose framework: the target, domain, and credentials are 
 
 The application root is resolved from the executable location (or the nearest `go.mod` during development), not the current working directory. Results are written to `results/<domain>/Enumeration/NetExec/`, with prior output under `history/`, and metadata in `enumeration.db`.
 
-The active executable scopes are NetExec → Enumeration, Active Directory → Enumeration (RustHound-CE), and AD CS → Enumeration (Certipy). LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. None of the non-NetExec modules is a NetExec module or is ever included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, and Network remain visible as inactive taxonomy entries until their workflows are implemented. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
+The active executable scopes are NetExec → Enumeration, Active Directory → Enumeration (RustHound-CE), and AD CS → Enumeration (Certipy). LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. None of the non-NetExec modules is a NetExec module or is ever included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, and Network remain visible as inactive taxonomy entries until their workflows are implemented. SCCM → Enumeration carries SCCMhunter and PXEThief, which discover SCCM infrastructure and probe the endpoints it found. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
 
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module, `R` runs every selected eligible module as a single batch whatever scope is visible - an unavailable selection is reported and skipped rather than run - and `A` stays limited to the visible NetExec enumeration scope, so a global selection never widens YOLO.
 
@@ -217,6 +217,45 @@ before compiling, and refuses to start a build when the filesystem has less
 than 2 GiB free. An explicitly configured `TMPDIR` is used when it is a writable
 directory with enough room and is never replaced silently; when it is unusable
 the installer stops and explains how to correct it.
+
+### SCCM discovery and PXE testing
+
+SCCM is a tool family of its own: **SCCM → Enumeration → N/A** carries SCCMhunter and
+PXEThief. Install them with `./install.sh --with-sccmhunter` and
+`./install.sh --with-pxethief`, or run `./install.sh` to check and install
+everything. Both are source checkouts with their own virtual environment under
+`$PWNFLOW_TOOLS_DIR` (default `~/.local/share/pwnflow/tools`), and PwnFlow invokes
+that environment's interpreter by path, so **no virtualenv activation is needed** in
+Bash, Zsh, or Fish.
+
+PXEThief is pinned to `pull/11` (`8ca8a79`, AES-256 media variable support), not the
+default branch. The installer clones the repository, fetches
+`pull/11/head:pr-11`, checks that branch out, records the revision, and reuses an
+already-verified checkout rather than reinstalling it. If the pull request cannot be
+fetched, the installer reports the git error and never substitutes another revision.
+
+**SCCMhunter** runs `find` and then `show -all` over LDAPS against the domain
+controller supplied to PwnFlow, reads the tool's own database for structured records,
+and stores what it found — address, host name, SCCM role, and provenance — in the
+assessment's SQLite history, scoped to the assessment domain. Each run gets its own
+isolated data directory, so a run never reads another assessment's results, and the
+Module Information pane reports the stored endpoint count by role.
+
+**PXEThief** resolves that endpoint list when it runs, so selecting both modules and
+pressing `R` discovers first and probes afterwards. With no usable endpoint stored,
+an explicitly run PXEThief uses mode 1, which **broadcasts a DHCP discover on the
+local network** and follows the PXE server it finds; mode 1 also honours the
+operator's own `settings.ini`, including its automatic blank-password exploitation
+setting, so it is only ever an operator-initiated action. With endpoints stored, one
+`pxethief.py 2 <address>` invocation runs per endpoint — separately, never combined,
+and a failure on one endpoint does not stop the others.
+
+Results are kept apart: discovery output and preserved tables under
+`results/<domain>/Enumeration/SCCMHunter/`, and one directory per endpoint under
+`results/<domain>/Enumeration/PXEThief/`. Endpoints that resolve outside the
+assessment domain, or that have no usable address, are never probed, and the
+addresses in the list are not a network boundary.
+
 
 ### AD CS enumeration with Certipy
 
