@@ -113,3 +113,11 @@ type ExecutionPolicy interface {
 type CommandPreviewProvider interface {
 	CommandPreview(*Runtime) string
 }
+
+// DetailProvider is implemented by modules that expose their fixed configuration
+// in the Module Information pane, such as a pinned collection method or the
+// expected output directory. Lines must be cheap to compute and free of
+// secrets: the TUI renders them on every frame.
+type DetailProvider interface {
+	DetailLines(*Runtime) []string
+}

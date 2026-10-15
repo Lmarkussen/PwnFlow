@@ -126,10 +126,22 @@ func (m *model) infoView() string {
 		}
 	}
 	command := fmt.Sprintf("%s %s %s -u %s -p [REDACTED] ...", module.Tool(), strings.ToLower(string(module.Protocol())), m.cfg.Target, m.cfg.Username)
+	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
 	if preview, ok := module.(modules.CommandPreviewProvider); ok {
-		command = preview.CommandPreview(&modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()})
+		command = preview.CommandPreview(runtime)
 	}
-	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\n%s\n\nCommand: %s\n\nAvailability: %s\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), module.Description(), command, availability, m.status, module.OutputFile())
+	details := ""
+	if provider, ok := module.(modules.DetailProvider); ok {
+		for _, line := range provider.DetailLines(runtime) {
+			details += line + "\n"
+		}
+		if details != "" {
+			// Keep the module-supplied configuration distinct from the
+			// free-text description that follows it.
+			details += "\n"
+		}
+	}
+	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\n%s%s\n\nCommand: %s\n\nAvailability: %s\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), details, module.Description(), command, availability, m.status, module.OutputFile())
 }
 
 func (m *model) moduleAvailability(module modules.Module) string {

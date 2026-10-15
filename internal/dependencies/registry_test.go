@@ -123,6 +123,32 @@ func TestPipxExecutableDiscoveryUsesUserBinWithoutRestart(t *testing.T) {
 	}
 }
 
+// Cargo installs into $CARGO_HOME/bin, which Kali does not add to PATH, so the
+// collector has to be discovered from the managed Cargo location.
+func TestCargoBinDiscoveryFindsRustHoundWithoutPathEntry(t *testing.T) {
+	dir := t.TempDir()
+	cargoHome := filepath.Join(dir, "cargo-home")
+	cargoBin := filepath.Join(cargoHome, "bin")
+	if err := os.MkdirAll(cargoBin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(cargoBin, "rusthound-ce")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\ncase \"$1\" in --help) exit 0;; --version) echo 'rusthound-ce 2.5.25';; esac\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("PIPX_BIN_DIR", filepath.Join(dir, "pipx-bin"))
+	t.Setenv("PATH", filepath.Join(dir, "empty-path"))
+	status := DefaultRegistry().CheckOne(context.Background(), RustHoundCE)
+	if !status.Available || status.State != "installed" || status.FoundExecutable != "rusthound-ce" {
+		t.Fatalf("unexpected Cargo discovery status: %#v", status)
+	}
+	if status.Version != "rusthound-ce 2.5.25" || !strings.Contains(status.Detail, cargoBin) {
+		t.Fatalf("unexpected Cargo discovery detail: %#v", status)
+	}
+}
+
 func TestRefreshExecutablePathAddsUserBinOnce(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

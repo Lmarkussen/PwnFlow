@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
@@ -115,5 +117,30 @@ func TestRustHoundIsActiveDirectoryScopedAndNeverYOLOEnabled(t *testing.T) {
 	}
 	if command := model.executeAll(); command != nil || model.status != "category is inactive; no modules executed" {
 		t.Fatalf("RustHound unexpectedly entered YOLO execution: cmd=%v status=%q", command, model.status)
+	}
+}
+
+// Module Information must state the pinned configuration, the expected output
+// directory, and why the module stays blocked.
+func TestRustHoundModuleInformationShowsPinnedConfigurationAndBlockedStatus(t *testing.T) {
+	cfg := config.Config{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain, Username: "audituser", Root: t.TempDir()}
+	model := newModel(context.Background(), cfg, nil, []modules.Module{rusthound.Module{}}, []int64{1}, 1, "test")
+	model.setToolFamily(2)
+	model.width, model.height = 150, 50
+	model.resizeOutput()
+	frame := ansi.Strip(model.View())
+	for _, want := range []string{
+		"Execution: blocked - Scope Restricted",
+		"Collection method: LdapOnly",
+		"Output directory: ",
+		"UNAVAILABLE",
+		"process list",
+	} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("Module Information is missing %q:\n%s", want, frame)
+		}
+	}
+	if strings.Contains(frame, config.AuthorizedTarget+" -c All") || strings.Contains(frame, "-c All ") {
+		t.Fatalf("Module Information advertises the default collection:\n%s", frame)
 	}
 }

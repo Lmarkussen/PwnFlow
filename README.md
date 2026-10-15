@@ -80,8 +80,25 @@ RustHound-CE is the supported BloodHound CE collector. Request it explicitly
 with `./scripts/install.sh --with-rusthound-ce`; the installer checks Cargo,
 the required local build dependencies, and operator consent before running
 `cargo install rusthound-ce`. Existing functional installations are preserved.
-RustHound-CE collection remains Scope Restricted until its secondary
-destination behavior can be confined to the authorized DC.
+
+The PwnFlow module under Active Directory → Enumeration always passes
+`-c LdapOnly` and pins the domain and DC address to `sccm.lab`/`10.1.10.40`,
+so the CLI's default `All` collection is never selected and the module cannot be
+redirected by a caller. JSON artifacts are written to
+`results/sccm.lab/Enumeration/RustHoundCE/artifacts/<run timestamp>/` so a later
+run never overwrites an earlier one, while the sanitized terminal log stays
+separate under `results/sccm.lab/Enumeration/RustHoundCE/`. Execution history
+keeps status, exit code, artifact path, and a redacted error summary only; no
+credential is passed on the command line, streamed, or recorded.
+
+Collection is disabled. Module Information reports `Execution: blocked - Scope
+Restricted` together with both outstanding blockers: RustHound-CE 2.5.25 accepts
+the LDAP password only as a command-line value, which would expose it in the
+process list (its only argument-free transport is `--kerberos` with an
+operator-supplied `KRB5CCNAME` cache, and none exists on the assessment host),
+and `LdapOnly` with a pinned DC address does not prove that DNS lookups and LDAP
+referrals stay on `10.1.10.40`. Lifting the restriction requires an
+argument-free credential transport and verified DC-only egress confinement.
 
 Cargo performs every install build in a temporary directory under `TMPDIR`, and
 Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for
