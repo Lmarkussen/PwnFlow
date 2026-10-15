@@ -18,6 +18,22 @@ import (
 	"github.com/pwnflow/pwnflow/internal/config"
 )
 
+// A certificate that states no extended key usage is unrestricted, so it must
+// still be offered as a trust decision rather than refused for a usage problem
+// it does not have. This is how the standard chain check reads the extension.
+func TestCertificateWithoutUsageExtensionIsStillDecidable(t *testing.T) {
+	ca := newTestCA(t)
+	issued := ca.issueWithUsages(t, []string{"dc01.corp.example"}, nil, time.Now().Add(-time.Hour), time.Now().Add(time.Hour), nil)
+	trust := &recordingTrust{decision: TrustSession}
+	err := verifyPresentedCertificate([][]byte{issued.Certificate[0]}, "dc01.corp.example", config.Config{Target: "127.0.0.1"}, Options{CertificateTrust: trust.handler()})
+	if err != nil {
+		t.Fatalf("a certificate without a usage extension was refused: %v", err)
+	}
+	if len(trust.calls) != 1 {
+		t.Fatalf("expected one decision, got %#v", trust.calls)
+	}
+}
+
 // testCA issues short-lived certificates so certificate handling is exercised
 // against a real TLS server on loopback rather than a mock.
 type testCA struct {

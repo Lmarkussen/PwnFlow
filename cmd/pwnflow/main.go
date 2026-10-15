@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -83,7 +84,8 @@ func main() {
 		fail(err)
 	}
 	cfg.InsecureSkipVerify = *insecureSkipVerify
-	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg))
+	trustIn, trustOut := trustTerminal()
+	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg, trustIn, trustOut))
 	if err != nil {
 		fail(err)
 	}
@@ -113,22 +115,47 @@ func main() {
 
 // trustOptions builds the verification options for the LDAP preflight: the
 // operator's explicit flag, plus the interactive certificate decision that lets
-// an internal CA be approved for one run or remembered for this target. When no
-// approval store is reachable the decision stays session-only.
-func trustOptions(cfg config.Config) ldaptransport.Options {
+// an internal CA be approved for one run or remembered for this target.
+//
+// The decision handler is always installed. The approval store only controls
+// whether a decision can be remembered, so a store that cannot be read or written
+// must never remove the operator's ability to approve a certificate for the run.
+func trustOptions(cfg config.Config, in io.Reader, out io.Writer) ldaptransport.Options {
 	options := ldaptransport.Options{InsecureSkipVerify: cfg.InsecureSkipVerify}
+	decider := &trust.Decider{In: in, Out: out}
 	path, err := trust.DefaultPath()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] certificate approvals cannot be stored: %v\n", err)
-	} else {
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[!] certificate approvals cannot be stored: %v; they can still be accepted for this run\n", err)
+	default:
 		store, loadErr := trust.Load(path)
 		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "[!] %v\n", loadErr)
+			fmt.Fprintf(os.Stderr, "[!] %v; a certificate can still be accepted for this run, but not remembered\n", loadErr)
 		} else {
-			options.CertificateTrust = (&trust.Decider{Store: store, In: os.Stdin, Out: os.Stderr}).Decide
+			decider.Store = store
 		}
 	}
+	options.CertificateTrust = decider.Decide
 	return options
+}
+
+// trustTerminal reports where the certificate decision is asked and answered.
+//
+// The question is for the operator, so it must not depend on standard input
+// being the keyboard: a run that supplies the password as a flag and redirects
+// its input would otherwise have nobody able to approve the certificate, and the
+// connection would fail with a trust error instead of asking. When there is no
+// terminal at all the decision stays fail-closed - a certificate is never
+// accepted without a person saying so.
+func trustTerminal() (io.Reader, io.Writer) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return os.Stdin, os.Stderr
+	}
+	terminal, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return os.Stdin, os.Stderr
+	}
+	return terminal, terminal
 }
 
 func fail(err error) { fmt.Fprintln(os.Stderr, "pwnflow:", err); os.Exit(1) }

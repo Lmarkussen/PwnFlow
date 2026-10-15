@@ -45,6 +45,14 @@ func (t Transport) Port() string {
 	return "389"
 }
 
+// PortFor reports the port to dial, honouring an override when one is set.
+func (t Transport) PortFor(options Options) string {
+	if port := strings.TrimSpace(options.Ports[t]); port != "" {
+		return port
+	}
+	return t.Port()
+}
+
 // Kind classifies why an attempt failed. The distinctions are kept separate so a
 // signing requirement is never reported as bad credentials, and a trust problem
 // is never reported as an unreachable host.
@@ -118,6 +126,11 @@ type Options struct {
 	// certificate - host name, validity window, server-auth usage - must already
 	// hold, so this can approve an unknown authority but never a bad certificate.
 	CertificateTrust TrustHandler
+	// Ports overrides the TCP port per transport. A domain controller normally
+	// serves 389 and 636, which is what an empty entry means; the override exists
+	// for deployments that publish LDAP elsewhere and for tests that must not bind
+	// a privileged port.
+	Ports map[Transport]string
 }
 
 // TrustDecision is the operator's answer about an untrusted certificate.
@@ -177,7 +190,7 @@ func (c Connector) Connect(ctx context.Context, cfg config.Config) (Session, err
 	options.TLSServerName = identity.ServerName
 	attempts := make([]Attempt, 0, 3)
 	attempt := func(transport Transport) bool {
-		endpoint := net.JoinHostPort(cfg.Target, transport.Port())
+		endpoint := net.JoinHostPort(cfg.Target, transport.PortFor(options))
 		err := binder.Bind(ctx, cfg, transport, options)
 		if err == nil {
 			attempts = append(attempts, Attempt{Transport: transport, Endpoint: endpoint})
@@ -293,15 +306,21 @@ func (b SystemBinder) timeout() time.Duration {
 	return 5 * time.Second
 }
 
-// Bind connects using the requested transport and performs the NTLM bind.
+// ldapBinder is the part of the LDAP client this package uses, so the bind
+// sequence can be exercised without a server.
+type ldapBinder interface {
+	NTLMBind(domain, username, password string) error
+	Bind(username, password string) error
+}
+
+// Bind connects using the requested transport and performs the bind.
 func (b SystemBinder) Bind(ctx context.Context, cfg config.Config, transport Transport, options Options) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	timeout := b.timeout()
-	dialer := &net.Dialer{Timeout: timeout}
 	verification := newTLSVerification(cfg, options)
-	address := net.JoinHostPort(cfg.Target, transport.Port())
+	address := net.JoinHostPort(cfg.Target, transport.PortFor(options))
 
 	var (
 		client *ldap.Conn
@@ -309,9 +328,9 @@ func (b SystemBinder) Bind(ctx context.Context, cfg config.Config, transport Tra
 	)
 	switch transport {
 	case LDAPS:
-		client, err = ldap.DialURL("ldaps://"+address, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(verification.config))
+		client, err = dialLDAPS(ctx, address, timeout, verification.config, options)
 	default:
-		client, err = ldap.DialURL("ldap://"+address, ldap.DialWithDialer(dialer))
+		client, err = ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{Timeout: timeout}))
 	}
 	if err != nil {
 		return wrapTLSFailure(err, verification.serverName, cfg.Target)
@@ -323,7 +342,135 @@ func (b SystemBinder) Bind(ctx context.Context, cfg config.Config, transport Tra
 			return wrapTLSFailure(err, verification.serverName, cfg.Target)
 		}
 	}
-	return client.NTLMBind(cfg.Domain, cfg.Username, cfg.Password)
+	if transport == LDAP {
+		// Plain LDAP is not integrity protected, so the password never leaves the
+		// process except through NTLM, which does not put it on the wire. A simple
+		// bind here would transmit it in the clear and would be refused by any
+		// controller that requires signing anyway.
+		return client.NTLMBind(cfg.Domain, cfg.Username, cfg.Password)
+	}
+	return bindOverTLS(client, cfg)
+}
+
+// dialLDAPS opens the TLS connection itself and hands the secured connection to
+// the LDAP client.
+//
+// The dial is done here rather than through go-ldap's LDAPS dial path because
+// the certificate trust decision is asked from inside the TLS handshake. go-ldap
+// passes the dialer's timeout to the handshake as a context deadline, and Go
+// closes the connection when that deadline expires, so an operator who is still
+// reading the certificate would have the connection torn down underneath them
+// and never reach the bind they just approved.
+func dialLDAPS(ctx context.Context, address string, dialTimeout time.Duration, config *tls.Config, options Options) (*ldap.Conn, error) {
+	raw, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout(dialTimeout, options))
+	defer cancel()
+	secured := tls.Client(raw, config)
+	if err := secured.HandshakeContext(handshakeCtx); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	client := ldap.NewConn(secured, true)
+	client.Start()
+	return client, nil
+}
+
+// handshakeTimeout bounds how long the TLS handshake may take. The dial timeout
+// is enough when nothing but the network is involved, but a certificate trust
+// decision is answered by a person inside that handshake, so it has to leave room
+// for reading the certificate and typing an answer. The bound stays finite so an
+// unresponsive server still cannot hold startup open indefinitely.
+func handshakeTimeout(dialTimeout time.Duration, options Options) time.Duration {
+	if options.CertificateTrust != nil {
+		return 5 * time.Minute
+	}
+	return dialTimeout
+}
+
+// bindOverTLS completes the bind on a TLS-protected connection.
+//
+// NTLM is tried first because it never transmits the password. When a controller
+// refuses that mechanism, the same credentials are offered with a simple bind in
+// the identity formats Active Directory accepts, which is the sequence proven
+// against the assessment environment. The exchange stays bounded: one NTLM
+// attempt plus one simple bind per format, on the connection that already exists.
+func bindOverTLS(binder ldapBinder, cfg config.Config) error {
+	ntlmErr := binder.NTLMBind(cfg.Domain, cfg.Username, cfg.Password)
+	if ntlmErr == nil {
+		return nil
+	}
+	formats := simpleBindFormats(cfg.Username, cfg.Domain)
+	if len(formats) == 0 {
+		return fmt.Errorf("NTLM bind failed and no simple bind identity could be derived: %w", ntlmErr)
+	}
+	lastErr := ntlmErr
+	for _, format := range formats {
+		if err := binder.Bind(format, cfg.Password); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("NTLM bind failed (%v); simple bind failed for %d identity format(s), the last being %q: %w", ntlmErr, len(formats), maskBindIdentity(formats[len(formats)-1]), lastErr)
+}
+
+// simpleBindFormats mirrors the identity formats a working Active Directory
+// client offers, in the order that succeeds most often: the bare user name, the
+// UPN, then the down-level DOMAIN\user form. An identity that already states a
+// format is used as given.
+func simpleBindFormats(username, domain string) []string {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil
+	}
+	if strings.ContainsAny(username, `@\`) {
+		return []string{username}
+	}
+	formats := []string{username}
+	domain = strings.TrimSpace(domain)
+	if domain != "" {
+		formats = append(formats, username+"@"+domain)
+		if label := downLevelDomain(domain); label != "" {
+			formats = append(formats, label+`\`+username)
+		}
+	}
+	unique := make([]string, 0, len(formats))
+	seen := map[string]bool{}
+	for _, format := range formats {
+		if !seen[format] {
+			seen[format] = true
+			unique = append(unique, format)
+		}
+	}
+	return unique
+}
+
+// downLevelDomain turns a DNS domain into its NetBIOS-style label.
+func downLevelDomain(domain string) string {
+	domain = strings.Trim(strings.TrimSpace(domain), ".")
+	if domain == "" {
+		return ""
+	}
+	label := domain
+	if index := strings.Index(domain, "."); index > 0 {
+		label = domain[:index]
+	}
+	return strings.ToUpper(label)
+}
+
+// maskBindIdentity shortens an identity for a diagnostic; identities are not
+// credentials, but only the shape is needed to report which format failed.
+func maskBindIdentity(identity string) string {
+	if index := strings.IndexAny(identity, `@\`); index > 0 {
+		return identity[:1] + "***" + identity[index:]
+	}
+	if len(identity) <= 2 {
+		return "***"
+	}
+	return identity[:1] + "***"
 }
 
 // tlsVerification is the certificate check applied to a TLS-protected LDAP
@@ -398,7 +545,9 @@ func verifyPresentedCertificate(rawCerts [][]byte, serverName string, cfg config
 		return err
 	}
 	if options.CertificateTrust == nil {
-		return verifyErr
+		// Never fail silently here: an untrusted certificate with no decision
+		// available is a wiring problem the operator must be able to see.
+		return fmt.Errorf("%w; no certificate trust decision is available for this connection", verifyErr)
 	}
 	decision, err := options.CertificateTrust(certificateInfo(rawCerts[0], leaf, cfg, serverName, verifyErr))
 	if err != nil {
@@ -423,15 +572,20 @@ func verifyApartFromChainTrust(leaf *x509.Certificate, serverName string) error 
 	if err := leaf.VerifyHostname(serverName); err != nil {
 		return fmt.Errorf("the certificate is not valid for %q: %w", serverName, err)
 	}
-	serverAuth := false
-	for _, usage := range leaf.ExtKeyUsage {
-		if usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny {
-			serverAuth = true
-			break
+	// A certificate that states no extended key usage is unrestricted, which is
+	// how the standard chain check reads it. An explicit list that leaves out
+	// server authentication is a different matter and stays fatal.
+	if len(leaf.ExtKeyUsage) > 0 {
+		serverAuth := false
+		for _, usage := range leaf.ExtKeyUsage {
+			if usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny {
+				serverAuth = true
+				break
+			}
 		}
-	}
-	if !serverAuth {
-		return fmt.Errorf("the certificate is not valid for server authentication")
+		if !serverAuth {
+			return fmt.Errorf("the certificate is not valid for server authentication")
+		}
 	}
 	return nil
 }

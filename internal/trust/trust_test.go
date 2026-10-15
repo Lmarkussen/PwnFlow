@@ -192,6 +192,33 @@ func TestNonInteractiveInputCannotAccept(t *testing.T) {
 	}
 }
 
+// An approval store is a convenience, not a precondition for deciding: a run
+// whose store could not be loaded must still be able to accept a certificate for
+// that run, instead of failing with a trust error and no prompt.
+func TestWithoutAStoreTheDecisionIsSessionOnly(t *testing.T) {
+	output := &strings.Builder{}
+	decider := &Decider{In: strings.NewReader("t\n"), Out: output, Interactive: func() bool { return true }}
+	info := certificateInfo()
+	decision, err := decider.Decide(info)
+	if err != nil {
+		t.Fatalf("the operator's approval was refused: %v", err)
+	}
+	if decision != ldaptransport.TrustSession {
+		t.Fatalf("unexpected decision without a store: %v", decision)
+	}
+	prompts := strings.Count(output.String(), "Choice")
+	if prompts != 1 {
+		t.Fatalf("expected the certificate to be shown once, got %d:\n%s", prompts, output.String())
+	}
+	// The same certificate must not be asked about again in this run.
+	if decision, err := decider.Decide(info); err != nil || decision != ldaptransport.TrustSession {
+		t.Fatalf("second decision failed: %v %v", decision, err)
+	}
+	if strings.Count(output.String(), "Choice") != prompts {
+		t.Fatal("the operator was prompted twice for the same certificate")
+	}
+}
+
 // A store that cannot be written still only affects persistence, not safety.
 func TestUnwritableStoreDoesNotFailTheDecision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "readonly", "trusted.json")
