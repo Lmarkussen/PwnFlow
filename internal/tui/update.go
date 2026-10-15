@@ -195,6 +195,23 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// An operator abort is confirmed here, and applies to the execution they
+	// selected when they asked. Only an explicit yes confirms; every other answer,
+	// Escape included, leaves the module running.
+	if m.watcherAbortConfirm {
+		switch key {
+		case "y", "Y":
+			return m, m.confirmWatcherAbort()
+		case "ctrl+c", "q":
+			// These keep their process-wide meaning: give up the question and let the
+			// handler below act on it.
+			m.watcherAbortConfirm = false
+			m.watcherAbortIndex, m.watcherAbortName = 0, ""
+		default:
+			return m, m.declineWatcherAbort()
+		}
+	}
+
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
@@ -262,6 +279,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setWatcherSelection(0, true)
 			case "end":
 				m.setWatcherSelection(len(m.watcherStates())-1, true)
+			case "x":
+				return m, m.requestWatcherAbort()
 			default:
 				return m, nil
 			}

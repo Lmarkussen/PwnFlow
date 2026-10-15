@@ -24,6 +24,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 const (
@@ -324,10 +325,10 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if err := os.MkdirAll(runDirectory, 0750); err != nil {
 		return fmt.Errorf("create Certipy artifact directory: %w", err)
 	}
-	command := exec.CommandContext(ctx, path, m.commandArgs(runtime, m.artifactPrefix(runtime, started))...)
+	command := process.Command(ctx, path, m.commandArgs(runtime, m.artifactPrefix(runtime, started))...)
 	command.Dir = runDirectory
 	command.Stdout, command.Stderr = sink, sink
-	if err := command.Run(); err != nil {
+	if err := process.Wait(ctx, command); err != nil {
 		return fmt.Errorf("Certipy %s failed after %s: %w", m.definition.SlugValue, time.Since(started).Round(time.Millisecond), err)
 	}
 	return nil

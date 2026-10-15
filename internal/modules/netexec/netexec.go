@@ -24,7 +24,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -32,6 +31,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 // Definition describes one NetExec invocation.
@@ -477,10 +477,10 @@ func (m Module) optionArgs(runtime *modules.Runtime) []string {
 }
 
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
-	cmd := exec.CommandContext(ctx, "nxc", m.CommandArgs(runtime)...)
+	cmd := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	started := time.Now()
-	if err := cmd.Run(); err != nil {
+	if err := process.Wait(ctx, cmd); err != nil {
 		return fmt.Errorf("netexec failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 	}
 	return nil

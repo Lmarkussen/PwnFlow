@@ -75,6 +75,12 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 	if len(tail) > 0 {
 		_, _ = sink.writeSanitized(tail)
 	}
+	// A run that ended because it was stopped says so in its own artifact: the
+	// partial output above it is real, and whoever reads the file later has to be
+	// able to tell that it is where the tool got to rather than where it finished.
+	if err != nil && ctx.Err() != nil {
+		_, _ = sink.Write([]byte("\n[i] execution stopped before the tool finished; the output above is partial\n"))
+	}
 	result.Finished = time.Now()
 	result.OutputPath = path
 	if err != nil {

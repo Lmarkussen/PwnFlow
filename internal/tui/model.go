@@ -63,23 +63,29 @@ type model struct {
 	// moduleInputs holds the values the operator typed in this session, keyed by
 	// module then option key. It is never persisted, so it cannot reach another
 	// assessment.
-	moduleInputs        map[string]map[string]string
-	textInput           textinput.Model
-	batchElevation      map[string]bool
-	detailsRefreshed    time.Time
-	buffer              *runner.Buffer
-	last                []byte
-	status              string
-	started             time.Time
-	width, height       int
-	version             string
-	outputBuffers       map[int]*runner.Buffer
-	batch               *runner.BatchRun
-	batchItems          []runner.BatchItem
-	batchRecorded       bool
-	batchName           string
-	watcherSelected     int
-	watcherListCursor   int
+	moduleInputs      map[string]map[string]string
+	textInput         textinput.Model
+	batchElevation    map[string]bool
+	detailsRefreshed  time.Time
+	buffer            *runner.Buffer
+	last              []byte
+	status            string
+	started           time.Time
+	width, height     int
+	version           string
+	outputBuffers     map[int]*runner.Buffer
+	batch             *runner.BatchRun
+	batchItems        []runner.BatchItem
+	batchRecorded     bool
+	batchName         string
+	watcherSelected   int
+	watcherListCursor int
+	// watcherAbort holds the execution an operator asked to abort, captured when
+	// they pressed x: the confirmation and the abort apply to exactly that run, not
+	// to whatever is selected by the time they answer.
+	watcherAbortConfirm bool
+	watcherAbortIndex   int
+	watcherAbortName    string
 	watcherAuto         bool
 	watcherFocus        paneFocus
 	watcherListViewport viewport.Model

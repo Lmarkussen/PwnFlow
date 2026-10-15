@@ -35,6 +35,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 const (
@@ -319,11 +320,11 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	}
 	fmt.Fprintf(sink, "[i] RelayKing %s: writing reports and the relay target list into %s\n", m.definition.SlugValue, runDirectory)
 	args := append(append([]string(nil), base...), m.commandArgs(runtime, runDirectory)...)
-	command := exec.CommandContext(ctx, program, args...)
+	command := process.Command(ctx, program, args...)
 	command.Dir = runDirectory
 	command.Stdout, command.Stderr = sink, sink
 	command.WaitDelay = 2 * time.Second
-	runErr := command.Run()
+	runErr := process.Wait(ctx, command)
 	// The reports name relayable hosts, so they are assessment data: whatever the
 	// tool left behind is restricted to the owner, on the failure path too.
 	if err := hardenRunDirectory(runDirectory); err != nil {

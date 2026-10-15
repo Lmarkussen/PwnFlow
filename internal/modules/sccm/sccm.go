@@ -25,6 +25,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 // detailSnapshotTTL bounds how long a module's Module Information is reused. The work
@@ -551,15 +552,13 @@ func outputDirectory(runtime *modules.Runtime, folder string) string {
 
 // runCommand executes a tool with a controlled working directory and environment.
 func runCommand(ctx context.Context, program string, args []string, directory, home string, sink modules.OutputSink) error {
-	command := exec.CommandContext(ctx, program, args...)
+	command := process.Command(ctx, program, args...)
 	command.Dir = directory
 	command.Env = runEnvironment(home)
 	command.Stdout, command.Stderr = sink, sink
-	// A cancelled run must stop promptly: the tool may have started children of its
-	// own, and without a wait delay their inherited output pipes could hold the
-	// command open after it has been stopped.
-	command.WaitDelay = 2 * time.Second
-	return command.Run()
+	// The tool runs in its own process group, so stopping one module reaches the
+	// children it started and never PwnFlow's own group.
+	return process.Wait(ctx, command)
 }
 
 // commandContext builds a tool invocation with a controlled working directory.

@@ -18,7 +18,9 @@ func (m *model) resizeWatcher() {
 	if m.watcherListViewport.Width == 0 {
 		m.watcherListViewport = viewport.New(1, 1)
 	}
-	listHeight := (m.height - 11) / 2
+	// The watcher shows its status line above the panes, so the reservation grows by
+	// that one line and the panes still fit the terminal.
+	listHeight := (m.height - 12) / 2
 	if listHeight < 3 {
 		listHeight = 3
 	}
@@ -105,6 +107,10 @@ func watcherIcon(status string) string {
 		return "✓"
 	case "failed", "unavailable":
 		return "!"
+	case runner.StatusAborted:
+		// Stopped by the operator, which is neither a failure nor a cancellation of
+		// the whole run.
+		return "⊘"
 	case "cancelled":
 		return "×"
 	case "skipped":
@@ -128,6 +134,8 @@ func watcherStatus(state runner.BatchState) string {
 		return status + " (abnormal exit)"
 	case "cancelled", "unavailable", "skipped":
 		return status
+	case runner.StatusAborted:
+		return status + ": stopped by operator"
 	default:
 		return status
 	}
@@ -223,9 +231,38 @@ func (m *model) watcherView() string {
 	outputTitle := paneHeader(fmt.Sprintf("OUTPUT // %s", module.Name()), m.watcherFocus == focusOutput, headerWidth)
 	return title.Render("PwnFlow // EXECUTION WATCHER") + "\n\n" +
 		m.batchSummary() + fmt.Sprintf("Selected: %s   Elapsed: %s\n", module.Name(), elapsed) +
+		// The status line is where a request to abort is asked and answered, so the
+		// watcher has to show it: the confirmation is useless if it is invisible.
+		m.watcherStatusLine() +
 		listStyle.Render(listTitle+"\n"+m.watcherListViewport.View()) + "\n" +
 		outputStyle.Render(outputTitle+"\n"+m.watcherViewport.View()) + "\n" +
-		dim.Render("Tab focus   ↑↓/PgUp/PgDn navigate or scroll   Home/End   Ctrl+W/Esc close")
+		dim.Render(m.watcherFooter())
+}
+
+// watcherStatusLine renders the operator-facing status inside the watcher, amber
+// while a confirmation is pending and quiet otherwise.
+func (m *model) watcherStatusLine() string {
+	if m.status == "" {
+		return "\n"
+	}
+	if m.watcherAbortConfirm {
+		return warn.Render(m.status) + "\n"
+	}
+	return dim.Render(m.status) + "\n"
+}
+
+// watcherFooter advertises the watcher's keys, including the abort binding, and
+// drops the least important hint before it would wrap on a narrow terminal.
+func (m *model) watcherFooter() string {
+	full := "Tab focus   ↑↓/PgUp/PgDn navigate or scroll   Home/End   x abort selected   Ctrl+W/Esc close"
+	if ansi.StringWidthWc(full)+2 <= max(1, m.width) {
+		return full
+	}
+	short := "↑↓ navigate   x abort selected   Ctrl+W/Esc close"
+	if ansi.StringWidthWc(short)+2 <= max(1, m.width) {
+		return short
+	}
+	return "x abort selected"
 }
 
 func (m *model) batchSummary() string {

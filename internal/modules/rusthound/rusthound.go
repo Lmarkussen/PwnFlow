@@ -22,6 +22,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 const (
@@ -228,10 +229,10 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if path == "" {
 		path = dependency.FoundExecutable
 	}
-	command := exec.CommandContext(ctx, path, m.commandArgs(runtime, runDirectory)...)
+	command := process.Command(ctx, path, m.commandArgs(runtime, runDirectory)...)
 	command.Dir = runDirectory
 	command.Stdout, command.Stderr = sink, sink
-	if err := command.Run(); err != nil {
+	if err := process.Wait(ctx, command); err != nil {
 		return fmt.Errorf("RustHound-CE failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 	}
 	return nil

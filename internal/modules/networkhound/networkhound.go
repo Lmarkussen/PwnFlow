@@ -38,6 +38,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
 )
 
 const (
@@ -481,11 +482,11 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	}
 	fmt.Fprintf(sink, "[i] NetworkHound %s: writing %s\n", m.definition.SlugValue, filepath.Join(runDirectory, outputName))
 	args := append(append([]string(nil), base...), m.commandArgs(runtime, runDirectory)...)
-	command := exec.CommandContext(ctx, program, args...)
+	command := process.Command(ctx, program, args...)
 	command.Dir = runDirectory
 	command.Stdout, command.Stderr = sink, sink
 	command.WaitDelay = 2 * time.Second
-	runErr := command.Run()
+	runErr := process.Wait(ctx, command)
 	// Whatever the tool produced is assessment data: an AD topology, not a public
 	// document. The tool writes with the process umask, so the run directory is
 	// tightened to owner-only afterwards, on the failure path as well, because a
