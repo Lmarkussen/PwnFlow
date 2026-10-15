@@ -153,8 +153,14 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.quitConfirm {
 		switch key {
 		case "y", "Y":
+			if m.batchComplete() {
+				m.quitConfirm = false
+				m.running = false
+				return m, tea.Quit
+			}
 			m.quitConfirm = false
 			m.quitAfterCancel = true
+			m.quitCancelDeadline = time.Now().Add(5 * time.Second)
 			m.status = "cancelling; waiting for the active batch to stop"
 			m.cancelBatch()
 		case "n", "N", "esc":
@@ -248,18 +254,20 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
 	case "q":
-		if m.running {
+		if m.running && !m.batchComplete() {
 			m.quitConfirm = true
 			m.status = "batch is running; cancel and quit? [y/N]"
 			return m, nil
 		}
+		m.running = false
 		return m, tea.Quit
 	case "ctrl+c":
-		if m.running {
+		if m.running && !m.batchComplete() {
 			m.cancelBatch()
 			m.status = "cancelling"
 			return m, nil
 		}
+		m.running = false
 		return m, tea.Quit
 	case "esc":
 		if m.watcher {
@@ -565,6 +573,18 @@ func (m *model) cancelBatch() {
 	}
 }
 
+func (m *model) batchComplete() bool {
+	if m.batch == nil {
+		return !m.running
+	}
+	select {
+	case <-m.batch.Done():
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *model) closeWatcher() {
 	m.watcher = false
 	m.focus = m.focusBeforeWatcher
@@ -826,6 +846,12 @@ func orderBatch(items []runner.BatchItem) []runner.BatchItem {
 
 func (m *model) syncBatch() tea.Cmd {
 	if m.batch == nil {
+		if m.quitAfterCancel && !m.quitCancelDeadline.IsZero() && time.Now().After(m.quitCancelDeadline) {
+			m.running = false
+			m.quitAfterCancel = false
+			m.status = "active process did not stop within the shutdown window; exiting"
+			return tea.Quit
+		}
 		return nil
 	}
 	states, active, _, finished := m.batch.Snapshot()
@@ -855,6 +881,7 @@ func (m *model) syncBatch() tea.Cmd {
 			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", m.batchName, len(states), finished.Format("15:04:05"))
 		}
 		if m.quitAfterCancel {
+			m.quitCancelDeadline = time.Time{}
 			return tea.Quit
 		}
 		if m.analysisPending && !m.batchSummaryShown {
@@ -863,6 +890,12 @@ func (m *model) syncBatch() tea.Cmd {
 			return m.waitForFindings()
 		}
 	default:
+		if m.quitAfterCancel && !m.quitCancelDeadline.IsZero() && time.Now().After(m.quitCancelDeadline) {
+			m.running = false
+			m.quitAfterCancel = false
+			m.status = "active process did not stop within the shutdown window; exiting"
+			return tea.Quit
+		}
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
@@ -111,5 +112,24 @@ func TestEscClosesWatcherAndRestoresFocus(t *testing.T) {
 	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
 	if cmd != nil || m.watcher || m.focus != focusOutput {
 		t.Fatalf("Esc watcher close: watcher=%t focus=%d cmd=%v", m.watcher, m.focus, cmd)
+	}
+}
+
+func TestQuitAfterCompletedBatchDoesNotEnterCancellation(t *testing.T) {
+	batch := runner.NewBatchRun(nil)
+	batch.Start(context.Background(), nil, &modules.Runtime{}, t.TempDir(), runner.Runner{})
+	<-batch.Done()
+	m := &model{running: true, batch: batch, status: "complete"}
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil || m.running || m.quitConfirm || m.status == "cancelling; waiting for the active batch to stop" {
+		t.Fatalf("completed batch entered stale cancellation: cmd=%v running=%v confirm=%v status=%q", cmd, m.running, m.quitConfirm, m.status)
+	}
+}
+
+func TestQuitCancellationHasBoundedFallback(t *testing.T) {
+	m := &model{running: true, quitAfterCancel: true, quitCancelDeadline: time.Now().Add(-time.Second)}
+	quit := m.syncBatch()
+	if quit == nil || m.running || m.quitAfterCancel {
+		t.Fatalf("bounded quit fallback did not fire: cmd=%v running=%v after=%v", quit, m.running, m.quitAfterCancel)
 	}
 }

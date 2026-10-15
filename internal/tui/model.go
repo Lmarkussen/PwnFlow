@@ -48,6 +48,7 @@ type model struct {
 	focusBeforeWatcher  paneFocus
 	quitConfirm         bool
 	quitAfterCancel     bool
+	quitCancelDeadline  time.Time
 	elevationPrompt     bool
 	elevationModules    []string
 	// elevationRenewal carries a privileged module's request for fresh sudo
