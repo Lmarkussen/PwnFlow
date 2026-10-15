@@ -588,3 +588,23 @@ When a service is absent, the installed NetExec prints nothing and exits 0
 authorized host). PwnFlow therefore persists an empty artifact and reports the
 run as completed. The status is honest: the command was correct and it reached
 the point where the service would have answered.
+
+### Interface check on the assessment workstation
+
+The built binary was also driven on a pseudo-terminal against the same authorized
+target, with navigation only - no module was executed - to confirm the labels the
+registry produces are what the operator actually sees:
+
+| Observation | Result |
+|---|---|
+| Startup and first frame | rendered: target, domain, user, navigation pane, module list, Module Information, output pane |
+| `←`/`→` on PROTOCOL | scope changed from LDAP to SMB and the module list followed |
+| `←`/`→` on CATEGORY | scope changed to Privilege Escalation |
+| `ADMIN-REQ` | present in the SMB enumeration list, beside the administrator-level rows |
+| `UNAVAILABLE` | present in the Privilege Escalation list, where every row is gated |
+| the retired ready suffix | absent from every frame |
+| `Q` | exits cleanly |
+
+The run was isolated from the operator's assessment tree: it used a separate
+project root, because a running PwnFlow session holds the assessment database and
+the live interface must not disturb it.
