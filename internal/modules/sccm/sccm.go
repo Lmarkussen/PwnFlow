@@ -369,6 +369,66 @@ var (
 	secretValuePattern = regexp.MustCompile(`('[^']*'|"[^"]*"|:\s*\S.*)`)
 )
 
+// capNetRawBit is CAP_NET_RAW's position in a Linux capability set. Both PXEThief
+// modes craft DHCP packets with Scapy, which needs that capability.
+const capNetRawBit = 13
+
+// rawSocketHint is the short diagnostic shown when the kernel refuses a raw socket.
+const rawSocketHint = "PXEThief discovery requires Linux raw-socket privileges (CAP_NET_RAW), which this process does not have"
+
+// rawSocketPrivileges reports whether this process may open a Linux raw socket. It
+// reads the process's own effective capability set, so it changes nothing and needs
+// no network access: a capability is only ever removed by the kernel, and only the
+// operator can grant one.
+func rawSocketPrivileges() (available bool, known bool, detail string) {
+	contents, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false, false, "raw-socket privileges could not be determined on this host"
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		if !strings.HasPrefix(line, "CapEff:") {
+			continue
+		}
+		bits, parseErr := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(line, "CapEff:")), 16, 64)
+		if parseErr != nil {
+			return false, false, "the effective capability set could not be read"
+		}
+		if bits&(1<<capNetRawBit) != 0 {
+			return true, true, "available (CAP_NET_RAW is in this process's effective set)"
+		}
+		return false, true, "missing (CAP_NET_RAW is not in this process's effective set)"
+	}
+	return false, false, "the effective capability set could not be read"
+}
+
+// rawSocketFailure reports whether tool output shows the kernel refusing a raw
+// socket, which is the failure an operator can actually act on.
+func rawSocketFailure(output string) bool {
+	for _, pattern := range []string{"AF_PACKET", "PermissionError", "Operation not permitted"} {
+		if strings.Contains(output, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// tailBuffer keeps the most recent output of a tool so a failure can be classified
+// without holding the whole stream in memory.
+type tailBuffer struct {
+	limit int
+	data  []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.data = append(b.data, p...)
+	if b.limit > 0 && len(b.data) > b.limit {
+		b.data = append([]byte(nil), b.data[len(b.data)-b.limit:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string { return string(b.data) }
+
 // lineRedactor applies the targeted secret redaction to complete lines. Tool
 // output arrives in arbitrary chunks, so a value can straddle two writes; holding
 // a partial line until its newline arrives is what makes the redaction reliable.

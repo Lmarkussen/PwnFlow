@@ -178,7 +178,11 @@ func installSCCMToolLayouts(t *testing.T, bin string) {
 		if err := os.MkdirAll(filepath.Join(toolsRoot, tool.root, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		writeExecutable(t, filepath.Join(toolsRoot, tool.root, ".venv", "bin"), "python3", `case "$2" in --help) echo help; exit 0 ;; esac; exit 0`)
+		writeExecutable(t, filepath.Join(toolsRoot, tool.root, ".venv", "bin"), "python3", `case "$2" in
+--help) echo "Commands:"; echo "  find  Enumerate LDAP for SCCM assets."; echo "  show  Show and/or recon table results."; exit 0 ;;
+find) if [ "$3" = "--help" ]; then echo "-u -p -d -dc-ip -ldaps"; exit 0; fi; exit 0 ;;
+esac
+exit 0`)
 		files := map[string]string{tool.script: "# entry\n", "requirements.txt": "scapy\n", "settings.ini": "auto_exploit_blank_password = 0\n", ".pwnflow-pr11": "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0\n"}
 		for name, contents := range files {
 			if err := os.WriteFile(filepath.Join(toolsRoot, tool.root, name), []byte(contents), 0o644); err != nil {
@@ -797,7 +801,7 @@ exit 0`)
 if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
   # $3 is the environment directory itself: <root>/.venv
   /usr/bin/mkdir -p "$3/bin"
-  printf '%s\n' '#!/bin/sh' 'case "$2" in --help) echo help; exit 0 ;; esac' 'exit 0' > "$3/bin/python3"
+  printf '%s\n' '#!/bin/sh' 'case "$2" in' '--help) echo "Commands:"; echo "  find  Enumerate LDAP for SCCM assets."; echo "  show  Show and/or recon table results."; exit 0 ;;' 'find) if [ "$3" = "--help" ]; then echo "-u -p -d -dc-ip -ldaps"; exit 0; fi; exit 0 ;;' 'esac' 'exit 0' > "$3/bin/python3"
   printf '%s\n' '#!/bin/sh' 'echo "pip3 $*" >> "`+log+`"' 'exit 0' > "$3/bin/pip3"
   /bin/chmod 700 "$3/bin/python3" "$3/bin/pip3"
 fi
@@ -813,7 +817,11 @@ func createCheckoutLayout(t *testing.T, root, script, recordedRevision string) {
 			t.Fatal(err)
 		}
 	}
-	writeExecutable(t, filepath.Join(root, ".venv", "bin"), "python3", `case "$2" in --help) echo help; exit 0 ;; esac; exit 0`)
+	writeExecutable(t, filepath.Join(root, ".venv", "bin"), "python3", `case "$2" in
+--help) echo "Commands:"; echo "  find  Enumerate LDAP for SCCM assets."; echo "  show  Show and/or recon table results."; exit 0 ;;
+find) if [ "$3" = "--help" ]; then echo "-u -p -d -dc-ip -ldaps"; exit 0; fi; exit 0 ;;
+esac
+exit 0`)
 	files := map[string]string{script: "# entry script\n", "requirements.txt": "scapy\n", "settings.ini": "auto_exploit_blank_password = 0\n"}
 	if recordedRevision != "" {
 		files[".pwnflow-pr11"] = recordedRevision + "\n"
@@ -1018,5 +1026,39 @@ func TestInstallerSCCMToolSelection(t *testing.T) {
 	}
 	if !strings.Contains(skipped, "SCCMhunter: Skipped") || !strings.Contains(skipped, "PXEThief: Skipped") {
 		t.Errorf("unselected SCCM tools were not reported as skipped: %s", skipped)
+	}
+}
+
+// The installer and the runtime validate the same thing: a checkout that runs but
+// does not document the find options is reported, not called functional.
+func TestInstallerRejectsSCCMHunterWithoutTheFindWorkflow(t *testing.T) {
+	bin := t.TempDir()
+	toolsRoot := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsRoot)
+	writeExecutable(t, bin, "chmod", `exec /bin/chmod "$@"`)
+	writeExecutable(t, bin, "dirname", `exec /usr/bin/dirname "$@"`)
+	writeFailingPackageManagerMocks(t, bin)
+	root := filepath.Join(toolsRoot, "sccmhunter")
+	if err := os.MkdirAll(filepath.Join(root, ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The tool runs, but its find subcommand no longer documents -ldaps.
+	writeExecutable(t, filepath.Join(root, ".venv", "bin"), "python3", `case "$2" in
+--help) echo "Commands:"; echo "  find"; echo "  show"; exit 0 ;;
+find) if [ "$3" = "--help" ]; then echo "-u -p -d -dc-ip"; exit 0; fi; exit 0 ;;
+esac
+exit 0`)
+	if err := os.WriteFile(filepath.Join(root, "sccmhunter.py"), []byte("# entry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runInstallerSplit(t, bin, "--with-sccmhunter")
+	if err == nil {
+		t.Fatalf("a checkout without the find workflow was called functional:\n%s", stdout)
+	}
+	if !strings.Contains(stdout+stderr, "does not document the find options") {
+		t.Errorf("the mismatch was not explained: %s%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "SCCMhunter: Failed") {
+		t.Errorf("the summary does not record the failure: %s", stdout)
 	}
 }

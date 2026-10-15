@@ -54,9 +54,16 @@ func sccmTooling(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	// The help shape mirrors the installed tools: SCCMhunter documents its
+	// subcommands at the top level and the find options on the subcommand, and
+	// PXEThief prints its usage for -h. A probe that reads the wrong one would
+	// reject a working installation.
 	t.Setenv("PWNFLOW_FAKE_BODY", `case "$1" in
---help|-h) echo "Commands: find show"; echo "pxethief.py 1"; echo "-u -p -d -dc-ip -ldaps"; exit 0 ;;
-find) echo "Potential PXE Distribution Points"; echo "+---------------------+"; echo "| Hostname            |"; echo "+---------------------+"; echo "| pxe01.example.test  |"; exit 0 ;;
+--help) echo "Usage: sccmhunter [OPTIONS] COMMAND [ARGS]..."; echo "  find  Enumerate LDAP for SCCM assets."; echo "  show  Show and/or recon table results."; exit 0 ;;
+-h) echo "pxethief.py 1"; echo "pxethief.py 2 <ip>"; exit 0 ;;
+find)
+  if [ "$2" = "--help" ]; then echo "Options: -u -p -d -dc-ip -ldaps"; exit 0; fi
+  echo "Potential PXE Distribution Points"; echo "+---------------------+"; echo "| Hostname            |"; echo "+---------------------+"; echo "| pxe01.example.test  |"; exit 0 ;;
 show) echo "Management Points Table"; echo "+---------------------+"; echo "| Hostname            |"; echo "+---------------------+"; echo "| mp01.example.test   |"; echo "Potential PXE Distribution Points"; echo "+---------------------+"; echo "| Hostname            |"; echo "+---------------------+"; echo "| pxe01.example.test  |"; exit 0 ;;
 1) echo "[+] mode 1 broadcast"; exit 0 ;;
 2) echo "[+] mode 2 against $2"; exit 0 ;;
@@ -112,6 +119,9 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 	for index := range m.modules {
 		if state := m.moduleState(index); state != "READY" {
 			t.Fatalf("installed SCCM tooling must be READY, got %q for %s", state, m.modules[index].ID())
+		}
+		if reason := m.moduleAvailability(m.modules[index]); reason != "" {
+			t.Fatalf("%s is unavailable although it is installed: %q", m.modules[index].ID(), reason)
 		}
 	}
 	// A stays scoped: the SCCM scope is not NetExec enumeration.

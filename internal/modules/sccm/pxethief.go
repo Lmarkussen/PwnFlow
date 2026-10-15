@@ -120,6 +120,7 @@ func (m PXEThief) DetailLines(runtime *modules.Runtime) []string {
 		"Execution: enabled",
 		dependencyLine(ctx, dependencies.PXEThief, "PXEThief", "./install.sh --with-pxethief"),
 		prerequisiteLine(ctx),
+		"Raw-socket privileges: " + privilegeDetail(),
 		fmt.Sprintf("Stored endpoints: %d recorded, %d usable%s", total, len(endpoints), describeRoles(roles)),
 		"Planned mode: " + mode,
 		"Artifacts: " + filepath.Join(m.ArtifactDirectory(runtime), "<run>/<endpoint>"),
@@ -127,6 +128,23 @@ func (m PXEThief) DetailLines(runtime *modules.Runtime) []string {
 		scopeNote,
 	}
 	return lines
+}
+
+// privilegeDetail states whether PXEThief's DHCP work can run, and what the operator
+// can do when it cannot. PwnFlow never grants the capability itself: the venv
+// interpreter is a link to the system Python, so it is not a permitted target, and
+// the application is never required to run as root.
+func privilegeDetail() string {
+	available, known, detail := rawSocketPrivileges()
+	if available {
+		return detail
+	}
+	if !known {
+		return detail
+	}
+	return detail + " - run PwnFlow with an ambient capability for the session that needs it, for example: " +
+		"sudo setpriv --ambient-caps=+net_raw --inh-caps=+net_raw ./bin/pwnflow ... , or run the PXEThief command yourself under sudo. " +
+		"PwnFlow never elevates itself."
 }
 
 // scopeNote states what the endpoint list is and is not.
@@ -195,6 +213,11 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	if err != nil {
 		return err
 	}
+	// A missing capability is the one failure worth warning about before the tool
+	// runs: it is not a dependency problem, and the tool's own error is a traceback.
+	if available, known, _ := rawSocketPrivileges(); known && !available {
+		fmt.Fprintf(sink, "[!] %s. The DHCP work below will fail until the process has it.\n", rawSocketHint)
+	}
 	started := time.Now()
 	runDirectory := m.RunDirectory(runtime, started)
 	if err := prepareDirectory(runDirectory); err != nil {
@@ -204,7 +227,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	defer output.Flush()
 	if len(endpoints) == 0 {
 		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) as explicitly requested.")
-		if err := m.runOne(ctx, program, base, []string{"1"}, runDirectory, "mode-1", status.Root, runtime.Password, output); err != nil {
+		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, output); err != nil {
 			return err
 		}
 		return nil
@@ -245,11 +268,17 @@ func (m PXEThief) runOne(ctx context.Context, program string, base, args []strin
 		return fmt.Errorf("create %s log: %w", label, err)
 	}
 	defer log.Close()
+	tail := &tailBuffer{limit: 8192}
 	started := time.Now()
-	err = runCommand(ctx, program, append(append([]string(nil), base...), args...), directory, "", multiSink{sink, log})
+	err = runCommand(ctx, program, append(append([]string(nil), base...), args...), directory, "", multiSink{sink, log, tail})
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		// The tool's traceback is kept in its own output, but the summary the operator
+		// and the execution history see names the actual requirement.
+		if rawSocketFailure(tail.String()) {
+			return fmt.Errorf("%s: %s; the tool's own output is in %s", label, rawSocketHint, filepath.Join(directory, "pxethief.log"))
 		}
 		return fmt.Errorf("%s failed after %s: %w", label, time.Since(started).Round(time.Millisecond), err)
 	}

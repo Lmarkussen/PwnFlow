@@ -512,11 +512,33 @@ ensure_checkout_environment() {
   return 0
 }
 
+# sccmhunter_workflow_supported requires the checkout to document the find options
+# the discovery workflow uses. SCCMhunter lists its subcommands at the top level and
+# the find options on the find subcommand, so this validates the same thing the
+# runtime checks before it runs a discovery.
+sccmhunter_workflow_supported() {
+  local root="$1" interpreter help option
+  interpreter="$(checkout_interpreter "${root}" sccmhunter.py)" || return 1
+  [[ -n "${interpreter}" ]] || return 1
+  help="$("${interpreter}" "${root}/sccmhunter.py" find --help 2>&1)" || return 1
+  for option in -u -p -d -dc-ip -ldaps; do
+    [[ "$help" == *"$option"* ]] || return 1
+  done
+  return 0
+}
+
 install_sccmhunter() {
   local root interpreter
   root="$(sccmhunter_root)"
   interpreter="$(checkout_interpreter "${root}" sccmhunter.py)"
   if [[ -n "${interpreter}" ]] && checkout_functional "${root}" sccmhunter.py; then
+    # Existence and the workflow are checked together, so the installer never calls a
+    # tool functional that the runtime would refuse to run.
+    if ! sccmhunter_workflow_supported "${root}"; then
+      echo "SCCMhunter at ${root} runs, but does not document the find options the PwnFlow discovery module uses; it is not usable as installed." >&2
+      sccmhunter_status="Failed (the installed SCCMhunter does not document the find options PwnFlow uses)"
+      return 1
+    fi
     echo "SCCMhunter already installed and functional: ${interpreter} ${root}/sccmhunter.py"
     sccmhunter_status="Already installed"
     return 0
@@ -553,6 +575,11 @@ install_sccmhunter() {
   if ! checkout_functional "${root}" sccmhunter.py; then
     echo "SCCMhunter was installed at ${root} but does not run; check the output above." >&2
     sccmhunter_status="Failed (${root}/.venv/bin/python3 ${root}/sccmhunter.py failed)"
+    return 1
+  fi
+  if ! sccmhunter_workflow_supported "${root}"; then
+    echo "SCCMhunter was installed at ${root} but does not document the find options PwnFlow uses." >&2
+    sccmhunter_status="Failed (the installed SCCMhunter does not document the find options PwnFlow uses)"
     return 1
   fi
   sccmhunter_status="Installed"

@@ -11,11 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
 // Fixtures for arbitrary operator-supplied assessment configuration.
 const (
+	// prTestHead is the pull/11 revision the fixtures record.
+	prTestHead = "8ca8a7905c3aec98b9b1e610c03688cbd361ddb0"
 	testTarget = "198.51.100.10"
 	testDomain = "corp.example"
 	testDC     = "dc01.corp.example"
@@ -574,5 +577,160 @@ func TestDiscoveryRecordsKeepProvenance(t *testing.T) {
 	}
 	if endpoints[0].Source == "" || endpoints[0].Role != rolePXEDistributionPoint || endpoints[0].Domain != testDomain {
 		t.Fatalf("provenance was not preserved: %#v", endpoints[0])
+	}
+}
+
+// The installed SCCMhunter documents its subcommands at the top level and the find
+// options on the find subcommand. Probing the top-level help for the options rejected
+// a working installation and made the TUI report it UNAVAILABLE, so this pins the
+// shape the probe has to accept.
+func TestSCCMHunterCheckProbesTheSubcommandThatDocumentsTheOptions(t *testing.T) {
+	body := `case "$1" in
+--help) echo "Usage: sccmhunter [OPTIONS] COMMAND [ARGS]..."; echo "  find  Enumerate LDAP for SCCM assets."; echo "  show  Show and/or recon table results."; exit 0 ;;
+find)
+  if [ "$2" = "--help" ]; then echo "Options: -u -p -d -dc-ip -ldaps"; exit 0; fi
+  exit 0 ;;
+esac
+exit 1`
+	toolLayout(t, "sccmhunter", "sccmhunter.py", body)
+	dependencyCacheTTL = 0
+	if err := (SCCMHunter{}).Check(context.Background(), testRuntime(t, &fakeStore{})); err != nil {
+		t.Fatalf("a working installation that documents its options on find was rejected: %v", err)
+	}
+}
+
+// A version whose find subcommand no longer documents an option the workflow uses is
+// reported, naming the option.
+func TestSCCMHunterCheckReportsAMissingFindOption(t *testing.T) {
+	body := `case "$1" in
+--help) echo "  find"; echo "  show"; exit 0 ;;
+find) if [ "$2" = "--help" ]; then echo "Options: -u -p -d -dc-ip"; exit 0; fi; exit 0 ;;
+esac
+exit 1`
+	toolLayout(t, "sccmhunter", "sccmhunter.py", body)
+	dependencyCacheTTL = 0
+	err := (SCCMHunter{}).Check(context.Background(), testRuntime(t, &fakeStore{}))
+	if err == nil || !strings.Contains(err.Error(), "-ldaps") {
+		t.Fatalf("a missing find option was not reported: %v", err)
+	}
+}
+
+// A missing installation, a checkout without an interpreter, and a checkout without
+// its entry script are each reported, so the operator learns which part is missing.
+func TestSCCMHunterCheckReportsUnusableInstallations(t *testing.T) {
+	t.Run("not installed", func(t *testing.T) {
+		t.Setenv("PWNFLOW_TOOLS_DIR", t.TempDir())
+		dependencyCacheTTL = 0
+		err := (SCCMHunter{}).Check(context.Background(), testRuntime(t, &fakeStore{}))
+		if err == nil || !strings.Contains(err.Error(), "install.sh --with-sccmhunter") {
+			t.Fatalf("a missing installation was not reported with its remedy: %v", err)
+		}
+	})
+	t.Run("interpreter missing", func(t *testing.T) {
+		root := toolLayoutWithoutInterpreter(t, "sccmhunter", "sccmhunter.py")
+		_ = root
+		dependencyCacheTTL = 0
+		err := (SCCMHunter{}).Check(context.Background(), testRuntime(t, &fakeStore{}))
+		if err == nil || !strings.Contains(err.Error(), "interpreter") {
+			t.Fatalf("a missing interpreter was not reported: %v", err)
+		}
+	})
+	t.Run("entry script missing", func(t *testing.T) {
+		root := toolLayoutWithoutScript(t, "sccmhunter")
+		_ = root
+		dependencyCacheTTL = 0
+		err := (SCCMHunter{}).Check(context.Background(), testRuntime(t, &fakeStore{}))
+		if err == nil || !strings.Contains(err.Error(), "sccmhunter.py is missing") {
+			t.Fatalf("a missing entry script was not reported: %v", err)
+		}
+	})
+}
+
+// toolLayoutWithoutInterpreter builds a checkout that has its script but no usable
+// virtual environment.
+func toolLayoutWithoutInterpreter(t *testing.T, rootName, scriptName string) string {
+	t.Helper()
+	toolsDirectory := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsDirectory)
+	t.Setenv("XDG_DATA_HOME", "")
+	root := filepath.Join(toolsDirectory, rootName)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, scriptName), []byte("# entry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// toolLayoutWithoutScript builds a checkout that has its environment but no entry
+// script.
+func toolLayoutWithoutScript(t *testing.T, rootName string) string {
+	t.Helper()
+	toolsDirectory := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", toolsDirectory)
+	t.Setenv("XDG_DATA_HOME", "")
+	root := filepath.Join(toolsDirectory, rootName)
+	if err := os.MkdirAll(filepath.Join(root, ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".venv", "bin", "python3"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// A raw-socket permission failure is classified: the operator sees the requirement,
+// the tool's traceback stays in its own artifact, and nothing escalates privileges.
+func TestPXEThiefClassifiesRawSocketFailure(t *testing.T) {
+	body := `case "$1" in
+-h) exit 0 ;;
+1) echo "Sending initial DHCP Discover to find PXE boot server..."; echo "Traceback (most recent call last):"; echo "PermissionError: [Errno 1] Operation not permitted"; exit 1 ;;
+esac
+exit 0`
+	_, recordPath := toolLayout(t, "PXEThief", "pxethief.py", body)
+	if err := os.WriteFile(filepath.Join(os.Getenv("PWNFLOW_TOOLS_DIR"), "PXEThief", pxeThiefMarker), []byte(prTestHead+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dependencyCacheTTL = 0
+	runtime := testRuntime(t, &fakeStore{})
+	var output strings.Builder
+	err := (&PXEThief{}).Run(context.Background(), runtime, &output)
+	if err == nil {
+		t.Fatal("a refused raw socket was reported as success")
+	}
+	if !strings.Contains(err.Error(), "CAP_NET_RAW") {
+		t.Fatalf("the failure does not name the requirement: %v", err)
+	}
+	if strings.Contains(err.Error(), "Traceback") {
+		t.Fatalf("the traceback was used as the summary instead of a diagnostic: %v", err)
+	}
+	logs, globErr := filepath.Glob(filepath.Join(runtime.ResultsRoot, pxeThiefFolder, "artifacts", "*", "mode-1", "pxethief.log"))
+	if globErr != nil || len(logs) != 1 {
+		t.Fatalf("expected the tool's own output to be preserved, got %v (%v)", logs, globErr)
+	}
+	preserved, readErr := os.ReadFile(logs[0])
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(preserved), "Operation not permitted") {
+		t.Fatalf("the original error was not preserved for diagnostics:\n%s", preserved)
+	}
+	for _, invocation := range readInvocations(t, recordPath) {
+		if strings.Contains(invocation, "sudo") {
+			t.Fatalf("privileges were escalated automatically: %s", invocation)
+		}
+	}
+}
+
+// PwnFlow never grants itself a capability: the PXEThief invocation is the managed
+// interpreter and the script, and nothing else.
+func TestPXEThiefNeverRunsElevated(t *testing.T) {
+	program, base, commandErr := interpreterCommand(dependencies.Status{Interpreter: "/tmp/venv/bin/python3", Script: "/tmp/root/pxethief.py"})
+	if commandErr != nil {
+		t.Fatal(commandErr)
+	}
+	if program != "/tmp/venv/bin/python3" || len(base) != 1 || base[0] != "/tmp/root/pxethief.py" {
+		t.Fatalf("the managed interpreter is not used directly: %s %v", program, base)
 	}
 }

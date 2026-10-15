@@ -256,6 +256,26 @@ Results are kept apart: discovery output and preserved tables under
 assessment domain, or that have no usable address, are never probed, and the
 addresses in the list are not a network boundary.
 
+PXEThief crafts DHCP packets with Scapy, so it needs **Linux raw-socket privileges**
+(`CAP_NET_RAW`) in the process that runs it. PwnFlow reports whether the capability is
+present in Module Information and, when it is missing, names it in the failure
+summary instead of leaving you with a Python traceback. It never elevates itself: the
+virtual environment's interpreter is a link to the system Python, so granting the
+capability to it is not an option PwnFlow offers. When you intend to use PXEThief,
+give the session the capability explicitly and only for as long as you need it:
+
+```bash
+sudo setpriv --ambient-caps=+net_raw --inh-caps=+net_raw ./bin/pwnflow \
+  --target <DC> --domain <domain> --username <user>
+```
+
+That runs PwnFlow with the one capability, not as root: no systemd unit, no network
+namespace, and no firewall change are involved, and a normal `./bin/pwnflow` start is
+unaffected. If you prefer per-command elevation, run the PXEThief invocation yourself
+under `sudo` with a rule scoped to that exact interpreter and script; PwnFlow will
+keep using the unprivileged interpreter and report the requirement rather than
+elevating on its own.
+
 
 ### AD CS enumeration with Certipy
 

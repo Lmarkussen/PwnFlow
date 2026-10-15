@@ -12,10 +12,14 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
-// commandProbe are the subcommands and options the installed CLI has to document.
-// They are matched against the tool's own help output, so a version that renames or
-// drops one is reported instead of producing a different command than advertised.
-var commandProbe = []string{"find", "show", "-u", "-p", "-d", "-dc-ip", "-ldaps"}
+// subcommandProbe are the subcommands the installed CLI has to offer. They are
+// documented by the tool's top-level help.
+var subcommandProbe = []string{"find", "show"}
+
+// findOptionProbe are the options the discovery workflow uses. The tool documents
+// them on the find subcommand, not on the top-level help: probing the top-level help
+// for them rejected a working installation.
+var findOptionProbe = []string{"-u", "-p", "-d", "-dc-ip", "-ldaps"}
 
 // SCCMHunter discovers SCCM infrastructure through Active Directory.
 type SCCMHunter struct {
@@ -136,9 +140,18 @@ func (m SCCMHunter) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if probeErr != nil {
 		return fmt.Errorf("SCCMhunter capability probe failed: %w", probeErr)
 	}
-	for _, required := range commandProbe {
+	for _, required := range subcommandProbe {
 		if !bytes.Contains(help, []byte(required)) {
-			return fmt.Errorf("SCCMhunter option %s is unsupported by the installed version", required)
+			return fmt.Errorf("SCCMhunter subcommand %s is unsupported by the installed version", required)
+		}
+	}
+	findHelp, findProbeErr := runCombined(ctx, program, append(append([]string(nil), base...), "find", "--help"), status.Root)
+	if findProbeErr != nil {
+		return fmt.Errorf("SCCMhunter find capability probe failed: %w", findProbeErr)
+	}
+	for _, required := range findOptionProbe {
+		if !bytes.Contains(findHelp, []byte(required)) {
+			return fmt.Errorf("SCCMhunter find option %s is unsupported by the installed version", required)
 		}
 	}
 	return nil
