@@ -188,3 +188,15 @@ func TestFindingsHierarchyBackNavigation(t *testing.T) {
 		t.Fatal("Esc did not restore subcategory view")
 	}
 }
+
+func TestGlobalVisibleFindingsGroupsACLRecordsOnly(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_writedacl", RelatedObjectID: "p", AffectedObjectID: "t", RelatedObject: "P", AffectedObject: "T", Severity: "high"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_writeowner", RelatedObjectID: "p", AffectedObjectID: "t", RelatedObject: "P", AffectedObject: "T", Severity: "high"}},
+		{FindingInput: storage.FindingInput{FindingType: "kerberoastable_account", Title: "Kerberoastable", Severity: "medium"}},
+	}
+	grouped := groupVisibleFindings(rows)
+	if len(grouped) != 2 || !strings.HasPrefix(grouped[0].FindingType, "ad_acl_group") {
+		t.Fatalf("unexpected global grouping: %#v", grouped)
+	}
+}

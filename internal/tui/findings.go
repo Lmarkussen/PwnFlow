@@ -182,14 +182,28 @@ func (m *model) refreshFindings() {
 		filtered = append(filtered, finding)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool { return severityRank(filtered[i].Severity) > severityRank(filtered[j].Severity) })
-	if m.findingCategory == "acl" {
-		filtered = groupACLFindings(filtered)
+	if m.findingCategory == "acl" || m.findingCategory == "" {
+		filtered = groupVisibleFindings(filtered)
 	}
+	sort.SliceStable(filtered, func(i, j int) bool { return severityRank(filtered[i].Severity) > severityRank(filtered[j].Severity) })
 	m.findingRows = append(m.findingRows[:0], filtered...)
 	if m.findingCursor >= len(m.findingRows) {
 		m.findingCursor = max(0, len(m.findingRows)-1)
 	}
 	m.keepFindingVisible()
+}
+
+func groupVisibleFindings(rows []storage.Finding) []storage.Finding {
+	acl := make([]storage.Finding, 0)
+	other := make([]storage.Finding, 0)
+	for _, finding := range rows {
+		if strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_acl_") {
+			acl = append(acl, finding)
+		} else {
+			other = append(other, finding)
+		}
+	}
+	return append(groupACLFindings(acl), other...)
 }
 
 func groupACLFindings(rows []storage.Finding) []storage.Finding {
