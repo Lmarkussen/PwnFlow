@@ -110,12 +110,30 @@ type EndpointStore interface {
 	Endpoints(ctx context.Context, domain string) ([]Endpoint, error)
 }
 
+// ElevationPolicy is the operator's decision about running a module's external tool
+// through sudo. The TUI asks for it before a batch starts; a module consults it at
+// run time and never elevates itself, and a module that never asks is unaffected.
+type ElevationPolicy interface {
+	ElevationApproved(moduleID string) bool
+}
+
+// ElevationRequester is implemented by modules whose external tool needs privileges
+// the process may not have. The TUI asks the operator for approval before such a
+// module runs; the module itself never prompts, so the decision is always explicit
+// and taken once per requested run.
+type ElevationRequester interface {
+	ElevationRequired() (bool, string)
+}
+
 type Runtime struct {
 	Target, Domain, Username, Password, ResultsRoot string
 	// Endpoints is the assessment's discovery store. It is optional: a runtime
 	// built without one still runs modules, which then report that discovery
 	// cannot be persisted or read.
 	Endpoints EndpointStore
+	// Elevation carries the operator's approval for a module that needs elevated
+	// execution. It is optional: a runtime without it means no module may elevate.
+	Elevation ElevationPolicy
 }
 
 type OutputSink interface{ Write([]byte) (int, error) }

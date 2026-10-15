@@ -122,6 +122,46 @@ func readInvocations(t *testing.T, path string) []string {
 	return lines
 }
 
+// withRawSocketPrivileges stubs the capability probe so a test can exercise the
+// privileged and unprivileged paths without touching the host's capabilities.
+func withRawSocketPrivileges(t *testing.T, available bool) {
+	t.Helper()
+	previous := rawSocketPrivilegesFunc
+	rawSocketPrivilegesFunc = func() (bool, bool, string) {
+		if available {
+			return true, true, "available (test stub)"
+		}
+		return false, true, "missing (test stub)"
+	}
+	t.Cleanup(func() { rawSocketPrivilegesFunc = previous })
+}
+
+// approvingPolicy is the operator's approval for one run.
+type approvingPolicy map[string]bool
+
+func (p approvingPolicy) ElevationApproved(moduleID string) bool { return p[moduleID] }
+
+// sudoMock puts a stand-in sudo on PATH that records its arguments and then runs the
+// command it was given, so a test can see exactly what would have been elevated.
+// Nothing authenticates and nothing is privileged. When failWith is not empty the
+// mock prints it to standard error and exits like a refused authorisation.
+func sudoMock(t *testing.T, failWith string) string {
+	t.Helper()
+	bin := t.TempDir()
+	record := filepath.Join(t.TempDir(), "sudo.log")
+	body := "printf '%s\\n' \"sudo $*\" >> \"" + record + "\"\n"
+	if failWith != "" {
+		body += "printf '%s\\n' \"" + failWith + "\" >&2\nexit 1\n"
+	} else {
+		body += "while [ \"${1#-}\" != \"$1\" ]; do shift; done\nexec \"$@\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return record
+}
+
 func testRuntime(t *testing.T, store modules.EndpointStore) *modules.Runtime {
 	t.Helper()
 	return &modules.Runtime{
@@ -349,6 +389,7 @@ func TestSCCMHunterCommandArguments(t *testing.T) {
 
 // PXEThief selects its mode from the assessment's stored endpoints at run time.
 func TestPXEThiefModesFromStoredEndpoints(t *testing.T) {
+	withRawSocketPrivileges(t, true)
 	body := `case "$1" in
 -h) echo "pxethief.py 1 - discover"; echo "pxethief.py 2 <ip>"; exit 0 ;;
 1) echo "[+] mode 1 broadcast"; exit 0 ;;
@@ -410,6 +451,7 @@ exit 1`
 
 // One failing endpoint must not stop the others.
 func TestPXEThiefContinuesAfterAnEndpointFails(t *testing.T) {
+	withRawSocketPrivileges(t, true)
 	body := `case "$1" in
 -h) exit 0 ;;
 1) exit 0 ;;
@@ -439,6 +481,7 @@ exit 1`
 
 // A cancelled run stops before the next endpoint.
 func TestPXEThiefStopsOnCancellation(t *testing.T) {
+	withRawSocketPrivileges(t, true)
 	body := `case "$1" in
 -h) exit 0 ;;
 2) echo "[+] $2"; sleep 5; exit 0 ;;
@@ -471,6 +514,7 @@ exit 0`
 // Endpoints outside the assessment domain, or without a usable address, are never
 // turned into targets, and credentials recovered by the tool never reach the logs.
 func TestPXEThiefScopeAndSecretHandling(t *testing.T) {
+	withRawSocketPrivileges(t, true)
 	body := `case "$1" in
 -h) exit 0 ;;
 2) echo "[+] Password provided: Sup3rSecret"; echo "[!] Network Access Account Password: 'recovered-secret'"; echo "[!] Collection Variable Secret: 'another-secret'"; exit 0 ;;
@@ -683,6 +727,7 @@ func toolLayoutWithoutScript(t *testing.T, rootName string) string {
 // A raw-socket permission failure is classified: the operator sees the requirement,
 // the tool's traceback stays in its own artifact, and nothing escalates privileges.
 func TestPXEThiefClassifiesRawSocketFailure(t *testing.T) {
+	withRawSocketPrivileges(t, true)
 	body := `case "$1" in
 -h) exit 0 ;;
 1) echo "Sending initial DHCP Discover to find PXE boot server..."; echo "Traceback (most recent call last):"; echo "PermissionError: [Errno 1] Operation not permitted"; exit 1 ;;
@@ -732,5 +777,87 @@ func TestPXEThiefNeverRunsElevated(t *testing.T) {
 	}
 	if program != "/tmp/venv/bin/python3" || len(base) != 1 || base[0] != "/tmp/root/pxethief.py" {
 		t.Fatalf("the managed interpreter is not used directly: %s %v", program, base)
+	}
+}
+
+// Elevation is scoped, approved per run, and applied to each endpoint separately:
+// only PXEThief's own invocations use sudo, and only when the operator approved it.
+func TestPXEThiefElevationIsScopedAndPerEndpoint(t *testing.T) {
+	withRawSocketPrivileges(t, false)
+	body := `case "$1" in
+-h) exit 0 ;;
+2) echo "[+] mode 2 against $2"; exit 0 ;;
+esac
+exit 0`
+	toolLayout(t, "PXEThief", "pxethief.py", body)
+	if err := os.WriteFile(filepath.Join(os.Getenv("PWNFLOW_TOOLS_DIR"), "PXEThief", pxeThiefMarker), []byte(prTestHead+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dependencyCacheTTL = 0
+	sudoRecord := sudoMock(t, "")
+	endpoints := []modules.Endpoint{
+		{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain},
+		{Address: "198.51.100.42", Hostname: "pxe02.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain},
+	}
+	runtime := testRuntime(t, &fakeStore{records: endpoints})
+
+	// Without the operator's approval nothing is elevated, and the requirement is
+	// reported instead.
+	err := (&PXEThief{}).Run(context.Background(), runtime, &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "CAP_NET_RAW") {
+		t.Fatalf("an unapproved run did not report the requirement: %v", err)
+	}
+	if calls, readErr := os.ReadFile(sudoRecord); readErr == nil && len(strings.TrimSpace(string(calls))) != 0 {
+		t.Fatalf("sudo ran without approval: %s", calls)
+	}
+
+	// With approval, every endpoint is one elevated invocation of the managed
+	// interpreter - never a shell, never a combined argument.
+	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
+	var output strings.Builder
+	if err := (&PXEThief{}).Run(context.Background(), runtime, &output); err != nil {
+		t.Fatalf("approved run failed: %v", err)
+	}
+	calls, readErr := os.ReadFile(sudoRecord)
+	if readErr != nil {
+		t.Fatalf("no sudo call was recorded: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != len(endpoints) {
+		t.Fatalf("expected one elevated invocation per endpoint, got %v", lines)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "sudo -n /") || !strings.Contains(line, "pxethief.py 2 198.51.100.") {
+			t.Fatalf("an elevated invocation is not the managed interpreter with a single endpoint: %s", line)
+		}
+		for _, forbidden := range []string{"sh -c", "/bin/sh", "-i "} {
+			if strings.Contains(line, forbidden) {
+				t.Fatalf("an elevated invocation used a shell (%q): %s", forbidden, line)
+			}
+		}
+	}
+	// Other modules never elevate.
+	if joined := strings.Join((SCCMHunter{}).CommandArgs(runtime), " "); strings.Contains(joined, "sudo") {
+		t.Fatalf("SCCMhunter was elevated: %s", joined)
+	}
+}
+
+// A refused authorisation is reported and never retried unprivileged.
+func TestPXEThiefReportsRefusedAuthorisation(t *testing.T) {
+	withRawSocketPrivileges(t, false)
+	toolLayout(t, "PXEThief", "pxethief.py", "exit 0")
+	if err := os.WriteFile(filepath.Join(os.Getenv("PWNFLOW_TOOLS_DIR"), "PXEThief", pxeThiefMarker), []byte(prTestHead+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dependencyCacheTTL = 0
+	sudoMock(t, "sudo: a password is required")
+	runtime := testRuntime(t, &fakeStore{records: []modules.Endpoint{{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain}}})
+	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
+	err := (&PXEThief{}).Run(context.Background(), runtime, &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "sudo did not authorise") {
+		t.Fatalf("a refused authorisation was not reported: %v", err)
+	}
+	if strings.Contains(err.Error(), "Traceback") {
+		t.Fatalf("the summary is not a diagnostic: %v", err)
 	}
 }

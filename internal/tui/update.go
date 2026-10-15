@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -12,6 +13,17 @@ import (
 )
 
 var ErrQuit = errors.New("quit")
+
+// sudoAuthorisedMsg carries the outcome of the terminal handover that lets sudo
+// authenticate the operator. PwnFlow never sees the password: sudo reads it from the
+// terminal while the TUI is paused.
+type sudoAuthorisedMsg struct{ err error }
+
+// sudoAuthenticate releases the terminal for sudo's own prompt. It is a variable so
+// the approval flow can be exercised without a real terminal.
+var sudoAuthenticate = func(command *exec.Cmd) tea.Cmd {
+	return tea.ExecProcess(command, func(err error) tea.Msg { return sudoAuthorisedMsg{err: err} })
+}
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -46,6 +58,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case sudoAuthorisedMsg:
+		return m, m.finishElevation(msg.err)
 	}
 	return m, nil
 }
@@ -64,6 +78,22 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "running"
 		}
 		return m, nil
+	}
+
+	// A module that needs privileges the process does not have asks here, before
+	// anything runs. Only an explicit "y" approves; any other key, including an empty
+	// answer, declines and lets the rest of the selected modules run.
+	if m.elevationPrompt {
+		switch key {
+		case "y", "Y":
+			m.elevationPrompt = false
+			m.status = "authenticating sudo for " + strings.Join(m.elevationModules, ", ") + "; complete sudo's own prompt"
+			return m, sudoAuthenticate(exec.Command("sudo", "-v"))
+		case "ctrl+c", "q":
+			// Fall through to the process-wide handlers, so those keys keep working.
+		default:
+			return m, m.declineElevation("elevated execution was not approved")
+		}
 	}
 
 	// Handle process-wide controls before any focus-specific handler. The
@@ -386,7 +416,94 @@ func (m *model) yoloScope() bool {
 // startBatch runs the supplied registry-wide module indices as one batch. Items,
 // output buffers, watcher state, and history all use registry indices, so a batch
 // can mix tool families without depending on what is currently visible.
+// startBatch asks for any elevation the batch needs before it starts. A module that
+// cannot run without privileges is never started silently and never elevates itself:
+// the operator answers once for the run, and only that module is affected either way.
 func (m *model) startBatch(indices []int, name string) tea.Cmd {
+	m.batchElevation = map[string]bool{}
+	needed, reason := m.elevationNeeded(indices)
+	if len(needed) > 0 {
+		m.pendingIndices, m.pendingName, m.elevationModules = indices, name, needed
+		m.elevationPrompt = true
+		m.status = fmt.Sprintf("%s. Run %s with sudo? [y/N]", reason, strings.Join(needed, ", "))
+		return nil
+	}
+	return m.runBatch(indices, name)
+}
+
+// elevationNeeded reports which modules in the batch need privileges the process does
+// not have, and why the first of them needs them.
+func (m *model) elevationNeeded(indices []int) ([]string, string) {
+	needed := make([]string, 0)
+	reason := ""
+	for _, index := range indices {
+		if index < 0 || index >= len(m.allModules) {
+			continue
+		}
+		requester, ok := m.allModules[index].(modules.ElevationRequester)
+		if !ok {
+			continue
+		}
+		required, why := requester.ElevationRequired()
+		if !required || m.batchElevation[m.allModules[index].ID()] {
+			continue
+		}
+		needed = append(needed, m.allModules[index].ID())
+		if reason == "" {
+			reason = why
+		}
+	}
+	return needed, reason
+}
+
+// finishElevation continues the batch once sudo has answered. A successful
+// authentication marks the approved modules for this run only; a refused or cancelled
+// one skips exactly those modules.
+func (m *model) finishElevation(err error) tea.Cmd {
+	if err != nil {
+		return m.declineElevation("sudo authentication failed or was cancelled; " + err.Error())
+	}
+	for _, id := range m.elevationModules {
+		m.batchElevation[id] = true
+	}
+	indices, name := m.pendingIndices, m.pendingName
+	m.pendingIndices, m.pendingName, m.elevationModules = nil, "", nil
+	return m.runBatch(indices, name)
+}
+
+// declineElevation reports the decision and runs the rest of the batch, so an
+// unrelated selected module is never held up by a module that needs privileges.
+func (m *model) declineElevation(message string) tea.Cmd {
+	skipped, indices, name := m.elevationModules, m.pendingIndices, m.pendingName
+	m.elevationPrompt, m.pendingIndices, m.pendingName, m.elevationModules = false, nil, "", nil
+	remaining := make([]int, 0, len(indices))
+	for _, index := range indices {
+		if index >= 0 && index < len(m.allModules) && contains(skipped, m.allModules[index].ID()) {
+			continue
+		}
+		remaining = append(remaining, index)
+	}
+	if len(remaining) == 0 {
+		m.status = message + "; no other selected module to run"
+		return nil
+	}
+	// The status is set after the batch starts, because starting it reports "running".
+	command := m.runBatch(remaining, name)
+	m.status = message + "; running the remaining selected module(s)"
+	return command
+}
+
+func contains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// runBatch starts the batch itself, with the operator's approval already established.
+func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	items := make([]runner.BatchItem, 0, len(indices))
 	for _, index := range indices {
 		if index < 0 || index >= len(m.allModules) {
@@ -469,6 +586,7 @@ func (m *model) syncBatch() tea.Cmd {
 				}
 			}
 			m.batchRecorded = true
+			m.batchElevation = map[string]bool{}
 			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", m.batchName, len(states), finished.Format("15:04:05"))
 		}
 		if m.quitAfterCancel {

@@ -138,6 +138,12 @@ func press(t *testing.T, m *model, key string) {
 	case "right":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
 	default:
+		// Any other single character goes through as itself, so a prompt can be
+		// answered in a test exactly as the operator answers it.
+		if len([]rune(key)) == 1 {
+			m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+			return
+		}
 		t.Fatalf("unsupported test key %q", key)
 	}
 }

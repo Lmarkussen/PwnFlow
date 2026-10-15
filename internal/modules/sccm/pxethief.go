@@ -20,6 +20,10 @@ const pxeThiefMarker = ".pwnflow-pr11"
 // PXEThief operates against the PXE endpoints this assessment discovered.
 type PXEThief struct{}
 
+// rawSocketPrivilegesFunc is the capability probe. It is a variable so tests can
+// exercise the privileged and unprivileged paths without changing the host.
+var rawSocketPrivilegesFunc = rawSocketPrivileges
+
 func (PXEThief) ID() string                     { return moduleIDPXEThief }
 func (PXEThief) Name() string                   { return "PXEThief" }
 func (PXEThief) ToolFamily() modules.ToolFamily { return modules.ToolFamilySCCM }
@@ -47,6 +51,38 @@ func (PXEThief) DependencyKey() string            { return string(dependencies.P
 // both SCCM modules runs SCCMhunter first, so PXEThief reads the endpoints of the
 // current run rather than whatever was stored before it.
 func (PXEThief) BatchPrerequisites() []string { return []string{moduleIDSCCMHunter} }
+
+// ElevationRequired reports that PXEThief cannot craft its DHCP packets without
+// CAP_NET_RAW, which this process only has when the operator granted it.
+func (PXEThief) ElevationRequired() (bool, string) {
+	available, known, _ := rawSocketPrivilegesFunc()
+	if known && !available {
+		return true, rawSocketHint
+	}
+	return false, ""
+}
+
+// elevationCommand resolves how one PXEThief invocation runs: the managed
+// interpreter directly, or sudo running exactly that interpreter and script when the
+// capability is missing and the operator approved elevated execution for this run.
+// sudo receives fixed paths and a structured argument list - no shell, no sudo -i,
+// and no injected environment.
+func (m PXEThief) elevationCommand(runtime *modules.Runtime, status dependencies.Status) (string, []string, bool, error) {
+	program, base, err := interpreterCommand(status)
+	if err != nil {
+		return "", nil, false, err
+	}
+	available, known, _ := rawSocketPrivilegesFunc()
+	if !known || available {
+		return program, base, false, nil
+	}
+	if runtime == nil || runtime.Elevation == nil || !runtime.Elevation.ElevationApproved(moduleIDPXEThief) {
+		return "", nil, false, fmt.Errorf("%s, and elevated execution was not approved for this run; PwnFlow never elevates itself", rawSocketHint)
+	}
+	// -n keeps sudo non-interactive inside the batch: the operator's approval was
+	// authenticated once, before the batch started, and sudo reuses that timestamp.
+	return "sudo", append([]string{"-n", program}, base...), true, nil
+}
 
 // SecondaryConnections states what the tool may contact, so the operator knows what
 // an explicitly requested run can reach.
@@ -135,7 +171,7 @@ func (m PXEThief) DetailLines(runtime *modules.Runtime) []string {
 // interpreter is a link to the system Python, so it is not a permitted target, and
 // the application is never required to run as root.
 func privilegeDetail() string {
-	available, known, detail := rawSocketPrivileges()
+	available, known, detail := rawSocketPrivilegesFunc()
 	if available {
 		return detail
 	}
@@ -205,7 +241,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	if err != nil {
 		return err
 	}
-	program, base, err := interpreterCommand(status)
+	program, base, elevated, err := m.elevationCommand(runtime, status)
 	if err != nil {
 		return err
 	}
@@ -215,8 +251,8 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	}
 	// A missing capability is the one failure worth warning about before the tool
 	// runs: it is not a dependency problem, and the tool's own error is a traceback.
-	if available, known, _ := rawSocketPrivileges(); known && !available {
-		fmt.Fprintf(sink, "[!] %s. The DHCP work below will fail until the process has it.\n", rawSocketHint)
+	if available, known, _ := rawSocketPrivilegesFunc(); known && !available {
+		fmt.Fprintf(sink, "[!] %s. Run it from the TUI and approve the elevation it asks for.\n", rawSocketHint)
 	}
 	started := time.Now()
 	runDirectory := m.RunDirectory(runtime, started)
@@ -227,7 +263,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	defer output.Flush()
 	if len(endpoints) == 0 {
 		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) as explicitly requested.")
-		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, output); err != nil {
+		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, elevated, output); err != nil {
 			return err
 		}
 		return nil
@@ -240,7 +276,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 		}
 		directory := filepath.Join(runDirectory, filepath.Base(endpoint.Address))
 		fmt.Fprintf(output, "[i] %s (%s): PXEThief mode 2\n", endpoint.Address, endpoint.Role)
-		if err := m.runOne(ctx, program, base, []string{"2", endpoint.Address}, directory, endpoint.Address, status.Root, runtime.Password, output); err != nil {
+		if err := m.runOne(ctx, program, base, []string{"2", endpoint.Address}, directory, endpoint.Address, status.Root, runtime.Password, elevated, output); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -256,7 +292,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 
 // runOne executes one PXEThief invocation in its own directory, with the operator's
 // settings copied in so the tool's own outputs land next to its artifacts.
-func (m PXEThief) runOne(ctx context.Context, program string, base, args []string, directory, label, installRoot string, password string, sink modules.OutputSink) error {
+func (m PXEThief) runOne(ctx context.Context, program string, base, args []string, directory, label, installRoot string, password string, elevated bool, sink modules.OutputSink) error {
 	if err := prepareDirectory(directory); err != nil {
 		return fmt.Errorf("create %s directory: %w", label, err)
 	}
@@ -275,12 +311,25 @@ func (m PXEThief) runOne(ctx context.Context, program string, base, args []strin
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Even a failed elevated run can leave root-owned files behind; give them
+		// back before reporting, so the operator can read what the tool wrote.
+		if elevated {
+			_ = restoreOwnership(ctx, directory)
+		}
+		if elevationFailure(tail.String()) {
+			return fmt.Errorf("%s: sudo did not authorise the elevated PXEThief run; PwnFlow does not retry it unprivileged. The tool's own output is in %s", label, filepath.Join(directory, "pxethief.log"))
+		}
 		// The tool's traceback is kept in its own output, but the summary the operator
 		// and the execution history see names the actual requirement.
 		if rawSocketFailure(tail.String()) {
 			return fmt.Errorf("%s: %s; the tool's own output is in %s", label, rawSocketHint, filepath.Join(directory, "pxethief.log"))
 		}
 		return fmt.Errorf("%s failed after %s: %w", label, time.Since(started).Round(time.Millisecond), err)
+	}
+	if elevated {
+		if err := restoreOwnership(ctx, directory); err != nil {
+			fmt.Fprintf(sink, "[i] %s: artifacts could not be returned to your account: %v\n", label, err)
+		}
 	}
 	return nil
 }

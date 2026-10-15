@@ -2,12 +2,15 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
@@ -88,6 +91,18 @@ exit 1`)
 	if err := os.WriteFile(filepath.Join(tools, "PXEThief", ".pwnflow-pr11"), head, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// An approved run executes through sudo. The stand-in records that it was used and
+	// then runs the command it was given, so no real sudo and no real elevation is
+	// involved; the rest of PATH stays available for the checkout's own git calls.
+	sudoBin := t.TempDir()
+	sudo := "#!/bin/sh\n" +
+		"printf '%s\\n' \"sudo $*\" >> \"" + record + "\"\n" +
+		"while [ \"${1#-}\" != \"$1\" ]; do shift; done\n" +
+		"exec \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(sudoBin, "sudo"), []byte(sudo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", sudoBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return record
 }
 
@@ -148,12 +163,14 @@ func TestSCCMDiscoveryFeedsPXEThiefInOneBatch(t *testing.T) {
 	m.resizeOutput()
 	m.setToolFamily(sccmFamilyIndex)
 	m.focus = focusModules
+	stubSudo(t, nil)
 
 	for _, id := range []string{"sccmhunter", "pxethief"} {
 		m.cursor = rowOf(t, m, id)
 		press(t, m, " ")
 	}
 	press(t, m, "r")
+	approveElevationIfAsked(t, m)
 	if got := strings.Join(batchIDs(m), ","); got != "sccmhunter,pxethief" {
 		t.Fatalf("the batch must discover before it probes: %s", got)
 	}
@@ -227,5 +244,182 @@ func TestSCCMModuleInformation(t *testing.T) {
 	}
 	if strings.Contains(frame, "Sup3rSecret") {
 		t.Fatal("Module Information leaked a credential")
+	}
+}
+
+// approveElevation answers the elevation prompt the way the operator does, so a test
+// about another behaviour is not affected by whether the host has CAP_NET_RAW.
+// stubSudo replaces the terminal handover with one that answers immediately, and
+// returns a counter of how often the operator was asked to authenticate.
+func stubSudo(t *testing.T, err error) *int {
+	t.Helper()
+	previous := sudoAuthenticate
+	calls := 0
+	sudoAuthenticate = func(*exec.Cmd) tea.Cmd {
+		calls++
+		return func() tea.Msg { return sudoAuthorisedMsg{err: err} }
+	}
+	t.Cleanup(func() { sudoAuthenticate = previous })
+	return &calls
+}
+
+func approveElevationIfAsked(t *testing.T, m *model) {
+	t.Helper()
+	if !m.elevationPrompt {
+		return
+	}
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd == nil {
+		t.Fatal("approving elevation produced no authentication command")
+	}
+	if msg := cmd(); msg != nil {
+		updated.(*model).Update(msg)
+	}
+}
+
+// elevatingModule is a module that needs privileges, records its execution, and lets
+// a test drive the approval flow without a real terminal or a real sudo.
+type elevatingModule struct {
+	selectionModule
+	required bool
+}
+
+func (m elevatingModule) ElevationRequired() (bool, string) {
+	if m.required {
+		return true, "this module needs raw-socket privileges"
+	}
+	return false, ""
+}
+
+// The elevation prompt appears once for a batch, an answer other than "y" declines,
+// and the modules that do not need privileges still run.
+func TestElevationPromptDeclinesSafelyAndRunsTheRest(t *testing.T) {
+	log := &executionLog{}
+	elevating := elevatingModule{selectionModule: selectionModule{id: "needs-privileges", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}, required: true}
+	plain := selectionModule{id: "plain", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}
+	m := newModel(context.Background(), testConfig(t), nil, []modules.Module{elevating, plain}, []int64{1, 2}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+	m.focus = focusModules
+	for _, id := range []string{"needs-privileges", "plain"} {
+		m.cursor = rowOf(t, m, id)
+		press(t, m, " ")
+	}
+
+	press(t, m, "r")
+	if !m.elevationPrompt || m.batch != nil {
+		t.Fatalf("the batch started without asking for elevation: prompt=%v batch=%v", m.elevationPrompt, m.batch)
+	}
+	if !strings.Contains(m.status, "sudo") || !strings.Contains(m.status, "y/N") {
+		t.Fatalf("the question is not clear: %q", m.status)
+	}
+
+	// Any other key declines: it must not start the privileged module.
+	press(t, m, "n")
+	if m.elevationPrompt || m.batch == nil || !m.running {
+		t.Fatalf("declining did not clear the prompt and run the rest: prompt=%v running=%v", m.elevationPrompt, m.running)
+	}
+	declinedStatus := m.status
+	waitForBatch(t, m)
+	if got := log.executed(); strings.Join(got, ",") != "plain" {
+		t.Fatalf("declining did not run exactly the unprivileged module: %v", got)
+	}
+	if !strings.Contains(declinedStatus, "not approved") {
+		t.Fatalf("the refusal was not reported: %q", declinedStatus)
+	}
+	// The selection survives the whole exchange.
+	if selected := m.selectedCount(); selected != 2 {
+		t.Fatalf("the selection changed: %d", selected)
+	}
+}
+
+// Pressing "y" hands the terminal to sudo once, and only the module that asked for
+// elevation is approved for that run.
+func TestElevationApprovalAppliesToTheRequestedRunOnly(t *testing.T) {
+	log := &executionLog{}
+	elevating := elevatingModule{selectionModule: selectionModule{id: "needs-privileges", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}, required: true}
+	plain := selectionModule{id: "plain", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}
+	other := selectionModule{id: "other", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}
+	m := newModel(context.Background(), testConfig(t), nil, []modules.Module{elevating, plain, other}, []int64{1, 2, 3}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+	m.focus = focusModules
+	for _, id := range []string{"needs-privileges", "plain"} {
+		m.cursor = rowOf(t, m, id)
+		press(t, m, " ")
+	}
+
+	prompts := stubSudo(t, nil)
+
+	press(t, m, "r")
+	approveElevationIfAsked(t, m)
+	if *prompts != 1 {
+		t.Fatalf("sudo was asked for %d times, want once per requested run", *prompts)
+	}
+	if got := batchIDs(m); strings.Join(got, ",") != "needs-privileges,plain" {
+		t.Fatalf("the approved batch is wrong: %v", got)
+	}
+	if !m.ElevationApproved("needs-privileges") || m.ElevationApproved("plain") {
+		t.Fatal("approval did not stay scoped to the module that needed it")
+	}
+	waitForBatch(t, m)
+	if got := log.executed(); strings.Join(got, ",") != "needs-privileges,plain" {
+		t.Fatalf("unexpected execution: %v", got)
+	}
+	// The approval is for the requested run: the next selection asks again.
+	if m.ElevationApproved("needs-privileges") {
+		t.Fatal("the approval outlived the run it was given for")
+	}
+	m.batch, m.batchItems, m.running = nil, nil, false
+	m.selectedModules = map[string]bool{"needs-privileges": true, "other": true}
+	press(t, m, "r")
+	if !m.elevationPrompt {
+		t.Fatal("a later run did not ask for elevation again")
+	}
+	press(t, m, "n")
+	waitForBatch(t, m)
+}
+
+// A refused or cancelled sudo authentication skips the privileged module, keeps the
+// rest of the batch, and leaves the interface usable.
+func TestElevationFailureSkipsOnlyThePrivilegedModule(t *testing.T) {
+	log := &executionLog{}
+	elevating := elevatingModule{selectionModule: selectionModule{id: "needs-privileges", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}, required: true}
+	plain := selectionModule{id: "plain", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}
+	m := newModel(context.Background(), testConfig(t), nil, []modules.Module{elevating, plain}, []int64{1, 2}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+	m.focus = focusModules
+	for _, id := range []string{"needs-privileges", "plain"} {
+		m.cursor = rowOf(t, m, id)
+		press(t, m, " ")
+	}
+	previous := sudoAuthenticate
+	sudoAuthenticate = func(*exec.Cmd) tea.Cmd {
+		return func() tea.Msg { return sudoAuthorisedMsg{err: errors.New("sudo: 3 incorrect password attempts")} }
+	}
+	t.Cleanup(func() { sudoAuthenticate = previous })
+
+	press(t, m, "r")
+	approveElevationIfAsked(t, m)
+	failureStatus := m.status
+	waitForBatch(t, m)
+	if got := log.executed(); strings.Join(got, ",") != "plain" {
+		t.Fatalf("a failed authentication did not skip only the privileged module: %v", got)
+	}
+	if !strings.Contains(failureStatus, "authentication failed") {
+		t.Fatalf("the authentication failure was not reported: %q", failureStatus)
+	}
+	if m.elevationPrompt || m.running {
+		t.Fatal("the interface was left in the prompt or running state")
+	}
+	// The TUI is still usable: navigation and selection keep working.
+	m.cursor = rowOf(t, m, "plain")
+	press(t, m, " ")
+	if m.selectedModules["plain"] {
+		t.Fatal("selection stopped working after a failed authentication")
 	}
 }

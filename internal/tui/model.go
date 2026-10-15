@@ -37,6 +37,11 @@ type model struct {
 	focusBeforeWatcher  paneFocus
 	quitConfirm         bool
 	quitAfterCancel     bool
+	elevationPrompt     bool
+	elevationModules    []string
+	pendingIndices      []int
+	pendingName         string
+	batchElevation      map[string]bool
 	buffer              *runner.Buffer
 	last                []byte
 	status              string
@@ -80,6 +85,7 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 	}
 	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24}
 	m.endpoints = newEndpointStore(db)
+	m.batchElevation = map[string]bool{}
 	m.refreshNavigation()
 	m.resizeOutput()
 	return m
@@ -92,8 +98,14 @@ func (m *model) moduleRuntime() *modules.Runtime {
 	if m.endpoints != nil {
 		runtime.Endpoints = m.endpoints
 	}
+	runtime.Elevation = m
 	return runtime
 }
+
+// ElevationApproved implements modules.ElevationPolicy: only a module the operator
+// explicitly approved for the run that is under way may elevate, and the approval is
+// not carried into a later run.
+func (m *model) ElevationApproved(moduleID string) bool { return m.batchElevation[moduleID] }
 
 func (m *model) refreshNavigation() {
 	if len(m.toolFamilies) == 0 {
