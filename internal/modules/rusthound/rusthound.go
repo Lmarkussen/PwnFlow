@@ -3,11 +3,11 @@
 //
 // The integration is deliberately narrower than the installed CLI. The
 // collection method is fixed at LdapOnly - the CLI defaults to All, which adds
-// SMB/SYSVOL and member-machine contact - and the domain and DC address come
-// from the authorized configuration constants, so this module can neither
-// select the default collection nor be pointed at another host. Those arguments
-// express the authorized scope; they are not a network boundary, and the module
-// does not claim one.
+// SMB/SYSVOL and member-machine contact - the transport is pinned to LDAPS, and
+// the domain and DC address come from the operator-supplied runtime, so this
+// module can neither select the default collection nor be pointed at another
+// host. Those arguments express the intended scope; they are not a network
+// boundary, and the module does not claim one.
 package rusthound
 
 import (
@@ -31,6 +31,10 @@ const (
 	// default is All, which is never used here.
 	collectionMethod = "LdapOnly"
 
+	// secureTransport forces LDAPS (port 636); the installed CLI documents it as
+	// "--ldaps" and uses it for every request it makes.
+	secureTransport = "--ldaps"
+
 	artifactFolder = "Enumeration/RustHoundCE/artifacts"
 	outputFolder   = "Enumeration/RustHoundCE"
 	logFile        = "Enumeration/RustHoundCE/rusthound-ce.log"
@@ -41,7 +45,7 @@ const (
 // commandProbe describes the arguments this module relies on. The long forms are
 // matched against the installed --help output so a version that renames or drops
 // one is reported instead of producing a silently different command.
-var commandProbe = []string{"-d, --domain", "-u, --ldapusername", "-p, --ldappassword", "-i, --ldapip", "-c, --collectionmethod", "-o, --output"}
+var commandProbe = []string{"-d, --domain", "-u, --ldapusername", "-p, --ldappassword", "-i, --ldapip", "-c, --collectionmethod", "-o, --output", secureTransport}
 
 // secretOptions carry a value that must never reach a display, a log, or the
 // execution history. -p is used for the accepted native LDAP password; the
@@ -64,7 +68,7 @@ const authNote = "native LDAP password (-p; accepted for this single-operator la
 // the operator-supplied target narrow what the collector asks for, but nothing
 // restricts where it may connect, so the module states that plainly instead of
 // implying confinement.
-const scopeNote = "Network scope: LdapOnly against the supplied target; not kernel-enforced"
+const scopeNote = "Network scope: LdapOnly over LDAPS against the supplied target; not kernel-enforced"
 
 // Module describes RustHound-CE independently from the NetExec BloodHound
 // capability and from both Python collector variants.
@@ -87,7 +91,7 @@ func (Module) OutputFile() string               { return logFile }
 func (Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySensitive }
 func (Module) ReadOnly() bool                   { return true }
 func (Module) SecondaryConnections() []string {
-	return []string{"LdapOnly contacts the supplied DC over LDAP; DNS lookups and LDAP referrals are not restricted to that DC"}
+	return []string{"LdapOnly contacts the supplied DC over LDAPS (port 636); DNS lookups and LDAP referrals are not restricted to that DC"}
 }
 func (Module) ExecutionEnabled() bool { return true }
 func (Module) AvailabilityReason() string {
@@ -103,6 +107,7 @@ func (Module) DetailLines(runtime *modules.Runtime) []string {
 		"Execution: enabled",
 		"Authentication: " + authNote,
 		"Collection method: " + collectionMethod + " (LDAP only; no member-machine or SYSVOL contact)",
+		"Transport: LDAPS (" + secureTransport + "; port 636)",
 		"Output directory: " + outputDirectory(runtime),
 		scopeNote,
 	}
@@ -177,6 +182,7 @@ func (m Module) commandArgs(runtime *modules.Runtime, output string) []string {
 			args = append(args, "-i", target)
 		}
 	}
+	args = append(args, secureTransport)
 	args = append(args, "-c", collectionMethod)
 	if runtime != nil {
 		if username := strings.TrimSpace(runtime.Username); username != "" {

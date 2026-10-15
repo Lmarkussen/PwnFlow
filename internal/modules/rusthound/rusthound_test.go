@@ -36,6 +36,7 @@ OPTIONAL VALUES:
   -p, --ldappassword <ldappassword>  LDAP password
   -H, --hashes <hashes>              NT hash for pass-the-hash authentication (NTLM)
   -i, --ldapip <ldapip>              Domain Controller IP address like: 198.51.100.10
+  -P, --ldapport <ldapport>          LDAP port [default: 389, or 636 with --ldaps]
   -o, --output <output>              Output directory where you would like to save JSON files [default: ./]
 
 OPTIONAL FLAGS:
@@ -44,7 +45,9 @@ OPTIONAL FLAGS:
   -k, --kerberos
           Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME)
   -z, --zip
-          Compress the JSON files into a zip archive`
+          Compress the JSON files into a zip archive
+      --ldaps
+          Force LDAPS using for request like: ldaps://DOMAIN.LOCAL/`
 
 // writeFakeRustHound installs a stand-in binary whose --help output satisfies
 // the module's capability probe unless help is overridden.
@@ -102,7 +105,7 @@ func TestRustHoundCommandUsesRuntimeScopeAndLdapOnly(t *testing.T) {
 	module := Module{}
 	runtime := authorizedRuntime()
 	args := module.CommandArgs(runtime)
-	want := []string{"-d", testDomain, "-i", testTarget, "-c", "LdapOnly", "-u", "audituser", "-p", runtime.Password, "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
+	want := []string{"-d", testDomain, "-i", testTarget, "--ldaps", "-c", "LdapOnly", "-u", "audituser", "-p", runtime.Password, "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Fatalf("command args=%q want %q", strings.Join(args, " "), strings.Join(want, " "))
 	}
@@ -112,6 +115,17 @@ func TestRustHoundCommandUsesRuntimeScopeAndLdapOnly(t *testing.T) {
 	for _, forbidden := range []string{"All", "DCOnly", "Session", "RegistryOnly"} {
 		if strings.Contains(strings.Join(args, " "), forbidden) {
 			t.Fatalf("command args contain non-approved collection method %q: %q", forbidden, strings.Join(args, " "))
+		}
+	}
+}
+
+// LDAPS is a transport decision rather than a configuration value, so it is sent
+// for every run, including one with only part of the runtime configured.
+func TestRustHoundAlwaysRequestsLDAPS(t *testing.T) {
+	for _, runtime := range []*modules.Runtime{nil, {}, {Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret"}} {
+		args := (Module{}).CommandArgs(runtime)
+		if count := strings.Count(strings.Join(args, " "), "--ldaps"); count != 1 {
+			t.Fatalf("--ldaps must be stated exactly once, got %d: %#v", count, args)
 		}
 	}
 }
@@ -193,7 +207,8 @@ func TestRustHoundDetailLinesDescribeConfigurationWithoutSecrets(t *testing.T) {
 		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE"),
-		"Network scope: LdapOnly against the supplied target",
+		"Transport: LDAPS (--ldaps; port 636)",
+		"Network scope: LdapOnly over LDAPS against the supplied target",
 		"not kernel-enforced",
 	} {
 		if !strings.Contains(joined, want) {

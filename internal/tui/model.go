@@ -165,7 +165,42 @@ func (m *model) filterModules() {
 	if m.cursor >= len(m.modules) {
 		m.cursor = max(0, len(m.modules)-1)
 	}
-	m.watcherSelected = min(m.watcherSelected, max(0, len(m.modules)-1))
+	// Batch items and output buffers are keyed by the registry-wide index, so the
+	// watcher cursor is bounded by the registry rather than the visible scope.
+	m.watcherSelected = min(m.watcherSelected, max(0, len(m.allModules)-1))
+}
+
+// globalIndex maps a module row in the visible scope to its index in the
+// registry-wide module list. Execution is built from registry indices so a batch
+// can span tool families, categories, and protocols.
+func (m *model) globalIndex(visible int) (int, bool) {
+	if visible < 0 || visible >= len(m.moduleKeys) {
+		return 0, false
+	}
+	return m.moduleKeys[visible], true
+}
+
+// selectedModuleIDs reports the registry-wide selections in registry order, so a
+// batch built from them is deterministic and free of duplicates.
+func (m *model) selectedModuleIDs() map[string]bool {
+	selected := make(map[string]bool, len(m.selectedModules))
+	for id, marked := range m.selectedModules {
+		if marked {
+			selected[id] = true
+		}
+	}
+	return selected
+}
+
+// selectedCount reports how many registered modules are currently selected.
+func (m *model) selectedCount() int {
+	count := 0
+	for _, module := range m.allModules {
+		if m.selectedModules[module.ID()] {
+			count++
+		}
+	}
+	return count
 }
 
 func min(a, b int) int {

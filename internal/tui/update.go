@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -94,7 +95,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.closeWatcher()
 			return m, nil
 		}
-		if len(m.modules) == 0 {
+		// A registry-wide batch keeps its history and output even when the scope it
+		// was started from is no longer visible.
+		if len(m.modules) == 0 && m.batch == nil {
 			m.status = "category is inactive; no watcher output"
 			return m, nil
 		}
@@ -223,15 +226,18 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedModules[moduleID] = !m.selectedModules[moduleID]
 			m.selected = m.cursor
 		}
-	case "enter", "r":
+	case "enter":
 		if !m.running {
 			if len(m.modules) == 0 {
 				return m, nil
 			}
-			if key == "r" {
-				return m, m.executeSelected()
-			}
 			return m, m.execute(m.cursor)
+		}
+	case "r":
+		// R is registry-wide: it never depends on which scope is visible, so an
+		// empty or different scope cannot hide the operator's selection.
+		if !m.running {
+			return m, m.executeSelected()
 		}
 	case "a":
 		if !m.running {
@@ -284,31 +290,43 @@ func (m *model) execute(index int) tea.Cmd {
 		m.status = "selected module is unavailable: " + reason
 		return nil
 	}
-	return m.startBatch([]int{index}, "RUN")
+	global, ok := m.globalIndex(index)
+	if !ok {
+		return nil
+	}
+	return m.startBatch([]int{global}, "RUN")
 }
 
+// executeSelected builds the batch from the global selected-module set: every
+// explicitly selected module in the registry, whatever tool family, category, or
+// protocol happens to be visible. Registry order keeps the batch deterministic.
 func (m *model) executeSelected() tea.Cmd {
-	indices := make([]int, 0, len(m.modules))
-	blocked := false
-	for i := range m.modules {
-		if !m.selectedModules[m.modules[i].ID()] {
+	selected := m.selectedModuleIDs()
+	indices := make([]int, 0, len(selected))
+	blocked := make([]string, 0)
+	for index, module := range m.allModules {
+		if !selected[module.ID()] {
 			continue
 		}
-		if m.moduleAvailability(m.modules[i]) != "" {
-			blocked = true
+		if m.moduleAvailability(module) != "" {
+			blocked = append(blocked, module.Name())
 			continue
 		}
-		indices = append(indices, i)
+		indices = append(indices, index)
 	}
 	if len(indices) == 0 {
-		if blocked {
-			m.status = "selected modules are unavailable in the current scope"
+		if len(blocked) > 0 {
+			m.status = "selected modules are unavailable: " + strings.Join(blocked, ", ")
 			return nil
 		}
 		m.status = "no modules selected; press Space to select a module"
 		return nil
 	}
-	return m.startBatch(indices, "SELECTED")
+	command := m.startBatch(indices, "SELECTED")
+	if len(blocked) > 0 {
+		m.status = fmt.Sprintf("running %d selected module(s); skipped unavailable: %s", len(indices), strings.Join(blocked, ", "))
+	}
+	return command
 }
 
 func (m *model) setWatcherSelection(position int, manual bool) {
@@ -346,7 +364,9 @@ func (m *model) executeAll() tea.Cmd {
 	indices := make([]int, 0, len(m.modules))
 	for i := range m.modules {
 		if m.moduleAvailability(m.modules[i]) == "" {
-			indices = append(indices, i)
+			if global, ok := m.globalIndex(i); ok {
+				indices = append(indices, global)
+			}
 		}
 	}
 	if len(indices) == 0 {
@@ -363,12 +383,22 @@ func (m *model) yoloScope() bool {
 	return m.toolFamilyIndex < len(m.toolFamilies) && m.categoryIndex < len(m.categories) && m.categories[m.categoryIndex] == modules.CategoryEnumeration && m.toolFamilies[m.toolFamilyIndex] == modules.ToolFamilyNetExec
 }
 
+// startBatch runs the supplied registry-wide module indices as one batch. Items,
+// output buffers, watcher state, and history all use registry indices, so a batch
+// can mix tool families without depending on what is currently visible.
 func (m *model) startBatch(indices []int, name string) tea.Cmd {
 	items := make([]runner.BatchItem, 0, len(indices))
 	for _, index := range indices {
+		if index < 0 || index >= len(m.allModules) {
+			continue
+		}
 		buffer := runner.NewBuffer(512 * 1024)
-		m.outputBuffers[m.moduleKeys[index]] = buffer
-		items = append(items, runner.BatchItem{Index: index, Module: m.modules[index], ModuleID: m.moduleIDs[index], Buffer: buffer})
+		m.outputBuffers[index] = buffer
+		items = append(items, runner.BatchItem{Index: index, Module: m.allModules[index], ModuleID: m.allModuleIDs[index], Buffer: buffer})
+	}
+	if len(items) == 0 {
+		m.status = "no eligible modules to run"
+		return nil
 	}
 	m.batchItems = items
 	m.batch = runner.NewBatchRun(items)
@@ -399,8 +429,8 @@ func (m *model) syncBatch() tea.Cmd {
 		if !m.batchRecorded {
 			if m.db != nil {
 				for _, state := range states {
-					if state.Index >= 0 && state.Index < len(m.moduleIDs) {
-						_ = m.db.RecordExecution(m.ctx, m.targetID, m.moduleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
+					if state.Index >= 0 && state.Index < len(m.allModuleIDs) {
+						_ = m.db.RecordExecution(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
 					}
 				}
 			}

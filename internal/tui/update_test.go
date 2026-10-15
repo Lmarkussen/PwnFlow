@@ -33,7 +33,7 @@ func TestOutputBuffersAreIsolatedByModule(t *testing.T) {
 	_, _ = second.Write([]byte("second"))
 	viewport := newOutputViewport()
 	viewport.Width = 20
-	m := &model{ctx: context.Background(), outputBuffers: map[int]*runner.Buffer{0: first, 1: second}, cursor: 1, outputViewport: viewport}
+	m := &model{ctx: context.Background(), outputBuffers: map[int]*runner.Buffer{0: first, 1: second}, moduleKeys: []int{0, 1}, cursor: 1, outputViewport: viewport}
 	m.refreshOutput()
 	if m.outputContent != "second" {
 		t.Fatalf("got output %q", m.outputContent)

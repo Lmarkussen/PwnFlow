@@ -157,7 +157,7 @@ func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		"Output directory: ",
-		"Network scope: LdapOnly against the supplied target",
+		"Network scope: LdapOnly over LDAPS against the supplied target",
 		"READY",
 	} {
 		if !strings.Contains(frame, want) {
@@ -221,7 +221,7 @@ func TestUnavailableModuleRefusesIndividualExecution(t *testing.T) {
 	if command := model.executeSelected(); command != nil || model.running {
 		t.Fatalf("R started a blocked module: cmd=%v running=%t", command, model.running)
 	}
-	if model.status != "selected modules are unavailable in the current scope" {
-		t.Fatalf("unexpected refusal status: %q", model.status)
+	if !strings.Contains(model.status, "selected modules are unavailable") || !strings.Contains(model.status, "blocked") {
+		t.Fatalf("refusal did not name the unavailable selection: %q", model.status)
 	}
 }

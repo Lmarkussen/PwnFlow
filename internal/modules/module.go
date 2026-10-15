@@ -9,11 +9,10 @@ const (
 	ToolFamilyADCS            ToolFamily = "AD CS"
 	ToolFamilyActiveDirectory ToolFamily = "Active Directory"
 	ToolFamilyNetwork         ToolFamily = "Network"
-	ToolFamilyReporting       ToolFamily = "Reporting"
 )
 
 func ToolFamilies() []ToolFamily {
-	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilyNetwork, ToolFamilyReporting}
+	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilyNetwork}
 }
 
 type Category string
@@ -23,11 +22,10 @@ const (
 	CategoryCredentialAuditing  Category = "Credential Auditing"
 	CategoryCredentialDumping   Category = "Credential Dumping"
 	CategoryPrivilegeEscalation Category = "Privilege Escalation"
-	CategoryReporting           Category = "Reporting"
 )
 
 func Categories() []Category {
-	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation, CategoryReporting}
+	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation}
 }
 
 type Protocol string
@@ -52,8 +50,6 @@ func CategoriesForFamily(family ToolFamily) []Category {
 		return []Category{CategoryEnumeration, Category("Permissions Auditing"), CategoryPrivilegeEscalation}
 	case ToolFamilyNetwork:
 		return []Category{Category("Host Discovery"), Category("Service Enumeration"), Category("Security Auditing")}
-	case ToolFamilyReporting:
-		return []Category{CategoryReporting}
 	default:
 		return nil
 	}

@@ -55,9 +55,6 @@ func (m Module) SecondaryConnections() []string {
 func (m Module) ExecutionEnabled() bool { return m.definition.Enabled }
 
 func (m Module) AvailabilityReason() string {
-	if m.definition.IDValue == "bloodhound" {
-		return "scope restricted: collection methods may contact additional hosts; disabled for the authorized DC-only scope"
-	}
 	if !m.definition.Enabled {
 		return "not implemented: sensitive-artifact workflow is disabled"
 	}
@@ -91,6 +88,9 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 			return fmt.Errorf("NetExec %s option %s is unsupported by the installed version", m.Protocol(), argument)
 		}
 	}
+	if m.Protocol() == modules.ProtocolLDAP && !bytes.Contains(help, []byte("--port")) {
+		return fmt.Errorf("NetExec LDAP option --port is unsupported by the installed version")
+	}
 	if reason := m.AvailabilityReason(); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
@@ -106,9 +106,19 @@ func pluginArgument(arguments []string) string {
 	return ""
 }
 
+// ldapSecurePort is the port NetExec's LDAP protocol treats as LDAPS: the
+// installed version builds ldaps://<target> whenever the port is 636, and
+// NetExec exposes no separate --ldaps switch. SMB modules keep their own
+// defaults.
+const ldapSecurePort = "636"
+
 func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 	args := []string{protocolCommand(m.Protocol()), runtime.Target, "-u", runtime.Username, "-p", runtime.Password}
-	return append(args, m.definition.Arguments...)
+	args = append(args, m.definition.Arguments...)
+	if m.Protocol() == modules.ProtocolLDAP {
+		args = append(args, "--port", ldapSecurePort)
+	}
+	return args
 }
 
 func protocolCommand(protocol modules.Protocol) string { return strings.ToLower(string(protocol)) }
@@ -131,17 +141,20 @@ func categoryPath(category modules.Category) string {
 		return "CredentialDumping"
 	case modules.CategoryPrivilegeEscalation:
 		return "PrivilegeEscalation"
-	case modules.CategoryReporting:
-		return "Reporting"
 	default:
 		return "Enumeration"
 	}
 }
 
 func definition(id, name string, category modules.Category, protocol modules.Protocol, args []string, output string) Definition {
+	// The LDAP protocol is run over LDAPS; SMB keeps its own defaults.
+	transport := string(protocol)
+	if protocol == modules.ProtocolLDAP {
+		transport = "LDAP over LDAPS (port " + ldapSecurePort + ")"
+	}
 	return Definition{
 		IDValue: id, NameValue: name, ToolValue: "NetExec (nxc)", ToolFamilyValue: modules.ToolFamilyNetExec,
-		CategoryValue: category, ProtocolValue: protocol, DescriptionValue: name + " through NetExec " + string(protocol) + ".",
+		CategoryValue: category, ProtocolValue: protocol, DescriptionValue: name + " through NetExec " + transport + ".",
 		Arguments: args, OutputValue: output, PrerequisiteValues: []string{"nxc executable"},
 		SensitivityValue: modules.SensitivityStandard, ReadOnlyValue: true, Enabled: true,
 	}

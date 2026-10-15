@@ -10,13 +10,17 @@ import (
 const outputPaneHeightPercent = 30
 
 func (m *model) currentBuffer() *runner.Buffer {
-	return m.bufferFor(m.cursor)
+	global, ok := m.globalIndex(m.cursor)
+	if !ok {
+		return nil
+	}
+	return m.bufferFor(global)
 }
 
+// bufferFor returns the output buffer of a registry-wide module index. Batch
+// items are keyed that way, so a buffer written by a module outside the visible
+// scope is still reachable from the watcher.
 func (m *model) bufferFor(index int) *runner.Buffer {
-	if index >= 0 && index < len(m.moduleKeys) {
-		index = m.moduleKeys[index]
-	}
 	if buffer := m.outputBuffers[index]; buffer != nil {
 		return buffer
 	}
@@ -45,21 +49,22 @@ func (m *model) resizeOutput() {
 
 func (m *model) refreshOutput() {
 	buffer := m.currentBuffer()
+	global, _ := m.globalIndex(m.cursor)
 	if buffer == nil {
-		m.outputModule = m.cursor
+		m.outputModule = global
 		m.outputContent = "No output yet. Press Enter to run this module."
 		m.outputViewport.SetContent(m.outputContent)
 		return
 	}
 	changed := buffer.Changed()
-	if changed.Equal(m.outputRawChange) && m.outputWidth == m.outputViewport.Width && m.outputModule == m.cursor {
+	if changed.Equal(m.outputRawChange) && m.outputWidth == m.outputViewport.Width && m.outputModule == global {
 		if m.outputFollow {
 			m.outputViewport.GotoBottom()
 		}
 		return
 	}
 	m.outputRawChange, m.outputWidth = changed, m.outputViewport.Width
-	m.outputModule = m.cursor
+	m.outputModule = global
 	m.outputContent = displayOutput(string(buffer.Snapshot()), m.outputViewport.Width)
 	m.outputViewport.SetContent(m.outputContent)
 	if m.outputFollow {
@@ -70,6 +75,12 @@ func (m *model) refreshOutput() {
 func (m *model) outputView() string {
 	m.refreshOutput()
 	if len(m.modules) == 0 {
+		// A registry-wide batch can outlive the scope it was started from, so an
+		// empty scope still says where the running output is.
+		if m.batch != nil {
+			header := paneHeader("OUTPUT // BATCH RUNNING", m.focus == focusOutput, m.outputViewport.Width)
+			return paneStyle(m.focus == focusOutput).Render(header + "\nNo module in this scope; press Ctrl+W for the running batch.")
+		}
 		return paneStyle(m.focus == focusOutput).Render(paneHeader("OUTPUT // INACTIVE CATEGORY", m.focus == focusOutput, m.outputViewport.Width) + "\nNo modules available.")
 	}
 	module := m.modules[m.cursor]

@@ -16,7 +16,13 @@ func (m *model) View() string {
 	width := max(16, (m.width-4)/2)
 	var left strings.Builder
 	left.WriteString(title.Render(fmt.Sprintf("PwnFlow v%s", m.version)) + "\n")
-	left.WriteString(paneHeader("ENUMERATION MODULES", m.focus == focusModules, width) + "\n")
+	// The count is registry-wide, because R runs the selection across every tool
+	// family rather than only what the current scope shows.
+	modulesHeader := "ENUMERATION MODULES"
+	if selected := m.selectedCount(); selected > 0 {
+		modulesHeader = fmt.Sprintf("ENUMERATION MODULES // %d SELECTED", selected)
+	}
+	left.WriteString(paneHeader(modulesHeader, m.focus == focusModules, width) + "\n")
 	left.WriteString(fmt.Sprintf("TARGET: %s\nDOMAIN: %s\nUSER:   %s\nAUTH:   %s\n\n", m.cfg.Target, m.cfg.Domain, m.cfg.Username, lipgloss.NewStyle().Foreground(green).Render("OK")))
 	for i, module := range m.modules {
 		mark := "[ ]"
@@ -98,9 +104,13 @@ func (m *model) moduleState(index int) string {
 		return "UNAVAILABLE"
 	}
 	if m.batch != nil {
+		global, ok := m.globalIndex(index)
+		if !ok {
+			return "READY"
+		}
 		states, _, _, _ := m.batch.Snapshot()
 		for _, state := range states {
-			if state.Index == index {
+			if state.Index == global {
 				return strings.ToUpper(state.Status)
 			}
 		}

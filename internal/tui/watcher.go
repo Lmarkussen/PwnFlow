@@ -51,7 +51,7 @@ func (m *model) watcherStates() []runner.BatchState {
 	}
 	states := make([]runner.BatchState, len(m.modules))
 	for index, module := range m.modules {
-		states[index] = runner.BatchState{Index: index, Module: module, Status: "queued"}
+		states[index] = runner.BatchState{Index: m.moduleKeys[index], Module: module, Status: "queued"}
 	}
 	return states
 }
@@ -147,7 +147,7 @@ func (m *model) refreshWatcher() {
 		m.watcherListCursor = 0
 	}
 	state := states[m.watcherListCursor]
-	if state.Index >= 0 && state.Index < len(m.modules) {
+	if state.Index >= 0 && state.Index < len(m.allModules) {
 		m.watcherSelected = state.Index
 	}
 	buffer := m.bufferFor(m.watcherSelected)

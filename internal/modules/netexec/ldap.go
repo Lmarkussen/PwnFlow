@@ -20,7 +20,6 @@ func LDAPEnumerationModules() []modules.Module {
 		definition("domain-controllers", "Enumerate Domain Controllers", modules.CategoryEnumeration, modules.ProtocolLDAP, []string{"--dc-list"}, "LDAP_domain_controllers.txt"),
 		definition("maq", "Check Machine Account Quota", modules.CategoryEnumeration, modules.ProtocolLDAP, []string{"-M", "maq"}, "LDAP_machine_account_quota.txt"),
 		definition("ldap-checker", "Check LDAP Signing", modules.CategoryEnumeration, modules.ProtocolLDAP, []string{"-M", "ldap-checker"}, "LDAP_signing.txt"),
-		{IDValue: "bloodhound", NameValue: "BloodHound Collection", ToolValue: "NetExec (nxc)", ToolFamilyValue: modules.ToolFamilyNetExec, CategoryValue: modules.CategoryEnumeration, ProtocolValue: modules.ProtocolLDAP, DescriptionValue: "Disabled BloodHound CE graph collection; collection methods are not confined to the authorized DC-only scope.", Arguments: []string{"--bloodhound", "--collection", "All"}, OutputValue: "BloodHound/LDAP_bloodhound.zip", PrerequisiteValues: []string{"nxc LDAP --bloodhound capability", "authorized single-host collection workflow"}, SensitivityValue: modules.SensitivitySensitive, ReadOnlyValue: true, SecondaryConnectionValues: []string{"may contact domain hosts and services beyond the supplied DC"}},
 	}
 	return buildModules(definitions)
 }

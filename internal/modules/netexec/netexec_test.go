@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ const (
 
 func TestEnumerationDefinitionsAndArguments(t *testing.T) {
 	all := EnumerationModules()
-	if len(all) != 31 {
+	if len(all) != 30 {
 		t.Fatalf("got %d enumeration modules", len(all))
 	}
 	ldapCount := 0
@@ -28,12 +29,12 @@ func TestEnumerationDefinitionsAndArguments(t *testing.T) {
 			t.Fatal("obsolete organizational-units module is still registered")
 		}
 	}
-	if ldapCount != 17 {
-		t.Fatalf("got %d LDAP enumeration modules, want 17", ldapCount)
+	if ldapCount != 16 {
+		t.Fatalf("got %d LDAP enumeration modules, want 16", ldapCount)
 	}
 	module := all[0].(Module)
 	args := module.CommandArgs(&modules.Runtime{Target: testTarget, Username: "user", Password: "secret"})
-	want := []string{"ldap", testTarget, "-u", "user", "-p", "secret", "-M", "get-info-users"}
+	want := []string{"ldap", testTarget, "-u", "user", "-p", "secret", "-M", "get-info-users", "--port", "636"}
 	for i := range want {
 		if args[i] != want[i] {
 			t.Fatalf("arg %d: got %q want %q", i, args[i], want[i])
@@ -98,7 +99,7 @@ func TestKerberosCapabilitiesAreDetectedBeforeSensitiveWorkflowGate(t *testing.T
 	script := `#!/bin/sh
 case "$1 $2" in
   "--help ") echo global-help; exit 0 ;;
-  "ldap --help") echo "--asreproast --kerberoasting"; exit 0 ;;
+  "ldap --help") echo "--asreproast --kerberoasting --port PORT"; exit 0 ;;
 esac
 exit 0
 `
@@ -122,7 +123,7 @@ func TestKerberosCapabilityMissingIsNotHiddenByWorkflowGate(t *testing.T) {
 	script := `#!/bin/sh
 case "$1 $2" in
   "--help ") echo global-help; exit 0 ;;
-  "ldap --help") echo "--asreproast"; exit 0 ;;
+  "ldap --help") echo "--asreproast --port PORT"; exit 0 ;;
 esac
 exit 0
 `
@@ -143,40 +144,64 @@ exit 0
 	}
 }
 
-func TestBloodHoundIsLDAPAndScopeRestricted(t *testing.T) {
-	var bloodhound Module
-	for _, raw := range LDAPEnumerationModules() {
-		candidate := raw.(Module)
-		if candidate.ID() == "bloodhound" {
-			bloodhound = candidate
+// The retired NetExec BloodHound collection module is gone from the registry: it
+// is not registered, not selectable, and cannot be executed through NetExec. The
+// remaining LDAP and SMB enumeration modules stay registered.
+func TestBloodHoundCollectionIsNoLongerRegistered(t *testing.T) {
+	for _, raw := range EnumerationModules() {
+		module := raw.(Module)
+		if module.ID() == "bloodhound" {
+			t.Fatalf("the retired BloodHound collection module is still registered: %#v", module.ID())
+		}
+		for _, argument := range module.CommandArgs(&modules.Runtime{Target: testTarget, Domain: testDomain, Username: "user", Password: "secret"}) {
+			if argument == "--bloodhound" || argument == "--collection" {
+				t.Fatalf("%s still builds a BloodHound collection command", module.ID())
+			}
+		}
+		if strings.Contains(module.OutputFile(), "BloodHound") {
+			t.Fatalf("%s still writes into the retired BloodHound output path: %s", module.ID(), module.OutputFile())
 		}
 	}
-	if bloodhound.ID() == "" || bloodhound.Protocol() != modules.ProtocolLDAP {
-		t.Fatal("BloodHound was not registered under LDAP")
+	var ldapModules, smbModules int
+	for _, raw := range EnumerationModules() {
+		switch raw.Protocol() {
+		case modules.ProtocolLDAP:
+			ldapModules++
+		case modules.ProtocolSMB:
+			smbModules++
+		}
 	}
-	if bloodhound.ExecutionEnabled() {
-		t.Fatal("BloodHound collection must remain disabled")
+	if ldapModules != 16 || smbModules != 14 {
+		t.Fatalf("got %d LDAP and %d SMB modules; the remaining enumeration modules must stay registered", ldapModules, smbModules)
 	}
-	if got := bloodhound.OutputFile(); got != "Enumeration/NetExec/BloodHound/LDAP_bloodhound.zip" {
-		t.Fatalf("unexpected BloodHound artifact path: %s", got)
-	}
+}
 
-	dir := t.TempDir()
-	nxc := filepath.Join(dir, "nxc")
-	script := `#!/bin/sh
-case "$1 $2" in
-  "--help ") echo global-help; exit 0 ;;
-  "ldap --help") echo "--bloodhound --collection"; exit 0 ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(nxc, []byte(script), 0700); err != nil {
-		t.Fatal(err)
+// LDAP modules are run over LDAPS: NetExec selects it from the port, so the
+// builder has to pass 636 and never an invented flag.
+func TestLDAPModulesPreferLDAPSAndSMBIsUnchanged(t *testing.T) {
+	runtime := &modules.Runtime{Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret"}
+	for _, raw := range LDAPEnumerationModules() {
+		module := raw.(Module)
+		args := module.CommandArgs(runtime)
+		if len(args) < 2 || args[len(args)-2] != "--port" || args[len(args)-1] != "636" {
+			t.Fatalf("%s does not select LDAPS with --port 636: %#v", module.ID(), args)
+		}
+		for _, argument := range args {
+			if argument == "--ldaps" {
+				t.Fatalf("%s invents an unsupported --ldaps option", module.ID())
+			}
+		}
+		if !slices.Contains(args, runtime.Password) {
+			t.Fatalf("%s no longer passes the operator credentials", module.ID())
+		}
 	}
-	t.Setenv("PATH", dir)
-	err := bloodhound.Check(context.Background(), &modules.Runtime{Target: testTarget, Domain: testDomain})
-	if err == nil || !strings.Contains(err.Error(), "scope restricted") {
-		t.Fatalf("unexpected BloodHound check result: %v", err)
+	for _, raw := range SMBEnumerationModules() {
+		module := raw.(Module)
+		for _, argument := range module.CommandArgs(runtime) {
+			if argument == "--port" || argument == "--ldaps" || argument == "636" {
+				t.Fatalf("%s SMB command changed transport: %#v", module.ID(), module.CommandArgs(runtime))
+			}
+		}
 	}
 }
 
@@ -186,7 +211,7 @@ func TestProtocolCapabilityChecksAreIndependent(t *testing.T) {
 	script := `#!/bin/sh
 case "$1 $2" in
   "--help ") echo global-help; exit 0 ;;
-  "ldap --help") echo "--users"; exit 0 ;;
+  "ldap --help") echo "--users --port PORT"; exit 0 ;;
   "ldap -L") echo "get-info-users"; exit 0 ;;
   "smb --help") echo "--shares"; exit 0 ;;
 esac

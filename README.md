@@ -36,7 +36,11 @@ PwnFlow is a general-purpose framework: the target, domain, and credentials are 
 
 The application root is resolved from the executable location (or the nearest `go.mod` during development), not the current working directory. Results are written to `results/<domain>/Enumeration/NetExec/`, with prior output under `history/`, and metadata in `enumeration.db`.
 
-The active executable scopes are NetExec → Enumeration, Active Directory → Enumeration (RustHound-CE), and AD CS → Enumeration (Certipy). LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. None of the non-NetExec modules is a NetExec module or is ever included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, Reporting, and Network remain visible as inactive taxonomy entries until their workflows are implemented. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
+The active executable scopes are NetExec → Enumeration, Active Directory → Enumeration (RustHound-CE), and AD CS → Enumeration (Certipy). LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. None of the non-NetExec modules is a NetExec module or is ever included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, and Network remain visible as inactive taxonomy entries until their workflows are implemented. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
+
+`Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module, `R` runs every selected eligible module as a single batch whatever scope is visible - an unavailable selection is reported and skipped rather than run - and `A` stays limited to the visible NetExec enumeration scope, so a global selection never widens YOLO.
+
+LDAP-based modules prefer LDAPS. NetExec LDAP modules therefore pass `--port 636`, which is how the installed NetExec selects `ldaps://` for its LDAP protocol, while its SMB modules keep their defaults. Certipy `find` passes `-ldap-scheme ldaps -ldap-port 636`, and RustHound-CE passes `--ldaps`; none of these is downgraded to unsigned LDAP at runtime, and none requires extra certificate configuration. PwnFlow's own certificate trust decisions apply to its Go LDAP preflight only: each external tool verifies - or, for its own historical reasons, does not verify - the domain controller's certificate on its own, and PwnFlow neither changes nor claims to change that.
 
 NetExec LDAP and SMB capabilities are checked locally at execution time with `nxc <protocol> --help`; NetExec LDAP plugin modules are checked with `nxc ldap -L`. Unsupported options are marked unavailable rather than substituted. The current installed Kali lab version was inspected locally as NetExec 1.5.1. No capability check supplies a target or initiates enumeration.
 
@@ -155,14 +159,13 @@ RustHound-CE output. The retired `--with-bloodhound-ce`,
 explanation instead of running; the installer no longer manages these
 components in either direction.
 
-BloodHound collection remains disabled because unrestricted collection methods
-may contact hosts beyond the authorized DC. AS-REP Roasting and Kerberoasting
-remain registered under NetExec → Credential Auditing → LDAP, but their
-sensitive artifact workflows are disabled. No ticket material is written to
-ordinary enumeration logs, and PwnFlow does not crack or automatically reuse
-credentials. The NetExec `--bloodhound`/`--collection` capability is checked
-locally, but the collection module remains unavailable until a confined
-single-host workflow exists. PwnFlow checks `bloodhound-ce-python` and the
+The NetExec BloodHound collection module is no longer registered: its
+collection methods may contact hosts beyond the authorized DC, so it is absent
+from the registry rather than present and disabled. AS-REP Roasting and
+Kerberoasting remain registered under NetExec → Credential Auditing → LDAP, but
+their sensitive artifact workflows are disabled. No ticket material is written
+to ordinary enumeration logs, and PwnFlow does not crack or automatically reuse
+credentials. PwnFlow checks `bloodhound-ce-python` and the
 legacy `bloodhound-python` as exposed command names only for read-only
 detection; the installer does not install either collector.
 
@@ -173,8 +176,9 @@ the required local build dependencies, and operator consent before running
 
 The PwnFlow module under Active Directory → Enumeration always passes
 `-c LdapOnly` together with the target and domain supplied to PwnFlow at startup
-(`-d <domain> -i <target>`), so the CLI's default `All` collection is never
-selected and the command always matches the operator's configuration. JSON
+(`-d <domain> -i <target> --ldaps`), so the CLI's default `All` collection is
+never selected, the command always matches the operator's configuration, and
+the collection runs over LDAPS on port 636. JSON
 artifacts are written to
 `results/<domain>/Enumeration/RustHoundCE/artifacts/<run timestamp>/` so a later
 run never overwrites an earlier one, while the sanitized terminal log stays
