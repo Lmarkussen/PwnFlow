@@ -130,9 +130,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case findingsReanalysisMsg:
 		if msg.err != nil {
-			m.status = "PXEThief reanalysis failed: " + msg.err.Error()
+			m.status = "historical reanalysis failed: " + msg.err.Error()
 		} else {
-			m.status = "PXEThief historical reanalysis queued"
+			m.status = "Certipy historical reanalysis queued"
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -541,6 +541,13 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.findingCursor += 5
 		case "enter":
+			if m.findingSearch != "" {
+				m.findingCategoryView = false
+				m.findingDetail = len(m.findingRows) > 0
+				m.findingCursor = 0
+				m.findingTop = 0
+				return m, nil
+			}
 			if len(m.findingCategories) > 0 {
 				m.findingCategory = m.findingCategories[m.findingCursor].Key
 				m.findingCategoryView = false
@@ -639,7 +646,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "0":
 		m.findingSeverity = ""
 	case "p":
-		return m, m.reanalyzePXEThief()
+		return m, m.reanalyzeEvidence()
 	}
 	if m.findingCursor < 0 {
 		m.findingCursor = 0
@@ -664,6 +671,19 @@ func (m *model) reanalyzePXEThief() tea.Cmd {
 		}
 		artifactRoot := filepath.Join(m.cfg.ResultsRoot(), "Enumeration", "PXEThief", "artifacts")
 		return findingsReanalysisMsg{err: m.findings.Submit(findingengine.Job{AssessmentID: m.targetID, ExecutionID: executionID, SourceTool: "PXEThief", ArtifactPath: artifactRoot, ObservedAt: time.Now().UTC(), Force: true})}
+	}
+}
+
+func (m *model) reanalyzeEvidence() tea.Cmd {
+	if m.findings == nil || m.db == nil {
+		m.status = "historical reanalysis requires the assessment database"
+		return nil
+	}
+	return func() tea.Msg {
+		if err := m.findings.ReanalyzeLatest(context.Background(), m.targetID, "Certipy"); err != nil {
+			return findingsReanalysisMsg{err: err}
+		}
+		return findingsReanalysisMsg{err: nil}
 	}
 }
 

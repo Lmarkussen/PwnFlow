@@ -92,7 +92,7 @@ func TestFindingCategoriesClassifyAndCountRecords(t *testing.T) {
 		{FindingInput: storage.FindingInput{FindingType: "pxethief_credentials", Title: "SCCM task-sequence credentials exposed", Severity: "high", SourceTool: "PXEThief"}},
 		{FindingInput: storage.FindingInput{FindingType: "kerberoastable_account", Title: "Kerberoastable account", Severity: "medium", SourceTool: "RustHound-CE"}},
 		{FindingInput: storage.FindingInput{FindingType: "ad_acl_genericwrite", Title: "Direct ACL GenericWrite", Severity: "informational", SourceTool: "RustHound-CE"}},
-		{FindingInput: storage.FindingInput{FindingType: "adcs_template_vulnerability", Title: "Certipy flagged certificate template WebEnrollment", Severity: "high", SourceTool: "Certipy"}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — WebEnrollment", Severity: "high", SourceTool: "Certipy"}},
 		{FindingInput: storage.FindingInput{FindingType: "relay_exposure", Title: "Potential NTLM relay exposure", Severity: "medium", SourceTool: "RelayKing"}},
 	}
 	categories := buildFindingCategories(rows)
@@ -137,5 +137,30 @@ func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
 	}
 	if len(rows) != 3 || rows[0].FindingType != "ad_acl_genericall" {
 		t.Fatal("grouping modified stored presentation input")
+	}
+}
+
+func TestGlobalFindingSearchRendersCategories(t *testing.T) {
+	model := &model{findingsView: true, findingCategoryView: true, findingSearch: "ESC1", findingViewMode: "all", width: 100, height: 24, findingRows: []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — WebEnrollment", Severity: "high", AffectedObject: "WebEnrollment"}}}}
+	frame := ansi.Strip(model.View())
+	if !strings.Contains(frame, "FINDINGS SEARCH") || !strings.Contains(frame, "adcs") || !strings.Contains(frame, "ESC1") {
+		t.Fatalf("global search omitted category or result: %s", frame)
+	}
+	_, _ = model.handleFindingsKey("enter")
+	if model.findingCategoryView || !model.findingDetail {
+		t.Fatal("global search result did not open detail")
+	}
+}
+
+func TestLegacyCertipyRecordIsObservationWithoutESC(t *testing.T) {
+	legacy := storage.Finding{FindingInput: storage.FindingInput{SourceTool: "Certipy", FindingType: "adcs_template_vulnerability", Title: "Certipy flagged certificate template 23", Severity: "medium"}}
+	if actionableFinding(legacy) {
+		t.Fatal("legacy generic Certipy record remained actionable")
+	}
+	esc := legacy
+	esc.FindingType = "adcs_esc_esc1"
+	esc.Title = "Certipy reported ESC1 — WebEnrollment"
+	if !actionableFinding(esc) {
+		t.Fatal("explicit ESC record was downgraded to an observation")
 	}
 }

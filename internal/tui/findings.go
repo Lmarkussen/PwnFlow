@@ -2,12 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
+
+var explicitCertipyESC = regexp.MustCompile(`(?i)\bESC[0-9]+\b`)
 
 type findingCategory struct {
 	Key          string
@@ -162,6 +165,9 @@ func groupACLFindings(rows []storage.Finding) []storage.Finding {
 }
 
 func actionableFinding(finding storage.Finding) bool {
+	if strings.EqualFold(finding.SourceTool, "Certipy") && strings.HasPrefix(strings.ToLower(finding.FindingType), "adcs_") && !explicitCertipyESC.MatchString(finding.Title) {
+		return false
+	}
 	if strings.HasPrefix(finding.FindingType, "ad_acl_") {
 		return finding.Severity == "high" || strings.Contains(strings.ToLower(finding.Title), "privileged")
 	}
@@ -253,11 +259,14 @@ func (m *model) findingsViewRender() string {
 	if m.findingSearchMode {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}
-	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze PXE   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze Certipy   1 High   2 Medium   3 Info   0 All   Esc Close"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
 func (m *model) findingCategoryOverview(width int) string {
+	if strings.TrimSpace(m.findingSearch) != "" {
+		return m.findingSearchResults(width)
+	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n\n")
@@ -277,6 +286,33 @@ func (m *model) findingCategoryOverview(width int) string {
 		content.WriteString("No findings categories are available.\n")
 	}
 	content.WriteString(dim.Render("\nEnter Open Category   / Search   f Findings   o Observations   a All   Esc Close"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) findingSearchResults(width int) string {
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // FINDINGS SEARCH") + "\n")
+	content.WriteString(dim.Render("Search: "+m.findingSearch+"   Results span all categories") + "\n\n")
+	m.keepFindingVisible()
+	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
+	for index := m.findingTop; index < end; index++ {
+		finding := m.findingRows[index]
+		prefix := "  "
+		if index == m.findingCursor {
+			prefix = "> "
+		}
+		category := findingCategoryKey(finding)
+		line := fmt.Sprintf("%s%-10s %-18s %-42s %s", prefix, strings.ToUpper(finding.Severity), category, truncateFinding(finding.Title, 42), truncateFinding(displayFindingObject(finding.AffectedObject, finding.AffectedObjectID), 24))
+		if index == m.findingCursor {
+			line = lipgloss.NewStyle().Bold(true).Render(line)
+		}
+		content.WriteString(line + "\n")
+	}
+	if len(m.findingRows) == 0 {
+		content.WriteString("No findings match across any category.\n")
+	}
+	content.WriteString(fmt.Sprintf("\n%d cross-category results  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
+	content.WriteString(dim.Render("\n\nEnter Detail   / Edit Search   Esc Categories"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

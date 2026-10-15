@@ -8,12 +8,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
+
+var certipyESCIdentifier = regexp.MustCompile(`(?i)\bESC[0-9]+\b`)
+var certipyESCEntry = regexp.MustCompile(`(?i)^\s*\[?\b(ESC[0-9]+)\b`)
 
 // AnalyzeCertipy extracts only template records that Certipy itself marked with
 // a vulnerability. Enabled templates without a documented vulnerability are
@@ -36,21 +41,75 @@ func AnalyzeCertipy(ctx context.Context, artifactPath string, assessmentID, exec
 			return nil, err
 		}
 		template, ok := raw.(map[string]any)
-		if !ok || !meaningful(template["[!] Vulnerabilities"]) {
+		if !ok {
 			continue
 		}
 		vulnerability := template["[!] Vulnerabilities"]
-		evidence, _ := json.Marshal(map[string]any{"template_name": name, "enabled": template["Enabled"], "vulnerabilities": vulnerability, "owner": template["Owner"]})
-		ref := "/Certificate Templates/" + jsonPointer(name)
-		result = append(result, storage.FindingInput{
-			FindingKey: stableSourceKey(assessmentID, "certipy", name, vulnerability), AssessmentID: assessmentID,
-			SourceTool: "Certipy", SourceExecution: executionID, FindingType: "adcs_template_vulnerability",
-			Title: "Certipy flagged certificate template " + name, Description: "Certipy marked this certificate template with a vulnerability condition. The finding preserves the tool's evidence and does not claim exploitability without the template context.",
-			Severity: "medium", Confidence: "tool-flagged-potential", AffectedObjectID: name, AffectedObject: name,
-			EvidenceJSON: string(evidence), ArtifactPath: artifactPath, ArtifactRef: ref, ObservedAt: now, Status: "open", ParserVersion: "certipy-v1",
-		})
+		for _, esc := range extractESCIdentifiers(vulnerability) {
+			objectName := name
+			objectLabel := name
+			if _, err := strconv.ParseInt(name, 10, 64); err == nil {
+				objectName = ""
+				objectLabel = "affected template identity unresolved"
+			}
+			evidence, _ := json.Marshal(map[string]any{"template_name": name, "enabled": template["Enabled"], "esc": esc, "vulnerability": vulnerability, "owner": template["Owner"]})
+			ref := "/Certificate Templates/" + jsonPointer(name) + "/[!] Vulnerabilities"
+			result = append(result, storage.FindingInput{
+				FindingKey: stableSourceKey(assessmentID, "certipy", name, esc), AssessmentID: assessmentID,
+				SourceTool: "Certipy", SourceExecution: executionID, FindingType: "adcs_esc_" + strings.ToLower(esc),
+				Title: "Certipy reported " + esc + " — " + objectLabel, Description: "Certipy explicitly reported this ESC condition in its vulnerability output. This is tool evidence of a potential configuration exposure, not proof of exploitation or a complete attack path.",
+				Severity: certipyESCSeverity(esc), Confidence: "tool-reported-esc", AffectedObjectID: objectName, AffectedObject: objectLabel,
+				EvidenceJSON: string(evidence), ArtifactPath: artifactPath, ArtifactRef: ref, ObservedAt: now, Status: "open", ParserVersion: "certipy-v2",
+			})
+		}
 	}
 	return result, nil
+}
+
+func extractESCIdentifiers(value any) []string {
+	seen := make(map[string]bool)
+	var result []string
+	var walk func(any, bool)
+	walk = func(current any, explicitKey bool) {
+		switch typed := current.(type) {
+		case string:
+			matches := certipyESCEntry.FindAllStringSubmatch(typed, 1)
+			if explicitKey {
+				matches = certipyESCIdentifier.FindAllStringSubmatch(typed, 1)
+			}
+			for _, match := range matches {
+				if len(match) < 2 {
+					continue
+				}
+				esc := strings.ToUpper(match[1])
+				if !seen[esc] {
+					seen[esc] = true
+					result = append(result, esc)
+				}
+			}
+		case []any:
+			for _, item := range typed {
+				walk(item, false)
+			}
+		case map[string]any:
+			for key, item := range typed {
+				walk(key, true)
+				walk(item, false)
+			}
+		}
+	}
+	walk(value, false)
+	sort.Strings(result)
+	return result
+}
+
+func certipyESCSeverity(esc string) string {
+	switch strings.ToUpper(esc) {
+	case "ESC1", "ESC4", "ESC8", "ESC13", "ESC15":
+		return "high"
+	default:
+		return "medium"
+	}
 }
 
 // AnalyzeRelayKing extracts explicit relay-path records. NTLM being enabled or

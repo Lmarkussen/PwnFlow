@@ -35,6 +35,24 @@ type Manager struct {
 	closeOnce sync.Once
 }
 
+// ReanalyzeLatest queues an existing execution's finalized artifact for an
+// explicit offline parser retry. It never starts the associated module.
+func (m *Manager) ReanalyzeLatest(ctx context.Context, assessmentID int64, sourceTool string) error {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	executionID, err := m.db.LatestExecutionForTool(ctx, assessmentID, sourceTool)
+	if err != nil {
+		return err
+	}
+	output, err := m.db.ExecutionOutputPath(ctx, executionID)
+	if err != nil {
+		return err
+	}
+	artifact := DiscoverArtifact(sourceTool, output)
+	return m.Submit(Job{AssessmentID: assessmentID, ExecutionID: executionID, SourceTool: sourceTool, ArtifactPath: artifact, ObservedAt: time.Now().UTC(), Force: true})
+}
+
 type queuedJob struct {
 	job Job
 	key string
@@ -211,7 +229,7 @@ func ParserVersionFor(tool string) string {
 	case "rusthound-ce", "rusthound":
 		return ParserVersion
 	case "certipy":
-		return "certipy-v1"
+		return "certipy-v2"
 	case "relayking":
 		return "relayking-v1"
 	case "pxethief":
