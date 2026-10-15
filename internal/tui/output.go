@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/pwnflow/pwnflow/internal/runner"
 )
@@ -72,6 +74,29 @@ func (m *model) refreshOutput() {
 	}
 }
 
+// statusHeaderStyle is the style of the output pane header. A pending privilege
+// confirmation takes the warning colour for as long as it is waiting for an answer,
+// so the question and its [y/N] decision are impossible to miss; every other state
+// keeps the ordinary title style.
+func (m *model) statusHeaderStyle() lipgloss.Style {
+	if m.elevationPrompt {
+		return warn
+	}
+	return title
+}
+
+// statusText is the status shown while the prompt is pending, styled like the header.
+func (m *model) statusText(fallback string) string {
+	status := m.status
+	if status == "" {
+		status = fallback
+	}
+	if m.elevationPrompt {
+		return warn.Render(status)
+	}
+	return status
+}
+
 func (m *model) outputView() string {
 	m.refreshOutput()
 	if len(m.modules) == 0 {
@@ -93,7 +118,7 @@ func (m *model) outputView() string {
 		follow = "FOLLOW"
 	}
 	header := fmt.Sprintf("OUTPUT // %s // %s // %s", module.Name(), state, follow)
-	return paneStyle(m.focus == focusOutput).Render(paneHeader(header, m.focus == focusOutput, m.outputViewport.Width) + "\n" + m.outputViewport.View())
+	return paneStyle(m.focus == focusOutput).Render(paneHeaderWith(m.statusHeaderStyle(), header, m.focus == focusOutput, m.outputViewport.Width) + "\n" + m.outputViewport.View())
 }
 
 func newOutputViewport() viewport.Model { return viewport.New(1, 1) }

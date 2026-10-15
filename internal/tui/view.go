@@ -151,7 +151,7 @@ func (m *model) infoView() string {
 			details += "\n"
 		}
 	}
-	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\n%s%s\n\nCommand: %s\n\nAvailability: %s\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), details, module.Description(), command, availability, m.status, module.OutputFile())
+	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\n%s%s\n\nCommand: %s\n\nAvailability: %s\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), details, module.Description(), command, availability, m.statusText(""), module.OutputFile())
 }
 
 func (m *model) moduleAvailability(module modules.Module) string {
