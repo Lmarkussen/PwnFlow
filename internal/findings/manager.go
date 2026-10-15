@@ -44,7 +44,31 @@ func NewManager(ctx context.Context, db *storage.DB) *Manager {
 	manager := &Manager{db: db, ctx: ctx, queue: make(chan queuedJob, 32)}
 	manager.workers.Add(1)
 	go manager.worker()
+	manager.recoverPending()
 	return manager
+}
+
+func (m *Manager) recoverPending() {
+	jobs, err := m.db.ListPendingAnalysisJobs(m.ctx)
+	if err != nil {
+		return
+	}
+	for _, persisted := range jobs {
+		artifact := persisted.ArtifactPath
+		if artifact == "" {
+			if output, outputErr := m.db.ExecutionOutputPath(m.ctx, persisted.ExecutionID); outputErr == nil {
+				artifact = DiscoverArtifact(persisted.SourceTool, output)
+			}
+		}
+		job := Job{AssessmentID: persisted.AssessmentID, ExecutionID: persisted.ExecutionID, SourceTool: persisted.SourceTool, ArtifactPath: artifact, ObservedAt: persisted.UpdatedAt}
+		m.pending.Add(1)
+		select {
+		case m.queue <- queuedJob{job: job, key: persisted.JobKey}:
+		case <-m.ctx.Done():
+			m.pending.Done()
+			return
+		}
+	}
 }
 
 func (m *Manager) Submit(job Job) error {
@@ -211,6 +235,26 @@ func DiscoverArtifact(tool, outputPath string) string {
 	if outputPath == "" {
 		return ""
 	}
+	if strings.EqualFold(tool, "pxethief") {
+		if info, err := os.Stat(outputPath); err == nil {
+			if info.IsDir() || strings.EqualFold(filepath.Base(outputPath), "pxethief.log") || strings.EqualFold(filepath.Ext(outputPath), ".xml") || strings.HasSuffix(strings.ToLower(filepath.Base(outputPath)), ".boot.var") {
+				return outputPath
+			}
+		}
+	}
+	if strings.EqualFold(tool, "netexec") || strings.EqualFold(tool, "netexec (nxc)") {
+		baseName := strings.ToLower(filepath.Base(outputPath))
+		if baseName == "kerberoast.txt" || baseName == "asreproast.txt" {
+			if _, err := os.Stat(outputPath); err == nil {
+				return outputPath
+			}
+		}
+		for _, name := range []string{"kerberoast.txt", "asreproast.txt"} {
+			if path := newestMatching(filepath.Dir(outputPath), name); path != "" {
+				return path
+			}
+		}
+	}
 	base := filepath.Join(filepath.Dir(outputPath), "artifacts")
 	entries, err := os.ReadDir(base)
 	if err != nil {
@@ -229,9 +273,13 @@ func DiscoverArtifact(tool, outputPath string) string {
 			if path := newestMatching(dir, ".json"); path != "" {
 				return path
 			}
-		case "relayking", "pxethief":
+		case "relayking":
 			if path := newestMatching(dir, "relayking-scan.json"); path != "" {
 				return path
+			}
+		case "pxethief":
+			if path := newestPXEArtifact(dir); path != "" {
+				return dir
 			}
 		case "netexec", "netexec (nxc)":
 			if path := newestMatching(dir, "kerberoast.txt"); path != "" {
@@ -240,6 +288,24 @@ func DiscoverArtifact(tool, outputPath string) string {
 			if path := newestMatching(dir, "asreproast.txt"); path != "" {
 				return path
 			}
+		}
+	}
+	return ""
+}
+
+func newestPXEArtifact(dir string) string {
+	for _, name := range []string{"pxethief.log", "variables.xml"} {
+		if path := newestMatching(dir, name); path != "" {
+			return path
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".boot.var") {
+			return filepath.Join(dir, entry.Name())
 		}
 	}
 	return ""

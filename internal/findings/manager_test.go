@@ -84,3 +84,71 @@ func TestDetectionCatalogueDeclaresUnsupportedProtocolChecks(t *testing.T) {
 		t.Fatal("catalogue lost LDAP signing entry")
 	}
 }
+
+func TestDiscoverArtifactUsesFinalizedPXEAndKerberosOutputs(t *testing.T) {
+	root := t.TempDir()
+	pxe := filepath.Join(root, "pxethief.log")
+	if err := os.WriteFile(pxe, []byte("OSDJoinAccount: EXAMPLE\\joiner\nOSDJoinPassword: fictional\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverArtifact("PXEThief", pxe); got != pxe {
+		t.Fatalf("PXEThief output was not selected: %q", got)
+	}
+	kerb := filepath.Join(root, "kerberoast.txt")
+	if err := os.WriteFile(kerb, []byte("$krb5tgs$23$*svc$EXAMPLE.TEST$HTTP/app*$material\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverArtifact("NetExec (nxc)", kerb); got != kerb {
+		t.Fatalf("NetExec Kerberos output was not selected: %q", got)
+	}
+}
+
+func TestManagerRecoversPendingJobFromExecutionOutputPath(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.11"); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := db.TargetID(ctx, "example.test", "198.51.100.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(id,name,tool,protocol,description,output_filename) VALUES(2,'Kerberoasting','NetExec (nxc)','LDAP','test','transcript.txt')`); err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := filepath.Join(root, "CredentialAuditing", "NetExec", "LDAP_kerberoasting")
+	if err := os.MkdirAll(artifactDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(artifactDir, "transcript.txt")
+	if err := os.WriteFile(output, []byte("module output\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "kerberoast.txt"), []byte("$krb5tgs$23$*svc-sql$EXAMPLE.TEST$MSSQLSvc/sql*$fictional\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := db.RecordExecutionID(ctx, assessment, 2, time.Now(), time.Now(), "completed", 0, output, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := Job{AssessmentID: assessment, ExecutionID: execution, SourceTool: "NetExec (nxc)", ArtifactPath: "", ObservedAt: time.Now()}
+	if _, err := db.QueueAnalysis(ctx, jobKey(job), assessment, execution, job.SourceTool, ""); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(ctx, db)
+	if err := manager.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListFindings(ctx, assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].FindingType != "kerberos_ticket_material_collected" {
+		t.Fatalf("pending job was not recovered: %+v", rows)
+	}
+}
