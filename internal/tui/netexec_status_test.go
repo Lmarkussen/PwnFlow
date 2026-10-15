@@ -16,6 +16,7 @@ import (
 // how a NetExec-style integration answers the question without probing.
 type statusModule struct {
 	id         string
+	name       string
 	family     modules.ToolFamily
 	category   modules.Category
 	protocol   modules.Protocol
@@ -25,8 +26,13 @@ type statusModule struct {
 	optionKeys []string
 }
 
-func (m statusModule) ID() string                       { return m.id }
-func (m statusModule) Name() string                     { return m.id }
+func (m statusModule) ID() string { return m.id }
+func (m statusModule) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return m.id
+}
 func (m statusModule) ToolFamily() modules.ToolFamily   { return m.family }
 func (m statusModule) Category() modules.Category       { return m.category }
 func (m statusModule) Tool() string                     { return "test tool" }
@@ -112,10 +118,10 @@ func TestAdminRequiredIsLabelledAndStillRuns(t *testing.T) {
 // and it is refused by Enter, R, and the category-wide run.
 func TestUnavailableIsLabelledExplainedAndRefused(t *testing.T) {
 	registered := []modules.Module{
-		statusModule{id: "gated", family: modules.ToolFamilyNetExec, category: modules.CategoryPrivilegeEscalation, protocol: modules.ProtocolSMB, status: modules.StatusUnavailable, reason: errTestUnavailable.Error()},
+		statusModule{id: "broken", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialDumping, protocol: modules.ProtocolSMB, status: modules.StatusUnavailable, reason: errTestUnavailable.Error()},
 	}
 	m := statusModel(t, registered)
-	m.setCategory(categoryIndex(t, m, modules.CategoryPrivilegeEscalation))
+	m.setCategory(categoryIndex(t, m, modules.CategoryCredentialDumping))
 	if state := m.moduleState(0); state != "UNAVAILABLE" {
 		t.Fatalf("gated row is %q, want UNAVAILABLE", state)
 	}
@@ -179,8 +185,12 @@ func TestNetExecRegistrationsUseTheAgreedLabels(t *testing.T) {
 	if state := m.moduleState(rowOf(t, m, "smb-gpp-password")); state != "" {
 		t.Fatalf("a read-only credential discovery module is %q, want no suffix", state)
 	}
-	if state := m.moduleState(rowOf(t, m, "smb-lsassy")); state != "UNAVAILABLE" {
-		t.Fatalf("a gated dumping module is %q, want UNAVAILABLE", state)
+	// UNAVAILABLE is reserved for a capability the registered command cannot
+	// complete: here, a module that needs the operator to name an object.
+	m.setCategory(0) // Enumeration
+	m.setProtocol(0) // LDAP
+	if state := m.moduleState(rowOf(t, m, "daclread")); state != "UNAVAILABLE" {
+		t.Fatalf("daclread is %q until its target is configured, want UNAVAILABLE", state)
 	}
 }
 
@@ -226,16 +236,16 @@ func TestNavigationNeverProbesTheExecutable(t *testing.T) {
 	}
 }
 
-// A stays scoped to the category in view, and the categories that hold
-// state-changing modules are not eligible for it at all. Enter and R keep
-// running exactly what the operator pointed at.
+// A stays scoped to the visible NetExec enumeration scope: a category-wide run
+// started from Credential Dumping is refused, because that is not what the key
+// means. Enter and R keep running exactly what the operator pointed at.
 func TestScopeWideRunStaysInsideEnumeration(t *testing.T) {
-	registered := append(netexec.EnumerationModules(), netexec.PrivilegeEscalationModules()...)
+	registered := append(netexec.EnumerationModules(), netexec.CredentialDumpingModules()...)
 	m := statusModel(t, registered)
-	m.setCategory(categoryIndex(t, m, modules.CategoryPrivilegeEscalation))
+	m.setCategory(categoryIndex(t, m, modules.CategoryCredentialDumping))
 	press(t, m, "a")
 	if m.running {
-		t.Fatal("A started a category-wide run in a category that holds state-changing modules")
+		t.Fatal("A started a category-wide run outside the enumeration scope")
 	}
 	if !strings.Contains(m.status, "inactive") {
 		t.Fatalf("the refusal was not reported: %q", m.status)

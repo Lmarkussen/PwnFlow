@@ -65,7 +65,11 @@ func Protocols() []Protocol {
 func CategoriesForFamily(family ToolFamily) []Category {
 	switch family {
 	case ToolFamilyNetExec:
-		return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation}
+		// NetExec is an enumeration and auditing integration. Its registrations
+		// read the target or export material for offline auditing, so the
+		// navigation offers the two categories those belong to and no
+		// exploitation category with nothing legitimate in it.
+		return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping}
 	case ToolFamilyADCS:
 		return []Category{CategoryEnumeration, Category("Configuration Auditing"), CategoryPrivilegeEscalation}
 	case ToolFamilyActiveDirectory:

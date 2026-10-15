@@ -42,13 +42,11 @@ func TestLiveLabReadOnlyEnumeration(t *testing.T) {
 	runtime := &modules.Runtime{
 		Target: target, Domain: domain, Username: user, Password: password, ResultsRoot: root,
 		ModuleOptions: map[string]map[string]string{
-			"find-computer":         {"TEXT": "DC"},
-			"daclread":              {"ACTION": "read", "TARGET": "Domain Admins"},
-			"groupmembership":       {"USER": user},
-			"smb-reg-query":         {"PATH": `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`, "KEY": "ProductName"},
-			"smb-test-connection":   {"HOST": "127.0.0.1"},
-			"smb-wcc":               {"OUTPUT": root + "/wcc.json", "OUTPUT_FORMAT": "text"},
-			"mssql-test-connection": {"HOST": "127.0.0.1"},
+			"find-computer":   {"TEXT": "DC"},
+			"daclread":        {"TARGET": "Domain Admins"},
+			"groupmembership": {"USER": user},
+			"smb-reg-query":   {"KEY": "ProductName"},
+			"smb-wcc":         {"OUTPUT_FORMAT": "text"},
 		},
 	}
 	byID := map[string]Module{}
@@ -86,28 +84,25 @@ func TestLiveLabReadOnlyEnumeration(t *testing.T) {
 // without collecting credential material.
 var liveReadOnlyModules = []string{
 	// LDAP enumeration, native queries and modules.
-	"domain-users", "active-users", "domain-groups", "domain-computers", "domain-sid",
+	"domain-users", "active-users", "domain-groups", "domain-sid",
 	"password-policy", "fine-grained-password-policy", "admin-count", "password-not-required",
-	"delegation", "trusted-for-delegation", "domain-controllers", "maq", "adcs", "badsuccessor",
+	"delegation", "domain-controllers", "maq", "adcs", "badsuccessor",
 	"dns-nonsecure", "dump-computers", "entra-id", "get-network", "groupmembership",
 	"obsolete", "sccm", "subnets", "whoami", "find-computer", "daclread",
 	// SMB enumeration, native queries and modules.
-	"smb-server-info", "smb-shares", "smb-disks", "smb-domain-users", "smb-domain-groups",
-	"smb-domain-computers", "smb-password-policy", "smb-local-groups", "smb-sessions",
-	"logged-on-users", "terminal-sessions", "running-processes", "network-interfaces",
+	"smb-server-info", "smb-shares", "smb-disks", "smb-local-groups", "smb-sessions",
+	"logged-on-users", "registry-sessions", "terminal-sessions", "running-processes",
 	"smb-enum-av", "smb-enum-ca", "smb-gpp-privileges", "smb-ioxidresolver", "smb-spooler",
 	"smb-webdav", "smb-nopac", "smb-ntlm-reflection", "smb-sccm-recon6", "smb-smbghost",
 	"smb-remove-mic", "smb-printnightmare", "smb-zerologon", "smb-ms17-010", "smb-bitlocker",
-	"smb-enum-interfaces", "smb-get-netconnections", "smb-hyperv-host", "smb-install-elevated",
+	"smb-enum-interfaces", "smb-enum-dns", "smb-get-netconnections", "smb-hyperv-host", "smb-install-elevated",
 	"smb-keepass-discover", "smb-lockscreendoors", "smb-ntlmv1", "smb-presence", "smb-reg-query",
-	"smb-runasppl", "smb-test-connection", "smb-uac", "smb-wcc",
+	"smb-runasppl", "smb-uac", "smb-wcc",
 	// Every other protocol: the credential check, plus whatever read-only
 	// enumeration that protocol advertises.
-	"winrm-auth-check", "wmi-auth-check", "wmi-ioxidresolver", "wmi-spooler", "wmi-zerologon",
-	"wmi-list-snapshots",
-	"wmi-bitlocker", "wmi-enum-dns", "wmi-get-netconnections",
-	"mssql-auth-check", "mssql-databases", "mssql-enum-logins", "mssql-enum-links", "mssql-rid-brute",
-	"mssql-enum-impersonate", "mssql-test-connection",
+	"winrm-auth-check", "wmi-auth-check", "wmi-list-snapshots",
+	"mssql-auth-check", "mssql-databases", "mssql-enum-logins", "mssql-enum-links",
+	"mssql-enum-impersonate",
 	"ssh-auth-check", "ssh-sudo-check", "ftp-auth-check", "ftp-list", "rdp-auth-check",
 	"vnc-auth-check", "nfs-auth-check", "nfs-shares",
 }
@@ -125,17 +120,11 @@ func TestLiveScopeExcludesCredentialAndEscalationModules(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s is not registered", id)
 		}
-		if entry.Category() != modules.CategoryEnumeration && entry.Category() != modules.CategoryPrivilegeEscalation {
+		if entry.Category() != modules.CategoryEnumeration {
 			t.Fatalf("%s is in %s and must not be part of the live read-only scope", id, entry.Category())
-		}
-		if entry.Category() == modules.CategoryPrivilegeEscalation && !entry.ReadOnly() {
-			t.Fatalf("%s changes state and must not be part of the live read-only scope", id)
 		}
 		if entry.definition.SensitivityValue == modules.SensitivitySensitive {
 			t.Fatalf("%s handles credential material and needs an explicit approval, not this test", id)
-		}
-		if !entry.ExecutionEnabled() {
-			t.Fatalf("%s is gated and must not be part of the live read-only scope", id)
 		}
 	}
 }

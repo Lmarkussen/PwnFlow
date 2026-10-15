@@ -21,13 +21,10 @@ const (
 func testRuntime() *modules.Runtime {
 	return &modules.Runtime{
 		Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret",
+		ResultsRoot: "/tmp/pwnflow-results",
 		ModuleOptions: map[string]map[string]string{
-			"smb-reg-query":       {"PATH": `HKLM\SOFTWARE\Microsoft`},
-			"find-computer":       {"TEXT": "SQL"},
-			"daclread":            {"ACTION": "read", "TARGET": "Domain Admins"},
-			"smb-test-connection": {"HOST": "127.0.0.1"},
-			"smb-wcc":             {"OUTPUT": "/tmp/wcc.json"},
-			"smb-spider-plus":     {"OUTPUT_FOLDER": "/tmp/spider"},
+			"find-computer": {"TEXT": "SQL"},
+			"daclread":      {"TARGET": "Domain Admins"},
 		},
 	}
 }
@@ -161,23 +158,23 @@ func TestModuleOptionsBecomeStructuredDashOArguments(t *testing.T) {
 }
 
 func TestRequiredModuleOptionMakesTheModuleUnavailableUntilItIsConfigured(t *testing.T) {
-	entry := findModule(t, "smb-reg-query")
+	entry := findModule(t, "daclread")
 	without := &modules.Runtime{Target: testTarget, Domain: testDomain, Username: "u", Password: "p"}
 	if status := entry.Status(without); status != modules.StatusUnavailable {
 		t.Fatalf("status without the option = %v, want unavailable", status)
 	}
 	reason := entry.StatusReason(without)
-	if !strings.Contains(reason, "PATH") || !strings.Contains(reason, "--module-options smb-reg-query=") {
+	if !strings.Contains(reason, "TARGET") || !strings.Contains(reason, "--module-options daclread=TARGET") {
 		t.Fatalf("reason does not tell the operator how to configure it: %q", reason)
 	}
 	installFakeNXC(t, `#!/bin/sh
 case "$1 $2" in
-  "smb --help") echo "--port --shares"; exit 0 ;;
-  "smb -L") printf 'LOW PRIVILEGE MODULES\nENUMERATION\n[*] reg-query   Performs a registry query on the machine\n'; exit 0 ;;
+  "ldap --help") echo "--port --users"; exit 0 ;;
+  "ldap -L") printf 'LOW PRIVILEGE MODULES\nENUMERATION\n[*] daclread   Read and backup the DACL of objects\n'; exit 0 ;;
 esac
 exit 0
 `)
-	if err := entry.Check(context.Background(), without); err == nil || !strings.Contains(err.Error(), "PATH") {
+	if err := entry.Check(context.Background(), without); err == nil || !strings.Contains(err.Error(), "TARGET") {
 		t.Fatalf("Check allowed a module whose required option is missing: %v", err)
 	}
 	if status := entry.Status(testRuntime()); status == modules.StatusUnavailable {
@@ -198,23 +195,28 @@ func TestAdminRequiredIsInformationalAndNeverBlocks(t *testing.T) {
 	if reason := entry.StatusReason(testRuntime()); !strings.Contains(reason, "local administrator") {
 		t.Fatalf("the requirement does not name the right: %q", reason)
 	}
-	if !entry.ExecutionEnabled() {
-		t.Fatal("an ADMIN-REQ module was disabled; the label must not block execution")
-	}
 }
 
-func TestUnavailableTakesPrecedenceOverAdminRequired(t *testing.T) {
+// ADMIN-REQ is a label, not a gate: nothing in the registry refuses to run, or is
+// hidden, because it needs elevated rights on the target.
+func TestAdminRequiredNeverBlocksExecution(t *testing.T) {
+	admin := 0
 	for _, module := range RegisteredModules() {
 		entry := module.(Module)
-		if !entry.definition.AdminRequiredValue || entry.ExecutionEnabled() {
+		if !entry.definition.AdminRequiredValue {
 			continue
 		}
-		if status := entry.Status(testRuntime()); status != modules.StatusUnavailable {
-			t.Fatalf("%s needs admin and is gated; status = %v, want unavailable", entry.ID(), status)
+		admin++
+		if status := entry.Status(testRuntime()); status != modules.StatusAdminRequired {
+			t.Fatalf("%s needs admin but reports %v", entry.ID(), status)
 		}
-		return
+		if _, ok := any(entry).(modules.ExecutionPolicy); ok {
+			t.Fatalf("%s carries an execution policy; ADMIN-REQ must not gate anything", entry.ID())
+		}
 	}
-	t.Fatal("no gated module also declares an administrative requirement")
+	if admin == 0 {
+		t.Fatal("no registration declares an administrative requirement")
+	}
 }
 
 // A module the installed build does not advertise is unavailable, and the
@@ -334,7 +336,8 @@ func TestDetailLinesDescribeTransportAndPrivilege(t *testing.T) {
 		t.Fatalf("smb-bitlocker details = %s", bitlocker)
 	}
 	dacl := strings.Join(findModule(t, "daclread").DetailLines(runtime), "\n")
-	if !strings.Contains(dacl, "Configured options: ACTION=read, TARGET=Domain Admins") {
+	if !strings.Contains(dacl, "Configured options: TARGET=Domain Admins") ||
+		!strings.Contains(dacl, "Default options: ACTION=read") {
 		t.Fatalf("configured options are not reported: %s", dacl)
 	}
 	vnc := strings.Join(findModule(t, "vnc-auth-check").DetailLines(runtime), "\n")

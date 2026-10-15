@@ -30,11 +30,6 @@ func LDAPEnumerationModules() []modules.Module {
 			args:        []string{"--groups"}, output: "LDAP_domain_groups.txt",
 		},
 		{
-			id: "domain-computers", name: "Enumerate Domain Computers",
-			description: "Lists computer accounts through the --computers native query.",
-			args:        []string{"--computers"}, output: "LDAP_domain_computers.txt",
-		},
-		{
 			id: "domain-sid", name: "Get Domain SID",
 			description: "Reads the domain SID with --get-sid, which later queries and ACL comparisons need.",
 			args:        []string{"--get-sid"}, output: "LDAP_domain_sid.txt",
@@ -65,11 +60,6 @@ func LDAPEnumerationModules() []modules.Module {
 			args:        []string{"--find-delegation"}, output: "LDAP_delegation.txt",
 		},
 		{
-			id: "trusted-for-delegation", name: "Enumerate Trusted for Delegation",
-			description: "Lists objects flagged trusted-for-delegation, including unconstrained and constrained delegation targets.",
-			args:        []string{"--trusted-for-delegation"}, output: "LDAP_trusted_for_delegation.txt",
-		},
-		{
 			id: "domain-controllers", name: "Enumerate Domain Controllers",
 			description: "Lists domain controllers through --dc-list, which identifies the hosts a later stage may target.",
 			args:        []string{"--dc-list"}, output: "LDAP_domain_controllers.txt",
@@ -96,7 +86,7 @@ func LDAPEnumerationModules() []modules.Module {
 		},
 		{
 			id: "dump-computers", name: "Dump Computer OS Information",
-			description: "Dumps the FQDN and operating system of every computer in the domain through -M dump-computers.",
+			description: "Dumps the FQDN and operating system of every computer in the domain through -M dump-computers, which is strictly more informative than the plain computer list.",
 			module:      "dump-computers",
 		},
 		{
@@ -111,8 +101,11 @@ func LDAPEnumerationModules() []modules.Module {
 		},
 		{
 			id: "groupmembership", name: "Query Group Membership",
-			description: "Queries the groups a named user belongs to through -M groupmembership, which is how nested group membership becomes visible. The module refuses to run without the user it should query, so the operator supplies it with --module-options.",
-			module:      "groupmembership", options: []string{"USER"}, required: []string{"USER"},
+			description: "Queries the groups a user belongs to through -M groupmembership, which is how nested group membership becomes visible. It defaults to the account PwnFlow authenticated with; -o USER names another account.",
+			module:      "groupmembership", options: []string{"USER"},
+			dynamicOptions: map[string]func(*modules.Runtime) string{
+				"USER": func(runtime *modules.Runtime) string { return runtime.Username },
+			},
 		},
 		{
 			id: "obsolete", name: "Find Obsolete Operating Systems",
@@ -136,10 +129,11 @@ func LDAPEnumerationModules() []modules.Module {
 		},
 		{
 			id: "daclread", name: "Read Object DACL",
-			description: "Reads the discretionary access control list of one object through -M daclread. Needs the operator to name the target via --module-options; daclread reads one object at a time and never recurses.",
-			module:      "daclread",
-			options:     []string{"TARGET", "TARGET_DN", "PRINCIPAL", "ACTION", "ACE_TYPE", "RIGHTS", "RIGHTS_GUID"},
-			required:    []string{"ACTION", "TARGET"},
+			description:    "Reads the discretionary access control list of one object through -M daclread. Needs the operator to name the target via --module-options; daclread reads one object at a time and never recurses.",
+			module:         "daclread",
+			options:        []string{"TARGET", "TARGET_DN", "PRINCIPAL", "ACTION", "ACE_TYPE", "RIGHTS", "RIGHTS_GUID"},
+			required:       []string{"ACTION", "TARGET"},
+			optionDefaults: map[string]string{"ACTION": "read"},
 		},
 		{
 			id: "find-computer", name: "Find Computers by Text",
@@ -192,23 +186,6 @@ func LDAPCredentialDumpingModules() []modules.Module {
 			id: "gmsa", name: "Enumerate GMSA Passwords",
 			description: "Reads the managed password of group managed service accounts through the --gmsa native query. Reading a gMSA password requires the directory right granted to the principal.",
 			args:        []string{"--gmsa"}, sensitive: true,
-		},
-	})
-}
-
-// LDAPPrivilegeEscalationModules create directory objects or abuse trust
-// relationships. Both are gated.
-func LDAPPrivilegeEscalationModules() []modules.Module {
-	return level(modules.CategoryPrivilegeEscalation, modules.ProtocolLDAP, []entry{
-		{
-			id: "pre2k", name: "Pre-Created Computer Accounts",
-			description: "Finds pre-created computer accounts, saves the results, and requests a TGT for each account whose password matches the computer name through -M pre2k. " + gateStateChange + ".",
-			module:      "pre2k", gated: gateStateChange, sensitive: true,
-		},
-		{
-			id: "raisechild", name: "Raise Child Domain to Parent",
-			description: "Compromises a parent domain from a child domain by abusing the trust through -M raisechild. " + gateExecution + "; needs " + adminDomain + " in the child domain.",
-			module:      "raisechild", gated: gateExecution, admin: adminDomain, sensitive: true,
 		},
 	})
 }

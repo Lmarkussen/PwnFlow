@@ -69,12 +69,17 @@ type model struct {
 	outputRawChange     time.Time
 	outputWidth         int
 	outputModule        int
-	watcherViewport     viewport.Model
-	watcherFollow       bool
-	watcherContent      string
-	watcherRawChange    time.Time
-	watcherWidth        int
-	watcherModule       int
+	// moduleTop is the first module row the pane draws, and moduleRows is how
+	// many rows it can draw. The pair keeps the highlighted module on screen
+	// whatever the terminal height or the size of the scope.
+	moduleTop        int
+	moduleRows       int
+	watcherViewport  viewport.Model
+	watcherFollow    bool
+	watcherContent   string
+	watcherRawChange time.Time
+	watcherWidth     int
+	watcherModule    int
 }
 
 type tickMsg time.Time
@@ -190,12 +195,15 @@ func (m *model) filterModules() {
 			m.moduleKeys = append(m.moduleKeys, globalIndex)
 		}
 	}
-	if m.cursor >= len(m.modules) {
-		m.cursor = max(0, len(m.modules)-1)
-	}
+	// A different scope is a different list, so it starts at the top: a position
+	// carried over from another scope means nothing here, and keeping the old
+	// offset is what used to leave the highlight outside the pane.
+	m.cursor = 0
 	// Batch items and output buffers are keyed by the registry-wide index, so the
 	// watcher cursor is bounded by the registry rather than the visible scope.
 	m.watcherSelected = min(m.watcherSelected, max(0, len(m.allModules)-1))
+	m.moduleTop = 0
+	m.scrollModuleList()
 }
 
 // globalIndex maps a module row in the visible scope to its index in the

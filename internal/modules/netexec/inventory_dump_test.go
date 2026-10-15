@@ -53,12 +53,45 @@ func TestDumpInventoryTables(t *testing.T) {
 			}
 		}
 	}
+	// A machine-readable line per module with declared options, so the declared
+	// keys can be compared with `nxc <protocol> -M <module> --options`.
+	counts := map[string]int{}
+	for _, raw := range RegisteredModules() {
+		entry := raw.(Module)
+		counts[string(entry.Protocol())+" "+string(entry.Category())]++
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Printf("COUNT %s %d\n", key, counts[key])
+	}
+	names := make([]string, 0, len(byModule))
+	for protocol, entries := range byModule {
+		for name := range entries {
+			names = append(names, string(protocol)+" "+name)
+		}
+	}
+	sort.Strings(names)
+	for _, qualified := range names {
+		for protocol, entries := range byModule {
+			name := strings.TrimPrefix(qualified, string(protocol)+" ")
+			if name == qualified {
+				continue
+			}
+			entry, ok := entries[name]
+			if !ok {
+				continue
+			}
+			fmt.Printf("OPTIONS %s %s %s\n", protocol, name, strings.Join(entry.definition.OptionKeys, ","))
+		}
+	}
 }
 
 func privilege(entry Module) string {
 	switch {
-	case !entry.ExecutionEnabled():
-		return "gated"
 	case entry.definition.AdminRequiredValue:
 		return "ADMIN-REQ"
 	default:

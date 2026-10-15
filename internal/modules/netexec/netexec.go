@@ -56,7 +56,18 @@ type Definition struct {
 	// UNAVAILABLE and refuses to run, rather than being registered with a
 	// placeholder argument.
 	RequiredOptions []string
-	OutputValue     string
+	// OptionDefaults are fixed values PwnFlow passes when the operator has not
+	// supplied one. They exist so a module with an obvious starting point - the
+	// registry key that names the operating system, the read action of a DACL
+	// query - is usable out of the box and still overridable.
+	OptionDefaults map[string]string
+	// DynamicOptions compute their default from the runtime: the assessment's own
+	// output tree, or the account the operator authenticated with.
+	DynamicOptions map[string]func(*modules.Runtime) string
+	// DynamicArgs contribute arguments that depend on the runtime, such as the
+	// file an exported hash list has to be written to.
+	DynamicArgs func(*modules.Runtime) []string
+	OutputValue string
 	// PrerequisiteValues and RequiredPrivilegeValues describe the environment.
 	PrerequisiteValues      []string
 	RequiredPrivilegeValues []string
@@ -65,13 +76,8 @@ type Definition struct {
 	// distinguish a local administrator from a domain administrator.
 	AdminRequiredValue bool
 	AdminReasonValue   string
-	// GatedReason marks a registration whose execution is deliberately withheld:
-	// state-changing, remote-execution, credential-dumping or coercing modules
-	// that must not be swept into a category-wide batch. The reason names what
-	// has to happen before the module may run.
-	GatedReasonValue string
-	SensitivityValue modules.Sensitivity
-	ReadOnlyValue    bool
+	SensitivityValue   modules.Sensitivity
+	ReadOnlyValue      bool
 }
 
 type Module struct{ definition Definition }
@@ -111,13 +117,6 @@ func (m Module) OptionKeys() []string {
 // can compare the registry against `nxc <protocol> -L`.
 func (m Module) ModuleName() string { return m.definition.ModuleName }
 
-// ExecutionEnabled implements modules.ExecutionPolicy. A gated registration is
-// listed with its requirement and is refused by Check, so it can never be swept
-// into a batch that happens to include its category.
-func (m Module) ExecutionEnabled() bool { return m.definition.GatedReasonValue == "" }
-
-func (m Module) AvailabilityReason() string { return m.definition.GatedReasonValue }
-
 // AdminRequired reports whether the module needs elevated rights on the target
 // and what those rights are. It is informational only.
 func (m Module) AdminRequired() (bool, string) {
@@ -134,10 +133,10 @@ func (m Module) AdminRequired() (bool, string) {
 // Status implements modules.StatusProvider. It reads only the cached capability
 // snapshot, because the TUI asks for it while a frame is rendered.
 func (m Module) Status(runtime *modules.Runtime) modules.Status {
-	if !m.ExecutionEnabled() {
+	if reason := m.missingOptionReason(runtime); reason != "" {
 		return modules.StatusUnavailable
 	}
-	if reason := m.missingOptionReason(runtime); reason != "" {
+	if reason := m.missingArgumentReason(runtime); reason != "" {
 		return modules.StatusUnavailable
 	}
 	if !m.capabilitySupported() {
@@ -152,10 +151,10 @@ func (m Module) Status(runtime *modules.Runtime) modules.Status {
 // StatusReason explains a StatusUnavailable result. For an ADMIN-REQ row it
 // returns the elevated right the module needs, so Module Information can name it.
 func (m Module) StatusReason(runtime *modules.Runtime) string {
-	if !m.ExecutionEnabled() {
-		return m.definition.GatedReasonValue
-	}
 	if reason := m.missingOptionReason(runtime); reason != "" {
+		return reason
+	}
+	if reason := m.missingArgumentReason(runtime); reason != "" {
 		return reason
 	}
 	if reason := m.capabilityReason(); reason != "" {
@@ -168,17 +167,57 @@ func (m Module) StatusReason(runtime *modules.Runtime) string {
 }
 
 func (m Module) missingOptionReason(runtime *modules.Runtime) string {
-	missing := make([]string, 0, len(m.definition.RequiredOptions))
-	for _, key := range m.definition.RequiredOptions {
-		if _, ok := runtime.ModuleOption(m.ID(), key); !ok {
-			missing = append(missing, key)
-		}
-	}
+	missing := m.missingOptionValues(runtime)
 	if len(missing) == 0 {
 		return ""
 	}
 	return fmt.Sprintf("requires the operator-supplied module option %s; set it with --module-options %s=%s=VALUE",
 		strings.Join(missing, ", "), m.ID(), strings.Join(missing, ","))
+}
+
+// missingOptionValues reports the required option keys that neither the operator
+// nor a default has supplied.
+func (m Module) missingOptionValues(runtime *modules.Runtime) []string {
+	missing := make([]string, 0, len(m.definition.RequiredOptions))
+	for _, key := range m.definition.RequiredOptions {
+		if _, ok := m.optionValue(runtime, key); !ok {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+// missingArgumentReason reports an argument the registration cannot build from
+// the runtime it was given - currently an export path with no assessment root to
+// put it in. A module in that state refuses to run instead of issuing a flag
+// whose value never arrived, which the target would reject with a syntax error.
+func (m Module) missingArgumentReason(runtime *modules.Runtime) string {
+	if m.definition.DynamicArgs == nil {
+		return ""
+	}
+	if len(m.definition.DynamicArgs(runtime)) > 0 {
+		return ""
+	}
+	return "requires the assessment results root, which PwnFlow supplies from the project directory"
+}
+
+// optionValue resolves one option: the operator's value first, then the
+// registration's default, then the runtime-derived default. A key with any of
+// those is not missing, which is what keeps a module with a sensible default out
+// of the unavailable list.
+func (m Module) optionValue(runtime *modules.Runtime, key string) (string, bool) {
+	if value, ok := runtime.ModuleOption(m.ID(), key); ok {
+		return value, true
+	}
+	if compute, ok := m.definition.DynamicOptions[key]; ok {
+		if value := compute(runtime); value != "" {
+			return value, true
+		}
+	}
+	if value, ok := m.definition.OptionDefaults[key]; ok && value != "" {
+		return value, true
+	}
+	return "", false
 }
 
 func (m Module) capabilityReason() string {
@@ -188,8 +227,9 @@ func (m Module) capabilityReason() string {
 func (m Module) capabilitySupported() bool { return m.capabilityReason() == "" }
 
 // Check validates the registration against the installed executable before
-// anything runs. Capability problems are reported before the policy gate, so a
-// module that is gated and also unsupported says so accurately.
+// anything runs: the module has to exist in the installed build, the operator has
+// to have supplied what it needs, and the runtime has to be able to build its
+// arguments.
 func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if runtime == nil || strings.TrimSpace(runtime.Target) == "" || strings.TrimSpace(runtime.Domain) == "" {
 		return fmt.Errorf("runtime target and domain are required")
@@ -204,7 +244,7 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if reason := m.missingOptionReason(runtime); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
-	if reason := m.definition.GatedReasonValue; reason != "" {
+	if reason := m.missingArgumentReason(runtime); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
 	return nil
@@ -235,7 +275,15 @@ func (m Module) RefreshDetails(ctx context.Context, runtime *modules.Runtime) {
 // while never printing the operator's runtime password.
 func (m Module) CommandPreview(runtime *modules.Runtime) string {
 	args := m.CommandArgs(runtime)
+	// The preview never carries the runtime password, and it never shows an empty
+	// password position either: the operator reads this line to see which protocol
+	// and flags a module uses, so the credential is always marked, whatever the
+	// runtime happens to hold.
 	for index, argument := range args {
+		if index > 0 && args[index-1] == "-p" {
+			args[index] = "[REDACTED]"
+			continue
+		}
 		if argument == runtime.Password && argument != "" {
 			args[index] = "[REDACTED]"
 		}
@@ -256,26 +304,32 @@ func (m Module) DetailLines(runtime *modules.Runtime) []string {
 	if len(m.definition.OptionKeys) > 0 {
 		lines = append(lines, "Module options: "+strings.Join(m.definition.OptionKeys, ", "))
 	}
-	if len(m.definition.RequiredOptions) > 0 {
-		configured := make([]string, 0, len(m.definition.RequiredOptions))
-		for _, key := range m.definition.RequiredOptions {
-			if value, ok := runtime.ModuleOption(m.ID(), key); ok {
-				configured = append(configured, key+"="+value)
-			}
+	configured := make([]string, 0, len(m.definition.OptionKeys))
+	defaulted := make([]string, 0, len(m.definition.OptionKeys))
+	for _, key := range m.definition.OptionKeys {
+		value, ok := m.optionValue(runtime, key)
+		if !ok {
+			continue
 		}
-		if len(configured) == 0 {
-			lines = append(lines, "Required options not configured: "+strings.Join(m.definition.RequiredOptions, ", "))
+		if _, fromOperator := runtime.ModuleOption(m.ID(), key); fromOperator {
+			configured = append(configured, key+"="+value)
 		} else {
-			lines = append(lines, "Configured options: "+strings.Join(configured, ", "))
+			defaulted = append(defaulted, key+"="+value)
 		}
+	}
+	if len(configured) > 0 {
+		lines = append(lines, "Configured options: "+strings.Join(configured, ", "))
+	}
+	if len(defaulted) > 0 {
+		lines = append(lines, "Default options: "+strings.Join(defaulted, ", "))
+	}
+	if missing := m.missingOptionValues(runtime); len(missing) > 0 {
+		lines = append(lines, "Required options not configured: "+strings.Join(missing, ", "))
 	}
 	if admin, reason := m.AdminRequired(); admin {
 		lines = append(lines, "Target privilege: ADMIN-REQ ("+reason+")")
 	} else {
 		lines = append(lines, "Target privilege: none beyond valid credentials")
-	}
-	if !m.ExecutionEnabled() {
-		lines = append(lines, "Execution: gated - "+m.definition.GatedReasonValue)
 	}
 	return lines
 }
@@ -349,6 +403,9 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 		args = append(args, "-d", runtime.Domain)
 	}
 	args = append(args, m.definition.Arguments...)
+	if m.definition.DynamicArgs != nil {
+		args = append(args, m.definition.DynamicArgs(runtime)...)
+	}
 	if m.definition.ModuleName != "" {
 		args = append(args, "-M", m.definition.ModuleName)
 	}
@@ -363,7 +420,7 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 func (m Module) optionArgs(runtime *modules.Runtime) []string {
 	values := make([]string, 0, len(m.definition.OptionKeys))
 	for _, key := range m.definition.OptionKeys {
-		if value, ok := runtime.ModuleOption(m.ID(), key); ok {
+		if value, ok := m.optionValue(runtime, key); ok {
 			values = append(values, key+"="+value)
 		}
 	}
@@ -419,7 +476,7 @@ func RegisteredModules() []modules.Module {
 		WMIEnumerationModules, MSSQLEnumerationModules, SSHEnumerationModules,
 		FTPEnumerationModules, RDPEnumerationModules, VNCEnumerationModules,
 		NFSEnumerationModules,
-		CredentialAuditingModules, CredentialDumpingModules, PrivilegeEscalationModules,
+		CredentialAuditingModules, CredentialDumpingModules,
 	}
 	result := make([]modules.Module, 0)
 	for _, builder := range builders {

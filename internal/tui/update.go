@@ -81,6 +81,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.resizeWatcher()
 		m.resizeOutput()
+		// A resize changes how many module rows fit, so the window is recomputed
+		// to keep the highlighted module inside the pane.
+		m.scrollModuleList()
 	case tickMsg:
 		quit := m.syncBatch()
 		m.refreshWatcher()
@@ -286,18 +289,25 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.moveModuleCursor(-1)
 	case "down", "j":
-		if m.cursor < len(m.modules)-1 {
-			m.cursor++
-		}
+		m.moveModuleCursor(1)
+	case "pgup", "ctrl+u":
+		m.pageModuleCursor(-1)
+	case "pgdown", "ctrl+d":
+		m.pageModuleCursor(1)
+	case "home":
+		m.goModuleEdge(false)
+	case "end":
+		m.goModuleEdge(true)
 	case " ":
 		if len(m.modules) > 0 {
 			moduleID := m.modules[m.cursor].ID()
 			m.selectedModules[moduleID] = !m.selectedModules[moduleID]
 			m.selected = m.cursor
+			// Toggling leaves the cursor where it is, so the window only has to
+			// be re-checked, not recomputed.
+			m.scrollModuleList()
 		}
 	case "enter":
 		if !m.running {
@@ -315,25 +325,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		if !m.running {
 			return m, m.executeAll()
-		}
-	case "pgup", "ctrl+u":
-		if m.watcher {
-			m.watcherFollow = false
-			m.watcherViewport.ViewUp()
-		}
-	case "pgdown", "ctrl+d":
-		if m.watcher {
-			m.watcherViewport.ViewDown()
-		}
-	case "end":
-		if m.watcher {
-			m.watcherFollow = true
-			m.watcherViewport.GotoBottom()
-		}
-	case "home":
-		if m.watcher {
-			m.watcherFollow = false
-			m.watcherViewport.GotoTop()
 		}
 	case "?":
 		m.status = helpText

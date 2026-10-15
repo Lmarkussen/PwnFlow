@@ -15,16 +15,32 @@ func (m *model) View() string {
 	}
 	width := max(16, (m.width-4)/2)
 	var left strings.Builder
-	left.WriteString(title.Render(fmt.Sprintf("PwnFlow v%s", m.version)) + "\n")
 	// The count is registry-wide, because R runs the selection across every tool
 	// family rather than only what the current scope shows.
 	modulesHeader := "ENUMERATION MODULES"
 	if selected := m.selectedCount(); selected > 0 {
 		modulesHeader = fmt.Sprintf("ENUMERATION MODULES // %d SELECTED", selected)
 	}
+	// The window is computed before the rows are written, so the pane shows the
+	// rows that contain the selection instead of being clipped from the bottom.
+	windowTop, windowRows := m.moduleWindow()
+	if len(m.modules) > windowRows {
+		modulesHeader = fmt.Sprintf("%s // %d-%d/%d", modulesHeader, windowTop+1, min(windowTop+windowRows, len(m.modules)), len(m.modules))
+	}
+	compact := m.modulePaneCompact()
+	if !compact {
+		left.WriteString(title.Render(fmt.Sprintf("PwnFlow v%s", m.version)) + "\n")
+	}
 	left.WriteString(paneHeader(modulesHeader, m.focus == focusModules, width) + "\n")
-	left.WriteString(fmt.Sprintf("TARGET: %s\nDOMAIN: %s\nUSER:   %s\nAUTH:   %s\n\n", m.cfg.Target, m.cfg.Domain, m.cfg.Username, lipgloss.NewStyle().Foreground(green).Render("OK")))
-	for i, module := range m.modules {
+	if compact {
+		// Too short for the full identity block: keep the values, spend the lines
+		// on module rows instead.
+		left.WriteString(fmt.Sprintf("TARGET: %s  DOMAIN: %s\nUSER: %s  AUTH: %s\n", m.cfg.Target, m.cfg.Domain, m.cfg.Username, lipgloss.NewStyle().Foreground(green).Render("OK")))
+	} else {
+		left.WriteString(fmt.Sprintf("TARGET: %s\nDOMAIN: %s\nUSER:   %s\nAUTH:   %s\n\n", m.cfg.Target, m.cfg.Domain, m.cfg.Username, lipgloss.NewStyle().Foreground(green).Render("OK")))
+	}
+	for i := windowTop; i < len(m.modules) && i < windowTop+windowRows; i++ {
+		module := m.modules[i]
 		mark := "[ ]"
 		if m.selectedModules[m.modules[i].ID()] {
 			mark = lipgloss.NewStyle().Foreground(green).Bold(true).Render("[x]")
@@ -38,16 +54,17 @@ func (m *model) View() string {
 		// UNAVAILABLE - have to stand out from the names beside them.
 		left.WriteString(strings.TrimRight(fmt.Sprintf("%s %-30s %s", mark, module.Name(), state), " ") + "\n")
 	}
-	left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
-	left.WriteString(dim.Render(wrapFooter(helpText, max(20, widthForFooter(m.width)))))
+	if !compact {
+		left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
+		if footer, _ := m.modulePaneLayout(); footer != "" {
+			left.WriteString(dim.Render(footer))
+		}
+	}
 	right := m.infoView()
 	navigation := m.navigationView()
-	navigationHeight := lipgloss.Height(navigation)
-	outputHeight := m.outputViewport.Height + 4
-	// Height is the content height for a styled pane. Reserve the border rows
-	// for both module panes so the navigation pane and output pane remain in
-	// the terminal instead of being clipped from the top or bottom.
-	topHeight := max(1, m.height-navigationHeight-outputHeight-2)
+	// The pane height is the same number modulePaneHeight used to decide how many
+	// module rows fit, so the list always ends above the pane's bottom border.
+	topHeight := m.modulePaneHeight()
 	leftPane := paneStyle(m.focus == focusModules).Width(width).Height(topHeight).MaxHeight(topHeight).Render(left.String())
 	rightPane := paneStyle(false).Width(width).Height(topHeight).MaxHeight(topHeight).Render(right)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)

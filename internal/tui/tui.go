@@ -30,9 +30,6 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	for _, module := range netexec.CredentialDumpingModules() {
 		registry.Register(module)
 	}
-	for _, module := range netexec.PrivilegeEscalationModules() {
-		registry.Register(module)
-	}
 	registry.Register(rusthound.Module{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)

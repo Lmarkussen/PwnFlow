@@ -6,19 +6,6 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
-// Gate reasons. A gated registration is listed with its requirement, shows
-// UNAVAILABLE, and refuses to run. They exist for modules that change state on
-// the target, execute code there, or export credential material: those must be
-// selected deliberately instead of being swept up by a category-wide run, and
-// they need a decision the operator has not been asked for yet.
-const (
-	gateStateChange    = "execution gated: this module changes state on the target"
-	gateExecution      = "execution gated: this module executes code or delivers a payload on the target"
-	gateCoercion       = "execution gated: this module coerces target authentication or writes lure files to shares"
-	gateCredentialDump = "execution gated: this module extracts credential material and needs an approved sensitive-artifact workflow"
-	gateKerberosTicket = "execution gated: exported Kerberos ticket material needs an approved sensitive-artifact workflow"
-)
-
 // entry is the authoring form of a registration. It keeps the tables readable:
 // every field an operator has to understand is visible on one line of the table.
 type entry struct {
@@ -44,8 +31,13 @@ type entry struct {
 	// admin names the elevated target-side right, empty when the module needs
 	// nothing beyond valid credentials.
 	admin string
-	// gated is one of the gate reasons above, empty for an executable module.
-	gated string
+	// optionDefaults and dynamicOptions pre-fill module options that have an
+	// obvious starting point, so the module is usable without the operator
+	// configuring anything first.
+	optionDefaults map[string]string
+	dynamicOptions map[string]func(*modules.Runtime) string
+	// dynamicArgs contribute runtime-dependent arguments.
+	dynamicArgs func(*modules.Runtime) []string
 	// sensitive marks a module whose output is credential material.
 	sensitive bool
 	// output overrides the derived artifact name. It is set for registrations
@@ -81,16 +73,19 @@ func (e entry) definition() Definition {
 		CategoryValue: e.category, ProtocolValue: e.protocol,
 		Arguments: e.args, ModuleName: e.module,
 		OptionKeys: e.options, RequiredOptions: e.required,
+		OptionDefaults: e.optionDefaults, DynamicOptions: e.dynamicOptions,
+		DynamicArgs: e.dynamicArgs,
 		OutputValue: output, PrerequisiteValues: prerequisites,
 		RequiredPrivilegeValues: privileges,
 		AdminRequiredValue:      e.admin != "",
 		AdminReasonValue:        e.admin,
-		GatedReasonValue:        e.gated,
 		SensitivityValue:        sensitivity,
-		// Every registration in the tables is non-destructive: the modules that
-		// do write, coerce, or execute are gated, and a gated module is listed
-		// under the category whose name says what it is.
-		ReadOnlyValue: e.gated == "" || e.gated == gateCredentialDump || e.gated == gateKerberosTicket,
+		// Every registration in the tables reads: it asks the target for
+		// information, or exports authentication material for offline auditing.
+		// Nothing here writes to the target, runs code on it, or starts a
+		// listener, which is why no registration needs a deeper guard than the
+		// category it is filed under.
+		ReadOnlyValue: true,
 	}
 }
 

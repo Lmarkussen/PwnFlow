@@ -69,10 +69,9 @@ func TestNetExecArtifactPathsFollowTheCategory(t *testing.T) {
 	cases := map[string]string{
 		"smb-shares":       "Enumeration/NetExec/SMB_shares.txt",
 		"smb-gpp-password": "CredentialDumping/NetExec/SMB_gpp_password.txt",
-		"kerberoasting":    "CredentialAuditing/NetExec/LDAP_kerberoasting/artifacts",
-		"smb-dpapi-hash":   "CredentialDumping/NetExec/SMB_dpapi_hash.txt",
-		"smb-add-computer": "PrivilegeEscalation/NetExec/SMB_add_computer.txt",
-		"pre2k":            "PrivilegeEscalation/NetExec/LDAP_pre2k.txt",
+		"asreproast":       "CredentialAuditing/NetExec/LDAP_asreproast/transcript.txt",
+		"kerberoasting":    "CredentialAuditing/NetExec/LDAP_kerberoasting/transcript.txt",
+		"get-desc-users":   "CredentialDumping/NetExec/LDAP_get_users_description.txt",
 	}
 	for id, want := range cases {
 		if got := findModule(t, id).OutputFile(); got != filepath.FromSlash(want) {
