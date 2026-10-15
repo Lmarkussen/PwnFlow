@@ -56,7 +56,7 @@ func (m *model) refreshOutput() {
 	global, _ := m.globalIndex(m.cursor)
 	if buffer == nil {
 		m.outputModule = global
-		m.outputContent = "No output yet. Press Enter to run this module."
+		m.outputContent = m.scheduledOutputMessage(global)
 		m.outputViewport.SetContent(m.outputContent)
 		return
 	}
@@ -74,6 +74,35 @@ func (m *model) refreshOutput() {
 	if m.outputFollow {
 		m.outputViewport.GotoBottom()
 	}
+}
+
+func (m *model) scheduledOutputMessage(global int) string {
+	if global < 0 {
+		return "No execution recorded for this module."
+	}
+	if m.batch != nil {
+		states, _, _, _ := m.batch.Snapshot()
+		for _, state := range states {
+			if state.Index != global {
+				continue
+			}
+			switch state.Status {
+			case "queued":
+				return "Queued in YOLO — awaiting execution."
+			case "running":
+				return "Execution started; waiting for output."
+			case "completed":
+				return "Execution completed with no captured output."
+			case "failed":
+				return "Execution failed with no captured output."
+			case "aborted":
+				return "Execution aborted; no output was captured."
+			case "cancelled":
+				return "Execution cancelled; no output was captured."
+			}
+		}
+	}
+	return "No execution recorded for this module."
 }
 
 // statusHeaderStyle is the style of the output pane header. A pending privilege

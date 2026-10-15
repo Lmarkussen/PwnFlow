@@ -36,6 +36,11 @@ type model struct {
 	findingSubcategories   []findingSubcategory
 	findingCategories      []findingCategory
 	findingAllRows         []storage.Finding
+	evidenceView           bool
+	evidenceLines          []string
+	evidenceTop            int
+	evidencePath           string
+	evidenceError          string
 	modules                []modules.Module
 	moduleIDs              []int64
 	moduleKeys             []int

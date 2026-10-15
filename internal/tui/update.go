@@ -494,6 +494,27 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if m.evidenceView {
+		switch key {
+		case "esc":
+			m.evidenceView = false
+		case "up", "k":
+			m.evidenceTop--
+		case "down", "j":
+			m.evidenceTop++
+		case "pgup":
+			m.evidenceTop -= m.findingPageSize()
+		case "pgdown":
+			m.evidenceTop += m.findingPageSize()
+		case "home":
+			m.evidenceTop = 0
+		case "end":
+			m.evidenceTop = len(m.evidenceLines) - m.findingPageSize()
+		}
+		maxTop := max(0, len(m.evidenceLines)-m.findingPageSize())
+		m.evidenceTop = min(max(0, m.evidenceTop), maxTop)
+		return m, nil
+	}
 	if m.findingSearchMode {
 		switch key {
 		case "enter", "esc":
@@ -622,6 +643,10 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.findingDetail {
 		switch key {
+		case "e":
+			if len(m.findingRows) > 0 {
+				m.openFindingEvidence(m.findingRows[m.findingCursor])
+			}
 		case "esc", "enter":
 			m.findingDetail = false
 		case "up", "k":

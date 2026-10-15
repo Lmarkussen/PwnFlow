@@ -56,20 +56,26 @@ var findingCategoryOrder = []struct {
 }
 
 func findingCategoryKey(finding storage.Finding) string {
-	typ := strings.ToLower(finding.FindingType + " " + finding.Title + " " + finding.SourceTool)
+	typ := strings.ToLower(strings.TrimSpace(finding.FindingType))
+	title := strings.ToLower(finding.Title)
+	source := strings.ToLower(finding.SourceTool)
 	switch {
-	case strings.Contains(typ, "pxethief"), strings.Contains(typ, "sccm"), strings.Contains(typ, "credential"):
-		return "credentials"
-	case strings.Contains(typ, "kerberoast"), strings.Contains(typ, "asrep"), strings.Contains(typ, "as-rep"), strings.Contains(typ, "kerberos"):
-		return "kerberos"
-	case strings.HasPrefix(typ, "ad_acl_"), strings.Contains(typ, "acl"):
+	case strings.HasPrefix(typ, "ad_acl_"):
 		return "acl"
-	case strings.Contains(typ, "adcs"), strings.Contains(typ, "certipy"), strings.Contains(typ, "certificate"):
+	case strings.HasPrefix(typ, "kerberoast"), strings.HasPrefix(typ, "asrep_"), strings.HasPrefix(typ, "kerberos_"):
+		return "kerberos"
+	case strings.HasPrefix(typ, "adcs_"):
 		return "adcs"
-	case strings.Contains(typ, "delegation"), strings.Contains(typ, "allowedtoact"):
+	case strings.HasPrefix(typ, "unconstrained_delegation"), strings.HasPrefix(typ, "constrained_delegation"), strings.HasPrefix(typ, "rbcd_"), strings.HasPrefix(typ, "delegation_"):
 		return "delegation"
-	case strings.Contains(typ, "relay"), strings.Contains(typ, "smb"), strings.Contains(typ, "ldap"), strings.Contains(typ, "signing"):
+	case strings.HasPrefix(typ, "sccm_"), strings.EqualFold(source, "pxethief"):
+		return "credentials"
+	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
 		return "network"
+	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
+		return "adcs"
+	case strings.Contains(title, "pxethief") || strings.Contains(title, "sccm task-sequence"):
+		return "credentials"
 	default:
 		return "other"
 	}
@@ -293,6 +299,9 @@ func severityRank(value string) int {
 
 func (m *model) findingsViewRender() string {
 	width := max(40, m.width-4)
+	if m.evidenceView {
+		return m.evidenceViewRender(width)
+	}
 	if m.findingCategoryView {
 		if m.findingSubcategoryView {
 			return m.findingSubcategoryOverview(width)
@@ -322,7 +331,7 @@ func (m *model) findingsViewRender() string {
 		content.WriteString(fmt.Sprintf("Source: %s  Execution: %d\n", finding.SourceTool, finding.SourceExecution))
 		content.WriteString(fmt.Sprintf("Evidence: %s %s\n", finding.ArtifactPath, finding.ArtifactRef))
 		content.WriteString(fmt.Sprintf("\nCondition: %s\n\nImpact: %s\n\nRemediation: %s\n\nConfidence/limitations: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(findingImpact(finding), width-4), wrapPaneText(findingRemediation(finding), width-4), wrapPaneText(finding.Confidence, width-4)))
-		content.WriteString(dim.Render("Esc Back   Up/Down Change finding"))
+		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
 	if len(m.findingRows) == 0 {
@@ -347,6 +356,24 @@ func (m *model) findingsViewRender() string {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}
 	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze Certipy   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) evidenceViewRender(width int) string {
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // ORIGINAL EVIDENCE") + "\n")
+	content.WriteString(dim.Render("Unmodified local artifact: "+m.evidencePath) + "\n\n")
+	if m.evidenceError != "" {
+		content.WriteString(warn.Render(m.evidenceError) + "\n")
+	} else {
+		page := max(1, m.findingPageSize())
+		end := min(len(m.evidenceLines), m.evidenceTop+page)
+		for index := m.evidenceTop; index < end; index++ {
+			content.WriteString(fmt.Sprintf("%6d  %s\n", index+1, m.evidenceLines[index]))
+		}
+		content.WriteString(fmt.Sprintf("\nLines %d-%d of %d", min(m.evidenceTop+1, len(m.evidenceLines)), end, len(m.evidenceLines)))
+	}
+	content.WriteString(dim.Render("\n\nUp/Down PageUp/PageDown   Esc Back to Finding"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

@@ -2,12 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
@@ -198,5 +201,52 @@ func TestGlobalVisibleFindingsGroupsACLRecordsOnly(t *testing.T) {
 	grouped := groupVisibleFindings(rows)
 	if len(grouped) != 2 || !strings.HasPrefix(grouped[0].FindingType, "ad_acl_group") {
 		t.Fatalf("unexpected global grouping: %#v", grouped)
+	}
+}
+
+func TestOriginalEvidenceViewerPreservesSyntheticSecretAndRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(artifactDir, "material.log")
+	original := "$krb5tgs$fictional-ticket\nOSDJoinPassword=fictional-password\n"
+	if err := os.WriteFile(artifact, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := &model{cfg: config.Config{Root: root, Domain: "example.test"}, findingsView: true, findingDetail: true, findingRows: []storage.Finding{{FindingInput: storage.FindingInput{ArtifactPath: "artifacts/material.log"}}}, width: 100, height: 24}
+	model.handleFindingsKey("e")
+	if model.evidenceError != "" || !strings.Contains(strings.Join(model.evidenceLines, "\n"), "fictional-password") {
+		t.Fatalf("evidence was not shown faithfully: %q", model.evidenceError)
+	}
+	data, err := os.ReadFile(artifact)
+	if err != nil || string(data) != original {
+		t.Fatal("evidence artifact changed")
+	}
+	if err := os.Symlink(artifact, filepath.Join(artifactDir, "link.log")); err != nil {
+		t.Fatal(err)
+	}
+	model.openFindingEvidence(storage.Finding{FindingInput: storage.FindingInput{ArtifactPath: "artifacts/link.log"}})
+	if !strings.Contains(model.evidenceError, "symlink") {
+		t.Fatalf("symlink was not rejected: %q", model.evidenceError)
+	}
+}
+
+func TestFindingCategoryUsesStableDetectorIdentity(t *testing.T) {
+	cases := []struct{ typ, source, want string }{
+		{"ad_acl_addkeycredentiallink", "RustHound-CE", "acl"},
+		{"ad_acl_genericwrite", "RustHound-CE", "acl"},
+		{"kerberos_ticket_material_collected", "NetExec", "kerberos"},
+		{"sccm_task_sequence_credentials_exposed", "PXEThief", "credentials"},
+		{"adcs_esc_esc1", "Certipy", "adcs"},
+		{"unconstrained_delegation_configured", "RustHound-CE", "delegation"},
+		{"relay_exposure_observed", "RelayKing", "network"},
+	}
+	for _, test := range cases {
+		finding := storage.Finding{FindingInput: storage.FindingInput{FindingType: test.typ, SourceTool: test.source}}
+		if got := findingCategoryKey(finding); got != test.want {
+			t.Errorf("%s classified as %s, want %s", test.typ, got, test.want)
+		}
 	}
 }
