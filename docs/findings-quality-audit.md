@@ -61,3 +61,9 @@ No database migration was needed for this presentation-only classification
 change, so no live database backup or rollback operation was performed. Any
 future persistent reclassification must first create a permissions-preserving
 SQLite backup and run an explicit transactional migration with rollback tests.
+
+## Findings category presentation
+
+The Findings view now opens on a category overview rather than a flat record dump. Categories are derived from stored finding type, title and source-tool metadata at refresh time; no category counts are hardcoded and no records are deleted or rewritten. Empty categories are shown as `NOT ASSESSED` rather than as a claim that the corresponding control is secure. Selecting a category applies a presentation filter while preserving the existing finding IDs, evidence references and raw artifacts.
+
+The category counts distinguish the existing actionable/observation policy used by the TUI. They are display counts over stored records, not a replacement for detector coverage or an assertion of effective access. ACL findings remain direct collected ACE observations unless the stored detector evidence supports stronger context.

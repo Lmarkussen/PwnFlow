@@ -29,6 +29,10 @@ type model struct {
 	findingSearchMode   bool
 	findingSeverity     string
 	findingViewMode     string
+	findingCategoryView bool
+	findingCategory     string
+	findingCategories   []findingCategory
+	findingAllRows      []storage.Finding
 	modules             []modules.Module
 	moduleIDs           []int64
 	moduleKeys          []int

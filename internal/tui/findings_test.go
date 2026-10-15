@@ -86,3 +86,38 @@ func TestFindingsViewportHandlesMouseWheel(t *testing.T) {
 		t.Fatalf("wheel up moved cursor to %d, want 0", model.findingCursor)
 	}
 }
+
+func TestFindingCategoriesClassifyAndCountRecords(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "pxethief_credentials", Title: "SCCM task-sequence credentials exposed", Severity: "high", SourceTool: "PXEThief"}},
+		{FindingInput: storage.FindingInput{FindingType: "kerberoastable_account", Title: "Kerberoastable account", Severity: "medium", SourceTool: "RustHound-CE"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_genericwrite", Title: "Direct ACL GenericWrite", Severity: "informational", SourceTool: "RustHound-CE"}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_template_vulnerability", Title: "Certipy flagged certificate template WebEnrollment", Severity: "high", SourceTool: "Certipy"}},
+		{FindingInput: storage.FindingInput{FindingType: "relay_exposure", Title: "Potential NTLM relay exposure", Severity: "medium", SourceTool: "RelayKing"}},
+	}
+	categories := buildFindingCategories(rows)
+	counts := map[string]findingCategory{}
+	for _, category := range categories {
+		counts[category.Key] = category
+	}
+	if counts["credentials"].Findings != 1 || counts["kerberos"].Findings != 1 || counts["adcs"].Findings != 1 || counts["network"].Findings != 1 {
+		t.Fatalf("unexpected category counts: %#v", counts)
+	}
+	if counts["acl"].Observations != 1 || counts["acl"].Findings != 0 {
+		t.Fatalf("ACL observation was not separated: %#v", counts["acl"])
+	}
+	if counts["credentials"].Highest != "HIGH" || counts["acl"].Highest != "INFORMATIONAL" {
+		t.Fatalf("unexpected highest severities: credentials=%s acl=%s", counts["credentials"].Highest, counts["acl"].Highest)
+	}
+}
+
+func TestFindingCategoryOverviewIsBounded(t *testing.T) {
+	model := &model{findingsView: true, findingCategoryView: true, findingCategories: buildFindingCategories(nil), width: 100, height: 24}
+	frame := ansi.Strip(model.View())
+	if !strings.Contains(frame, "Credentials & SCCM") || !strings.Contains(frame, "Network & Protocols") {
+		t.Fatal("category overview omitted expected categories")
+	}
+	if strings.Count(frame, "Credentials & SCCM") != 1 {
+		t.Fatal("category overview rendered duplicate category rows")
+	}
+}

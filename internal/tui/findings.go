@@ -9,6 +9,71 @@ import (
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
+type findingCategory struct {
+	Key          string
+	Name         string
+	Description  string
+	Findings     int
+	Observations int
+	Highest      string
+}
+
+var findingCategoryOrder = []struct {
+	Key, Name, Description string
+}{
+	{"credentials", "Credentials & SCCM", "Recovered credentials and SCCM security conditions"},
+	{"kerberos", "Kerberos", "Kerberoasting, AS-REP and Kerberos material"},
+	{"acl", "Active Directory ACLs", "Direct control relationships and object permissions"},
+	{"adcs", "AD CS", "Certificate template and CA security conditions"},
+	{"delegation", "Delegation", "Delegation configuration and related exposure"},
+	{"network", "Network & Protocols", "SMB, LDAP and relay security conditions"},
+	{"other", "Other / Unclassified", "Security records without a safer category"},
+}
+
+func findingCategoryKey(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType + " " + finding.Title + " " + finding.SourceTool)
+	switch {
+	case strings.Contains(typ, "pxethief"), strings.Contains(typ, "sccm"), strings.Contains(typ, "credential"):
+		return "credentials"
+	case strings.Contains(typ, "kerberoast"), strings.Contains(typ, "asrep"), strings.Contains(typ, "as-rep"), strings.Contains(typ, "kerberos"):
+		return "kerberos"
+	case strings.HasPrefix(typ, "ad_acl_"), strings.Contains(typ, "acl"):
+		return "acl"
+	case strings.Contains(typ, "adcs"), strings.Contains(typ, "certipy"), strings.Contains(typ, "certificate"):
+		return "adcs"
+	case strings.Contains(typ, "delegation"), strings.Contains(typ, "allowedtoact"):
+		return "delegation"
+	case strings.Contains(typ, "relay"), strings.Contains(typ, "smb"), strings.Contains(typ, "ldap"), strings.Contains(typ, "signing"):
+		return "network"
+	default:
+		return "other"
+	}
+}
+
+func buildFindingCategories(rows []storage.Finding) []findingCategory {
+	categories := make([]findingCategory, 0, len(findingCategoryOrder))
+	for _, definition := range findingCategoryOrder {
+		categories = append(categories, findingCategory{Key: definition.Key, Name: definition.Name, Description: definition.Description, Highest: "NOT ASSESSED"})
+	}
+	for _, finding := range rows {
+		key := findingCategoryKey(finding)
+		for index := range categories {
+			if categories[index].Key != key {
+				continue
+			}
+			if actionableFinding(finding) {
+				categories[index].Findings++
+			} else {
+				categories[index].Observations++
+			}
+			if categories[index].Highest == "NOT ASSESSED" || severityRank(finding.Severity) > severityRank(categories[index].Highest) {
+				categories[index].Highest = strings.ToUpper(finding.Severity)
+			}
+		}
+	}
+	return categories
+}
+
 func (m *model) refreshFindings() {
 	if !m.findingsView || m.db == nil {
 		return
@@ -18,6 +83,8 @@ func (m *model) refreshFindings() {
 		m.status = "findings unavailable: " + err.Error()
 		return
 	}
+	m.findingAllRows = append(m.findingAllRows[:0], rows...)
+	m.findingCategories = buildFindingCategories(rows)
 	search := strings.ToLower(strings.TrimSpace(m.findingSearch))
 	filtered := rows[:0]
 	for _, finding := range rows {
@@ -31,6 +98,9 @@ func (m *model) refreshFindings() {
 			continue
 		}
 		if m.findingSeverity != "" && !strings.EqualFold(finding.Severity, m.findingSeverity) {
+			continue
+		}
+		if m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(strings.Join([]string{finding.Title, finding.AffectedObject, finding.RelatedObject, finding.SourceTool, finding.FindingType}, " ")), search) {
@@ -88,6 +158,9 @@ func severityRank(value string) int {
 
 func (m *model) findingsViewRender() string {
 	width := max(40, m.width-4)
+	if m.findingCategoryView {
+		return m.findingCategoryOverview(width)
+	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	if m.findingSearch != "" {
@@ -136,6 +209,29 @@ func (m *model) findingsViewRender() string {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}
 	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze PXE   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) findingCategoryOverview(width int) string {
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
+	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n\n")
+	for index, category := range m.findingCategories {
+		prefix := "  "
+		if index == m.findingCursor {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s%-27s %8d findings  %8d observations  %-12s", prefix, category.Name, category.Findings, category.Observations, category.Highest)
+		if index == m.findingCursor {
+			line = lipgloss.NewStyle().Bold(true).Render(line)
+		}
+		content.WriteString(line + "\n")
+		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(20, width-7))) + "\n")
+	}
+	if len(m.findingCategories) == 0 {
+		content.WriteString("No findings categories are available.\n")
+	}
+	content.WriteString(dim.Render("\nEnter Open Category   / Search   f Findings   o Observations   a All   Esc Close"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

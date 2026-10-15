@@ -319,6 +319,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.watcher = false
 			m.findingsView = true
 			m.findingDetail = false
+			m.findingCategoryView = true
+			m.findingCategory = ""
+			m.findingCursor = 0
 			m.refreshFindings()
 			return m, nil
 		}
@@ -478,6 +481,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.findingsFromWatcher = false
 		m.findingDetail = false
 		m.findingSearchMode = false
+		m.findingCategoryView = true
+		m.findingCategory = ""
+		m.findingCursor = 0
 		m.refreshFindings()
 	}
 	return m, nil
@@ -496,6 +502,66 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			if len(key) == 1 && key >= " " && key <= "~" {
 				m.findingSearch += key
 			}
+		}
+		m.refreshFindings()
+		return m, nil
+	}
+	if m.findingCategoryView {
+		switch key {
+		case "ctrl+w":
+			m.findingsView = false
+			m.watcher = m.findingsFromWatcher || m.batch != nil
+			if m.watcher {
+				m.resizeWatcher()
+			}
+			m.findingsFromWatcher = false
+		case "esc":
+			if m.findingCategory != "" {
+				m.findingCategory = ""
+				m.findingCursor = 0
+				m.refreshFindings()
+				return m, nil
+			}
+			m.findingsView = false
+			if m.findingsFromWatcher {
+				m.watcher = true
+				m.resizeWatcher()
+			}
+			m.findingsFromWatcher = false
+		case "up", "k":
+			m.findingCursor--
+		case "down", "j":
+			m.findingCursor++
+		case "home":
+			m.findingCursor = 0
+		case "end":
+			m.findingCursor = len(m.findingCategories) - 1
+		case "pgup":
+			m.findingCursor -= 5
+		case "pgdown":
+			m.findingCursor += 5
+		case "enter":
+			if len(m.findingCategories) > 0 {
+				m.findingCategory = m.findingCategories[m.findingCursor].Key
+				m.findingCategoryView = false
+				m.findingCursor = 0
+				m.findingTop = 0
+				m.refreshFindings()
+			}
+		case "/":
+			m.findingSearchMode = true
+		case "f":
+			m.findingViewMode = "findings"
+		case "o":
+			m.findingViewMode = "observations"
+		case "a":
+			m.findingViewMode = "all"
+		}
+		if m.findingCursor < 0 {
+			m.findingCursor = 0
+		}
+		if m.findingCursor >= len(m.findingCategories) {
+			m.findingCursor = max(0, len(m.findingCategories)-1)
 		}
 		m.refreshFindings()
 		return m, nil
@@ -526,6 +592,14 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.findingsFromWatcher = false
 	case "esc":
+		if m.findingCategory != "" {
+			m.findingCategory = ""
+			m.findingCategoryView = true
+			m.findingCursor = 0
+			m.findingDetail = false
+			m.refreshFindings()
+			return m, nil
+		}
 		m.findingsView = false
 		if m.findingsFromWatcher {
 			m.watcher = true
