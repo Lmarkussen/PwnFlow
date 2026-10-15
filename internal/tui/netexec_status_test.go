@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -111,6 +112,14 @@ func TestAdminRequiredIsLabelledAndStillRuns(t *testing.T) {
 	}
 	if command := m.execute(m.cursor); command != nil || !m.running {
 		t.Fatalf("ADMIN-REQ blocked execution: running=%t status=%q", m.running, m.status)
+	}
+	// Let the batch finish before the test's temporary results root is removed,
+	// so the cleanup never races a module writing its artifact.
+	m.cancelBatch()
+	waitContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.batch.Wait(waitContext); err != nil {
+		t.Fatalf("wait for the run: %v", err)
 	}
 }
 
