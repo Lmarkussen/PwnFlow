@@ -38,6 +38,11 @@ The application root is resolved from the executable location (or the nearest `g
 
 The browser presents NetExec by protocol and keeps its Credential Auditing and Credential Dumping categories. Network, SCCM, AD CS, and Active Directory present their registered modules directly, without an intermediary category or `N/A` protocol folder. LDAP and SMB remain separate protocol scopes, so their arguments are never mixed.
 
+Offline RustHound ACL analysis and the structured findings storage API are
+documented in [the artifact schema note](rusthound-artifact-schema.md). Findings
+processing is explicit and read-only; it does not replace BloodHound CE's graph
+analysis or automatically process partial artifacts at startup.
+
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `A` runs the whole eligible registry - every tool family, category, and protocol - regardless of the family, category, protocol, focus, scroll position, or selection that happens to be on screen, and it needs no selection at all.
 
 `A` is comprehensive, not unconditional. Before a batch starts, PwnFlow collects the values any module in the plan needs, so a run is never interrupted by a question, and it names the operations that are not plain enumeration for your decision: the credential-access categories and any module whose own run reaches further than the assessment's discovery (PXEThief with no stored endpoint, for example, which would broadcast a DHCP discover). Declining them runs the rest of the plan. Privileged execution still goes through the existing amber confirmation and sudo handoff, so nothing in a global run happens without being asked for.

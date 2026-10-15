@@ -80,6 +80,8 @@ make check
 - [Enumeration tool candidates](docs/enumeration-tool-candidates.md) — current
   research, overlap analysis, and prioritized additions; no tools are integrated
   by that document.
+- [RustHound artifact schema](docs/rusthound-artifact-schema.md) — the observed
+  JSON/ACL shape and the limits of local findings analysis.
 
 ## Security and authorization
 

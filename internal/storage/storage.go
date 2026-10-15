@@ -32,8 +32,30 @@ func Open(path string) (*DB, error) {
 // provenance that explain where each record came from. Credentials are never
 // stored here.
 func (d *DB) migrate() error {
-	_, err := d.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, target_address TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL, protocol TEXT NOT NULL, description TEXT NOT NULL, output_filename TEXT NOT NULL); CREATE TABLE IF NOT EXISTS executions (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, module_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, status TEXT NOT NULL, exit_code INTEGER, output_path TEXT, error_summary TEXT, FOREIGN KEY(target_id) REFERENCES targets(id), FOREIGN KEY(module_id) REFERENCES modules(id)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, FOREIGN KEY(target_id) REFERENCES targets(id)); CREATE TABLE IF NOT EXISTS endpoints (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, address TEXT NOT NULL, hostname TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, source TEXT NOT NULL, discovered_at TEXT NOT NULL, UNIQUE(domain, address, role, hostname));`)
-	return err
+	transaction, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.Exec(`PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY);`); err != nil {
+		return err
+	}
+	var version int
+	if err := transaction.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version < 1 {
+		if _, err := transaction.Exec(`CREATE TABLE IF NOT EXISTS targets (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, target_address TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS modules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL, protocol TEXT NOT NULL, description TEXT NOT NULL, output_filename TEXT NOT NULL); CREATE TABLE IF NOT EXISTS executions (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, module_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, duration_ms INTEGER, status TEXT NOT NULL, exit_code INTEGER, output_path TEXT, error_summary TEXT, FOREIGN KEY(target_id) REFERENCES targets(id), FOREIGN KEY(module_id) REFERENCES modules(id)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, FOREIGN KEY(target_id) REFERENCES targets(id)); CREATE TABLE IF NOT EXISTS endpoints (id INTEGER PRIMARY KEY, domain TEXT NOT NULL, address TEXT NOT NULL, hostname TEXT NOT NULL DEFAULT '', role TEXT NOT NULL, source TEXT NOT NULL, discovered_at TEXT NOT NULL, UNIQUE(domain, address, role, hostname)); INSERT INTO schema_migrations(version) VALUES(1);`); err != nil {
+			return err
+		}
+		version = 1
+	}
+	if version < 2 {
+		if _, err := transaction.Exec(`CREATE TABLE IF NOT EXISTS findings (id INTEGER PRIMARY KEY, finding_key TEXT NOT NULL UNIQUE, assessment_id INTEGER NOT NULL, source_tool TEXT NOT NULL, source_execution_id INTEGER, finding_type TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, confidence TEXT NOT NULL, affected_object_id TEXT NOT NULL DEFAULT '', affected_object_name TEXT NOT NULL DEFAULT '', related_object_id TEXT NOT NULL DEFAULT '', related_object_name TEXT NOT NULL DEFAULT '', evidence_json TEXT NOT NULL, artifact_path TEXT NOT NULL, artifact_ref TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL, parser_version TEXT NOT NULL, FOREIGN KEY(assessment_id) REFERENCES targets(id), FOREIGN KEY(source_execution_id) REFERENCES executions(id)); CREATE TABLE IF NOT EXISTS finding_evidence (id INTEGER PRIMARY KEY, finding_id INTEGER NOT NULL, evidence_key TEXT NOT NULL UNIQUE, source_execution_id INTEGER, artifact_path TEXT NOT NULL, artifact_ref TEXT NOT NULL, evidence_json TEXT NOT NULL, observed_at TEXT NOT NULL, FOREIGN KEY(finding_id) REFERENCES findings(id) ON DELETE CASCADE, FOREIGN KEY(source_execution_id) REFERENCES executions(id)); CREATE INDEX IF NOT EXISTS findings_assessment_idx ON findings(assessment_id); CREATE INDEX IF NOT EXISTS findings_type_idx ON findings(finding_type); CREATE INDEX IF NOT EXISTS finding_evidence_finding_idx ON finding_evidence(finding_id); INSERT INTO schema_migrations(version) VALUES(2);`); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
 }
 func (d *DB) UpsertTarget(ctx context.Context, domain, address string) error {
 	_, err := d.ExecContext(ctx, `INSERT INTO targets(domain,target_address,created_at) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM targets WHERE domain=? AND target_address=?)`, domain, address, time.Now().UTC().Format(time.RFC3339), domain, address)
