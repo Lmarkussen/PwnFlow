@@ -861,3 +861,127 @@ func TestPXEThiefReportsRefusedAuthorisation(t *testing.T) {
 		t.Fatalf("the summary is not a diagnostic: %v", err)
 	}
 }
+
+// Without the capability and without approval, PXEThief is not eligible at all: the
+// check refuses, so no execution path can launch it and nothing is printed that
+// suggests the operator should go and approve something mid-run.
+func TestPXEThiefCheckRefusesWithoutApproval(t *testing.T) {
+	withRawSocketPrivileges(t, false)
+	toolLayout(t, "PXEThief", "pxethief.py", "exit 0")
+	if err := os.WriteFile(filepath.Join(os.Getenv("PWNFLOW_TOOLS_DIR"), "PXEThief", pxeThiefMarker), []byte(prTestHead+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The revision check reads the checkout's HEAD; the fixture answers it without
+	// being a repository.
+	gitBin := t.TempDir()
+	gitStub := "#!/bin/sh\ncase \"$*\" in *\"rev-parse HEAD\"*) echo \"" + prTestHead + "\" ;; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(gitBin, "git"), []byte(gitStub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", gitBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dependencyCacheTTL = 0
+	module := PXEThief{}
+	runtime := testRuntime(t, &fakeStore{})
+	if err := module.Check(context.Background(), runtime); err == nil || !strings.Contains(err.Error(), "CAP_NET_RAW") {
+		t.Fatalf("an unapproved run was considered eligible: %v", err)
+	}
+	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
+	if err := module.Check(context.Background(), runtime); err != nil {
+		t.Fatalf("an approved run was refused: %v", err)
+	}
+	// The requirement message never tells the operator to go and approve something
+	// while a run is under way, and never suggests an unprivileged fallback.
+	forbidden := []string{"Run it from the TUI and approve", "will fail until", "unprivileged fallback"}
+	for _, text := range forbidden {
+		if strings.Contains(pxeThiefTestErrors(module, runtime), text) {
+			t.Fatalf("the refusal contains misleading advice (%q)", text)
+		}
+	}
+}
+
+// pxeThiefTestErrors renders the errors both entry points can produce, so a test can
+// assert on what the operator would read.
+func pxeThiefTestErrors(module PXEThief, runtime *modules.Runtime) string {
+	checked := module.Check(context.Background(), runtime)
+	ran := module.Run(context.Background(), runtime, &strings.Builder{})
+	return errorText(checked) + " " + errorText(ran)
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// Mode 1 and mode 2 obey the same policy: both refuse without approval, and both run
+// elevated - once per invocation - with it.
+func TestPXEThiefModeOneFollowsTheSamePrivilegePolicy(t *testing.T) {
+	withRawSocketPrivileges(t, false)
+	toolLayout(t, "PXEThief", "pxethief.py", "case \"$1\" in 1) echo '[+] mode 1'; exit 0 ;; esac; exit 0")
+	if err := os.WriteFile(filepath.Join(os.Getenv("PWNFLOW_TOOLS_DIR"), "PXEThief", pxeThiefMarker), []byte(prTestHead+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dependencyCacheTTL = 0
+	sudoRecord := sudoMock(t, "")
+	module := PXEThief{}
+
+	// No stored endpoint and no approval: mode 1 must not start.
+	runtime := testRuntime(t, &fakeStore{})
+	var output strings.Builder
+	if err := module.Run(context.Background(), runtime, &output); err == nil || !strings.Contains(err.Error(), "CAP_NET_RAW") {
+		t.Fatalf("mode 1 ran without approval: %v", err)
+	}
+	if strings.Contains(output.String(), "running PXEThief mode 1") {
+		t.Fatalf("mode 1 announced itself before it was authorised: %s", output.String())
+	}
+	if calls, readErr := os.ReadFile(sudoRecord); readErr == nil && len(strings.TrimSpace(string(calls))) != 0 {
+		t.Fatalf("sudo ran without approval: %s", calls)
+	}
+
+	// Approved: one elevated mode 1 invocation.
+	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
+	var approved strings.Builder
+	if err := module.Run(context.Background(), runtime, &approved); err != nil {
+		t.Fatalf("approved mode 1 failed: %v", err)
+	}
+	calls, readErr := os.ReadFile(sudoRecord)
+	if readErr != nil {
+		t.Fatalf("no sudo call was recorded: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "sudo -n /") || !strings.HasSuffix(lines[0], "pxethief.py 1") {
+		t.Fatalf("mode 1 was not one elevated invocation: %v", lines)
+	}
+	if !strings.Contains(approved.String(), "elevated execution you approved") {
+		t.Fatalf("an elevated run should say so once: %s", approved.String())
+	}
+	if strings.Contains(approved.String(), "Run it from the TUI and approve") {
+		t.Fatalf("the misleading advice was emitted: %s", approved.String())
+	}
+}
+
+// Endpoints belong to the assessment they were discovered in: another domain's stored
+// addresses are never used as targets.
+func TestEndpointsAreResolvedByAssessmentIdentity(t *testing.T) {
+	stored := []modules.Endpoint{
+		{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain},
+		{Address: "203.0.113.9", Hostname: "pxe01.other.example", Role: rolePXEDistributionPoint, Domain: "other.example"},
+	}
+	store := &fakeStore{records: stored}
+	runtime := testRuntime(t, store)
+	endpoints, err := discoveredEndpoints(context.Background(), runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 || endpoints[0].Address != "198.51.100.41" {
+		t.Fatalf("the assessment identity was not applied: %#v", endpoints)
+	}
+	if usable := usableEndpoints(endpoints, runtime.Domain); len(usable) != 1 {
+		t.Fatalf("unexpected usable set: %#v", usable)
+	}
+	// With a different assessment domain, nothing from this one is used.
+	if usable := usableEndpoints(stored, "elsewhere.example"); len(usable) != 0 {
+		t.Fatalf("another assessment's endpoints were used: %#v", usable)
+	}
+}

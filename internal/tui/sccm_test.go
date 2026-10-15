@@ -423,3 +423,68 @@ func TestElevationFailureSkipsOnlyThePrivilegedModule(t *testing.T) {
 		t.Fatal("selection stopped working after a failed authentication")
 	}
 }
+
+// Every entry point that can start PXEThief goes through the same approval gate: the
+// global selection with R, and the highlighted module with Enter. A stays scoped to
+// the visible NetExec enumeration, so it can never reach PXEThief at all.
+func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
+	log := &executionLog{}
+	elevating := elevatingModule{selectionModule: selectionModule{id: "pxethief-like", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}, required: true}
+	netexecModule := selectionModule{id: "nxc-ldap-users", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log}
+	m := newModel(context.Background(), testConfig(t), nil, []modules.Module{elevating, netexecModule}, []int64{1, 2}, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.setToolFamily(sccmFamilyIndex)
+	m.focus = focusModules
+
+	// Enter on the highlighted module.
+	m.cursor = rowOf(t, m, "pxethief-like")
+	press(t, m, "enter")
+	if !m.elevationPrompt || m.running {
+		t.Fatalf("Enter started a privileged module without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
+	}
+	press(t, m, "n")
+	if got := log.executed(); len(got) != 0 {
+		t.Fatalf("declining Enter still ran the module: %v", got)
+	}
+
+	// The global batch with R.
+	m.cursor = rowOf(t, m, "pxethief-like")
+	press(t, m, " ")
+	press(t, m, "r")
+	if !m.elevationPrompt || m.running {
+		t.Fatalf("R started a privileged module without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
+	}
+	press(t, m, "n")
+	if m.batch != nil || m.running {
+		t.Fatalf("declining R started something: running=%v", m.running)
+	}
+	if got := log.executed(); len(got) != 0 {
+		t.Fatalf("declining R still ran the module: %v", got)
+	}
+
+	// A runs the visible NetExec enumeration only, whatever is selected elsewhere.
+	m.batch, m.batchItems, m.running = nil, nil, false
+	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
+	m.cursor = rowOf(t, m, "nxc-ldap-users")
+	press(t, m, " ")
+	press(t, m, "a")
+	if m.elevationPrompt {
+		t.Fatal("A asked for elevation, which only a selected privileged module should")
+	}
+	for _, id := range batchIDs(m) {
+		if id == "pxethief-like" {
+			t.Fatalf("A reached a module outside its scope: %v", batchIDs(m))
+		}
+	}
+	waitForBatch(t, m)
+	if got := log.executed(); len(got) != 1 || got[0] != "nxc-ldap-users" {
+		t.Fatalf("A executed outside its scope: %v", got)
+	}
+	// The privileged module stayed unexecuted throughout.
+	for _, id := range log.executed() {
+		if id == "pxethief-like" {
+			t.Fatal("the privileged module ran without approval")
+		}
+	}
+}

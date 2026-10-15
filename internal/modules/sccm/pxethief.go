@@ -77,7 +77,7 @@ func (m PXEThief) elevationCommand(runtime *modules.Runtime, status dependencies
 		return program, base, false, nil
 	}
 	if runtime == nil || runtime.Elevation == nil || !runtime.Elevation.ElevationApproved(moduleIDPXEThief) {
-		return "", nil, false, fmt.Errorf("%s, and elevated execution was not approved for this run; PwnFlow never elevates itself", rawSocketHint)
+		return "", nil, false, fmt.Errorf("%s; approve it in PwnFlow to run PXEThief with sudo", elevationRefusal)
 	}
 	// -n keeps sudo non-interactive inside the batch: the operator's approval was
 	// authenticated once, before the batch started, and sudo reuses that timestamp.
@@ -202,6 +202,11 @@ func prerequisiteLine(ctx context.Context) string {
 	return "Required revision: pull/11 verified (" + verified + ")"
 }
 
+// elevationRefusal is the one message an unapproved PXEThief run produces. It is
+// raised before anything is launched, so a run without the capability and without the
+// operator's approval never reaches the tool.
+const elevationRefusal = "PXEThief needs Linux raw-socket privileges (CAP_NET_RAW), and elevated execution was not approved for this run"
+
 // Check verifies the dependency, the required revision, and the runtime scope.
 func (m PXEThief) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if runtime == nil || strings.TrimSpace(runtime.Domain) == "" {
@@ -224,6 +229,12 @@ func (m PXEThief) Check(ctx context.Context, runtime *modules.Runtime) error {
 	}
 	if _, probeErr := runCombined(ctx, program, append(append([]string(nil), base...), "-h"), status.Root); probeErr != nil {
 		return fmt.Errorf("PXEThief capability probe failed: %w", probeErr)
+	}
+	// The privilege requirement is part of the eligibility check, not something the
+	// run discovers halfway through: without the capability and without an approved
+	// elevation the module is unavailable, and nothing is launched.
+	if _, _, _, elevationErr := m.elevationCommand(runtime, status); elevationErr != nil {
+		return elevationErr
 	}
 	_ = verified
 	return nil
@@ -251,8 +262,10 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	}
 	// A missing capability is the one failure worth warning about before the tool
 	// runs: it is not a dependency problem, and the tool's own error is a traceback.
-	if available, known, _ := rawSocketPrivilegesFunc(); known && !available {
-		fmt.Fprintf(sink, "[!] %s. Run it from the TUI and approve the elevation it asks for.\n", rawSocketHint)
+	if elevated {
+		// Stated once, and only when it is true: the tool is running with the
+		// privileges the operator approved, not being told to go and approve them.
+		fmt.Fprintln(sink, "[i] Running PXEThief with the elevated execution you approved (this process has no raw-socket capability of its own).")
 	}
 	started := time.Now()
 	runDirectory := m.RunDirectory(runtime, started)
