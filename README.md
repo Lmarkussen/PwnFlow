@@ -100,24 +100,52 @@ output pane or the persisted log (the runner redacts by value, so both flag
 forms are covered), never stored in SQLite or the execution history, and never
 appended to an error message. No credential is committed to Git.
 
-Collection is still disabled. Module Information reports `Execution: blocked -
-Scope Restricted` with the remaining blocker: no verified process-specific
-egress enforcement is in place, so nothing pins the collector's connections to
-`10.1.10.40`, and this host resolves names through Tailscale MagicDNS
-(`100.100.100.100`) rather than the DC. `LdapOnly` plus a pinned `-i` describes
-intended LDAP-only behaviour but is not a network boundary, so it is not treated
-as one. Firejail and slirp4netns are not installed, an unprivileged network
-namespace has no route to the DC, Landlock's network rules match ports rather
-than addresses, and `nft`/`iptables` rules are global - none of which satisfies
-the requirement without changing the host firewall or requiring root.
+RustHound-CE runs only behind a process-specific egress boundary, and PwnFlow
+verifies that boundary itself instead of assuming it. On startup, and again
+immediately before every collection, `internal/confinement` attempts a TCP
+connection to a loopback address nothing listens on:
 
-Lifting the restriction requires a process-specific egress boundary that can be
-verified without sending traffic to an unauthorized destination. The most
-promising candidate is a transient user unit that confines the whole PwnFlow
-process with cgroup BPF (`systemd-run --user -p IPAddressAllow=10.1.10.40 -p
-IPAddressDeny=any …`), verified as root with `bpftool cgroup tree` rather than by
-probing a forbidden address; PwnFlow itself would then need to detect that
-confinement before enabling execution.
+- the connect stalls until the deadline, or fails with `EPERM` - a cgroup filter
+  dropped or rejected the packet, so a boundary is enforced, the module is
+  executable, and Enter runs it;
+- the connect is refused by the local stack (`ECONNREFUSED`), or a listener
+  answers - the local stack handled it, so no boundary exists: the module reports
+  `Execution: blocked - Scope Restricted`, names the missing mechanism, and Enter
+  declines instead of collecting.
+
+Loopback is used deliberately: it never leaves the host, so the check cannot
+contact another system, while `IPAddressDeny=any` denies it just like any other
+destination. An unfiltered loopback connect is answered in microseconds, so a
+stall is a reliable signature of a dropping filter; both signatures were observed
+on the assessment host and are covered by tests. Any outcome the check cannot
+classify fails closed. Because the probe runs in the collector's own cgroup, its
+verdict applies to the collector, not just to PwnFlow.
+
+### Confined launch
+
+Loading a cgroup BPF program needs privilege, so PwnFlow does not create the
+filter; it requires one. The unprivileged systemd user manager accepts
+`IPAddressAllow`/`IPAddressDeny` as unit properties but does not enforce them on
+this host (`kernel.unprivileged_bpf_disabled=2`), which is exactly why a property
+being accepted is not treated as proof. The boundary therefore has to come from
+the system manager, which does have the privilege:
+
+```bash
+sudo systemd-run --pty --collect \
+  --property=User=kali --property=WorkingDirectory=/home/kali/PwnFlow \
+  --property=IPAddressAllow=10.1.10.40 --property=IPAddressDeny=any \
+  /home/kali/PwnFlow/bin/pwnflow \
+  --target 10.1.10.40 --domain sccm.lab --username <operator>
+```
+
+That unit confines the process tree - so NetExec runs inside it too, which keeps
+every collection on the authorized DC - and it disappears when PwnFlow exits.
+Nothing global is configured: no firewall rule, no persistent unit, no service.
+DNS is denied along with every other destination, including Tailscale MagicDNS,
+so anything that needs name resolution fails visibly rather than leaving the
+boundary. Confirm the state the operator sees with `pwnflow`'s Module Information
+line: it reports `Execution: enabled - egress confined to 10.1.10.40` only when
+the probe passed.
 
 Cargo performs every install build in a temporary directory under `TMPDIR`, and
 Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for

@@ -273,30 +273,38 @@ func (m *model) closeWatcher() {
 	m.focus = m.focusBeforeWatcher
 }
 
+// execute runs the highlighted module. Eligibility is decided per module through
+// moduleAvailability, so an enabled module in any registered family can run while
+// policy-disabled modules stay unavailable. YOLO keeps its own narrower gate.
 func (m *model) execute(index int) tea.Cmd {
-	if !m.executableScope() {
-		m.status = "category is inactive; no modules executed"
+	if index < 0 || index >= len(m.modules) {
 		return nil
 	}
-	if index < 0 || index >= len(m.modules) || m.moduleAvailability(m.modules[index]) != "" {
-		m.status = "selected module is unavailable in the current scope"
+	if reason := m.moduleAvailability(m.modules[index]); reason != "" {
+		m.status = "selected module is unavailable: " + reason
 		return nil
 	}
 	return m.startBatch([]int{index}, "RUN")
 }
 
 func (m *model) executeSelected() tea.Cmd {
-	if !m.executableScope() {
-		m.status = "category is inactive; no modules executed"
-		return nil
-	}
 	indices := make([]int, 0, len(m.modules))
+	blocked := false
 	for i := range m.modules {
-		if m.selectedModules[m.modules[i].ID()] && m.moduleAvailability(m.modules[i]) == "" {
-			indices = append(indices, i)
+		if !m.selectedModules[m.modules[i].ID()] {
+			continue
 		}
+		if m.moduleAvailability(m.modules[i]) != "" {
+			blocked = true
+			continue
+		}
+		indices = append(indices, i)
 	}
 	if len(indices) == 0 {
+		if blocked {
+			m.status = "selected modules are unavailable in the current scope"
+			return nil
+		}
 		m.status = "no modules selected; press Space to select a module"
 		return nil
 	}
@@ -331,7 +339,7 @@ func (m *model) moveWatcherSelection(delta int) {
 }
 
 func (m *model) executeAll() tea.Cmd {
-	if !m.executableScope() {
+	if !m.yoloScope() {
 		m.status = "category is inactive; no modules executed"
 		return nil
 	}
@@ -348,7 +356,10 @@ func (m *model) executeAll() tea.Cmd {
 	return m.startBatch(indices, "YOLO")
 }
 
-func (m *model) executableScope() bool {
+// yoloScope gates category-scoped YOLO runs. It stays limited to NetExec
+// enumeration so a module registered in another family - RustHound-CE, for
+// instance - can never be swept into a YOLO batch.
+func (m *model) yoloScope() bool {
 	return m.toolFamilyIndex < len(m.toolFamilies) && m.categoryIndex < len(m.categories) && m.categories[m.categoryIndex] == modules.CategoryEnumeration && m.toolFamilies[m.toolFamilyIndex] == modules.ToolFamilyNetExec
 }
 
