@@ -131,10 +131,11 @@ func TestRustHoundModuleInformationShowsPinnedConfigurationAndBlockedStatus(t *t
 	frame := ansi.Strip(model.View())
 	for _, want := range []string{
 		"Execution: blocked - Scope Restricted",
+		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		"Output directory: ",
 		"UNAVAILABLE",
-		"process list",
+		"egress enforcement",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("Module Information is missing %q:\n%s", want, frame)

@@ -42,11 +42,12 @@ const (
 // commandProbe describes the arguments this module relies on. The long forms are
 // matched against the installed --help output so a version that renames or drops
 // one is reported instead of producing a silently different command.
-var commandProbe = []string{"-d, --domain", "-i, --ldapip", "-c, --collectionmethod", "-o, --output"}
+var commandProbe = []string{"-d, --domain", "-u, --ldapusername", "-p, --ldappassword", "-i, --ldapip", "-c, --collectionmethod", "-o, --output"}
 
 // secretOptions carry a value that must never reach a display, a log, or the
-// execution history. The command builder does not use them; redaction is
-// defence in depth for previews and for any future credential transport.
+// execution history. -p is used for the accepted native LDAP password; the
+// remaining entries cover the flags the installed CLI also accepts so a preview
+// or a log line can never carry one of their values.
 var secretOptions = map[string]bool{
 	"-p":             true,
 	"--ldappassword": true,
@@ -55,18 +56,17 @@ var secretOptions = map[string]bool{
 	"--pfx-pass":     true,
 }
 
-// credentialReason records the verified credential-transport problem: the
-// installed 2.5.25 CLI takes the LDAP password (and NT hash) only as a
-// command-line value, which would be visible in /proc/<pid>/cmdline for the
-// whole collection. The only argument-free transport it offers is --kerberos
-// with an operator-supplied KRB5CCNAME credential cache, and no such cache
-// exists on the assessment host.
-const credentialReason = "RustHound-CE 2.5.25 accepts the LDAP password only on the command line, which would expose it in the process list, and no Kerberos credential cache has been supplied"
+// authNote records the credential decision: the operator accepts RustHound's
+// native -p argument for this private single-operator lab, so the password is
+// passed to the collector but is never displayed, logged, or recorded.
+const authNote = "native LDAP password (-p; accepted for this single-operator lab, redacted in previews and history)"
 
-// confinementReason records what is still unproven: pinning the DC address and
-// using LdapOnly narrows collection to LDAP against one host, but nothing
-// enforces that DNS resolution or LDAP referrals cannot reach another system.
-const confinementReason = "LdapOnly with a pinned DC address does not prove that DNS lookups and LDAP referrals stay on " + config.AuthorizedTarget
+// confinementReason records the remaining blocker. Pinning the DC address and
+// using LdapOnly narrows collection to LDAP against one host, but it is a
+// description of intent, not a boundary: no unprivileged, process-specific
+// mechanism on this host pins egress to the authorized DC, and the system
+// resolver is Tailscale MagicDNS rather than the DC.
+const confinementReason = "no verified process-specific egress enforcement is in place: nothing pins this process's connections to " + config.AuthorizedTarget + ", and the host resolver is Tailscale MagicDNS (100.100.100.100) rather than the DC"
 
 // Module describes RustHound-CE independently from the NetExec BloodHound
 // capability and from both Python collector variants.
@@ -79,21 +79,21 @@ func (Module) Category() modules.Category     { return modules.CategoryEnumerati
 func (Module) Tool() string                   { return "RustHound-CE" }
 func (Module) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (Module) Description() string {
-	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method and the authorized DC address only; blocked until LDAP credential transport and DC-only confinement are verified."
+	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method, the authorized DC address, and native LDAP password authentication; blocked until process-specific egress confinement to that DC is enforced."
 }
 func (Module) Prerequisites() []string {
-	return []string{"rusthound-ce executable", "argument-free LDAP credential transport", "verified DC-only destination confinement"}
+	return []string{"rusthound-ce executable", "verified DC-only destination confinement for the collector process"}
 }
 func (Module) RequiredPrivileges() []string     { return nil }
 func (Module) OutputFile() string               { return logFile }
 func (Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySensitive }
 func (Module) ReadOnly() bool                   { return true }
 func (Module) SecondaryConnections() []string {
-	return []string{"LdapOnly contacts the authorized DC over LDAP; DNS and LDAP referral behaviour is not yet proven to stay on that DC"}
+	return []string{"LdapOnly contacts the authorized DC over LDAP; DNS and LDAP referral behaviour is not yet confined to that DC"}
 }
 func (Module) ExecutionEnabled() bool { return false }
 func (Module) AvailabilityReason() string {
-	return "scope restricted: " + credentialReason + "; " + confinementReason
+	return "scope restricted: " + confinementReason
 }
 
 // DetailLines reports the fixed configuration for the Module Information pane.
@@ -103,12 +103,13 @@ func (Module) AvailabilityReason() string {
 func (Module) DetailLines(runtime *modules.Runtime) []string {
 	lines := []string{
 		"Execution: blocked - Scope Restricted",
+		"Authentication: " + authNote,
 		"Collection method: " + collectionMethod + " (LDAP only; no member-machine or SYSVOL contact)",
 	}
 	if runtime == nil || runtime.ResultsRoot == "" {
-		return append(lines, "Output directory: "+outputFolder, "Blocked by: "+credentialReason+"; "+confinementReason)
+		return append(lines, "Output directory: "+outputFolder, "Blocked by: "+confinementReason)
 	}
-	return append(lines, "Output directory: "+filepath.Join(runtime.ResultsRoot, outputFolder), "Blocked by: "+credentialReason+"; "+confinementReason)
+	return append(lines, "Output directory: "+filepath.Join(runtime.ResultsRoot, outputFolder), "Blocked by: "+confinementReason)
 }
 
 // ArtifactDirectory is the stable parent for RustHound-CE JSON output.
@@ -157,8 +158,10 @@ func (Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 
 // CommandArgs returns the fixed argument vector for the authorized collection.
 // The domain and DC address come from the confined configuration constants, so
-// a caller cannot redirect the collector by supplying a different runtime, and
-// no credential is ever placed on the command line.
+// a caller cannot redirect the collector by supplying a different runtime. The
+// LDAP password is passed because the operator accepted RustHound's native -p
+// argument for this private single-operator lab; every preview, log, and
+// history record redacts it.
 func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 	return m.commandArgs(runtime, m.ArtifactDirectory(runtime))
 }
@@ -168,6 +171,9 @@ func (m Module) commandArgs(runtime *modules.Runtime, output string) []string {
 	if runtime != nil {
 		if username := strings.TrimSpace(runtime.Username); username != "" {
 			args = append(args, "-u", username)
+		}
+		if password := runtime.Password; password != "" {
+			args = append(args, "-p", password)
 		}
 	}
 	return append(args, "-o", output)

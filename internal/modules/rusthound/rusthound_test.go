@@ -88,7 +88,7 @@ func TestRustHoundCommandPinsAuthorizedScopeAndLdapOnly(t *testing.T) {
 	module := Module{}
 	runtime := authorizedRuntime()
 	args := module.CommandArgs(runtime)
-	want := []string{"-d", "sccm.lab", "-i", "10.1.10.40", "-c", "LdapOnly", "-u", "audituser", "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
+	want := []string{"-d", "sccm.lab", "-i", "10.1.10.40", "-c", "LdapOnly", "-u", "audituser", "-p", runtime.Password, "-o", filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE", "artifacts")}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Fatalf("command args=%q want %q", strings.Join(args, " "), strings.Join(want, " "))
 	}
@@ -118,34 +118,55 @@ func TestRustHoundCommandIgnoresRuntimeTargetOverride(t *testing.T) {
 	}
 }
 
-// No credential-bearing option may appear in the generated command, and any
-// value of one must be redacted in previews.
-func TestRustHoundCommandAndPreviewNeverExposeCredentials(t *testing.T) {
+// The operator accepts RustHound's native -p argument, so the command carries
+// the configured password - but nothing operator-visible may show it.
+func TestRustHoundNativePasswordIsUsedButNeverExposed(t *testing.T) {
 	module := Module{}
 	runtime := authorizedRuntime()
-	args := strings.Join(module.CommandArgs(runtime), " ")
-	for _, forbidden := range []string{"-p", "--ldappassword", "-H", "--hashes", runtime.Password} {
-		if strings.Contains(args, forbidden) {
-			t.Fatalf("command exposes %q: %q", forbidden, args)
-		}
+	args := module.CommandArgs(runtime)
+	if len(args) < 2 || !containsPair(args, "-p", runtime.Password) {
+		t.Fatalf("command did not pass the native -p credentials: %q", strings.Join(args, " "))
 	}
-	if preview := module.CommandPreview(runtime); strings.Contains(preview, runtime.Password) {
+	if containsPair(args, "--ldappassword", runtime.Password) {
+		t.Fatalf("command used the long password flag: %q", strings.Join(args, " "))
+	}
+	preview := module.CommandPreview(runtime)
+	if strings.Contains(preview, runtime.Password) {
 		t.Fatalf("preview leaked the password: %q", preview)
 	}
-	redacted := redactArguments([]string{"-d", "sccm.lab", "-p", "Sup3rSecret", "-H", "aad3b435b51404ee", "--pfx-pass", "pfx-secret"})
+	if !strings.Contains(preview, "-p "+redactedValue) || !strings.Contains(preview, "-c LdapOnly") {
+		t.Fatalf("preview did not redact the password in place: %q", preview)
+	}
+	if details := strings.Join(module.DetailLines(runtime), "\n"); strings.Contains(details, runtime.Password) {
+		t.Fatalf("Module Information leaked the password: %q", details)
+	}
+	if reason := module.AvailabilityReason(); strings.Contains(reason, runtime.Password) {
+		t.Fatalf("availability reason leaked the password: %q", reason)
+	}
+	redacted := redactArguments([]string{"-d", "sccm.lab", "-p", "Sup3rSecret", "--ldappassword=inline", "--ldappassword", "long-form", "-H", "aad3b435b51404ee", "--pfx-pass", "pfx-secret"})
 	joined := strings.Join(redacted, " ")
-	for _, secret := range []string{"Sup3rSecret", "aad3b435b51404ee", "pfx-secret"} {
+	for _, secret := range []string{"Sup3rSecret", "long-form", "aad3b435b51404ee", "pfx-secret"} {
 		if strings.Contains(joined, secret) {
 			t.Fatalf("credential %q survived redaction: %q", secret, joined)
 		}
 	}
-	if strings.Count(joined, redactedValue) != 3 {
-		t.Fatalf("expected three redacted values: %q", joined)
+	if strings.Count(joined, redactedValue) != 4 {
+		t.Fatalf("expected four redacted values: %q", joined)
 	}
 }
 
-// Execution stays blocked, and the reason names both outstanding blockers.
-func TestRustHoundRemainsBlockedUntilCredentialsAndConfinementAreVerified(t *testing.T) {
+func containsPair(args []string, flag, value string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == flag && args[index+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+// Execution stays blocked while no process-specific egress enforcement exists,
+// even though native credential transport is now accepted.
+func TestRustHoundRemainsBlockedUntilDestinationConfinementIsEnforced(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeRustHound(t, dir, installedHelp, `exit 1`)
 	t.Setenv("PATH", dir)
@@ -154,10 +175,13 @@ func TestRustHoundRemainsBlockedUntilCredentialsAndConfinementAreVerified(t *tes
 	if err == nil {
 		t.Fatal("capability check passed although execution must remain blocked")
 	}
-	for _, want := range []string{"scope restricted", "process list", config.AuthorizedTarget} {
+	for _, want := range []string{"scope restricted", "egress enforcement", config.AuthorizedTarget} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("blocking reason %q missing %q", err.Error(), want)
 		}
+	}
+	if strings.Contains(err.Error(), "credential") {
+		t.Fatalf("credential transport is accepted and must not be reported as the blocker: %v", err)
 	}
 	if module.ExecutionEnabled() {
 		t.Fatal("RustHound-CE must not be executable")
@@ -241,8 +265,14 @@ func TestRustHoundRunStreamsSanitizedOutputAndReportsFailure(t *testing.T) {
 	if !strings.Contains(output.String(), "error: anonymous bind failed") {
 		t.Fatalf("command output was not streamed to the sink: %q", output.String())
 	}
-	if strings.Contains(output.String(), runtime.Password) {
-		t.Fatalf("streamed output contains the credential: %q", output.String())
+	// The module streams the collector's output verbatim; the runner's redacting
+	// sink is what strips credentials from displays and persisted logs (covered
+	// by the runner tests).
+	if !strings.Contains(output.String(), "-p "+runtime.Password) {
+		t.Fatalf("native password argument did not reach the collector: %q", output.String())
+	}
+	if strings.Contains(err.Error(), runtime.Password) {
+		t.Fatalf("error text leaked the credential: %q", err.Error())
 	}
 	if !strings.Contains(output.String(), "-c LdapOnly") {
 		t.Fatalf("run did not pass the pinned collection method: %q", output.String())
@@ -277,9 +307,10 @@ func TestRustHoundDetailLinesDescribeConfigurationWithoutSecrets(t *testing.T) {
 	joined := strings.Join((Module{}).DetailLines(runtime), "\n")
 	for _, want := range []string{
 		"Execution: blocked - Scope Restricted",
+		"Authentication: native LDAP password",
 		"LdapOnly",
 		filepath.Join(runtime.ResultsRoot, "Enumeration", "RustHoundCE"),
-		"process list",
+		"egress enforcement",
 		config.AuthorizedTarget,
 	} {
 		if !strings.Contains(joined, want) {

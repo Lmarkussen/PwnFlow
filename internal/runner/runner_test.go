@@ -63,6 +63,39 @@ type failingModule struct {
 
 func (f failingModule) Run(context.Context, *modules.Runtime, modules.OutputSink) error { return f.err }
 
+type echoingModule struct{ testModule }
+
+func (echoingModule) Run(_ context.Context, _ *modules.Runtime, sink modules.OutputSink) error {
+	_, err := sink.Write([]byte("rusthound-ce -d sccm.lab -u audituser -p Sup3rSecret -o artifacts\nrusthound-ce --ldappassword Sup3rSecret -c LdapOnly\n"))
+	return err
+}
+
+// RustHound's native password argument is accepted, so a collector that echoes
+// its own command line must still never place that password in a display
+// buffer, the persisted log, or the error summary - in either flag form.
+func TestExecuteRedactsEchoedNativePasswordInBothFlagForms(t *testing.T) {
+	buffer := NewBuffer(4096)
+	result := (Runner{Secrets: []string{"Sup3rSecret"}, BufferLimit: 4096}).ExecuteWithBuffer(context.Background(), echoingModule{}, &modules.Runtime{}, t.TempDir(), buffer)
+	if result.Status != "completed" {
+		t.Fatalf("status=%s err=%v", result.Status, result.Err)
+	}
+	persisted, err := os.ReadFile(result.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, surface := range map[string]string{"display buffer": string(buffer.Snapshot()), "persisted log": string(persisted)} {
+		if strings.Contains(surface, "Sup3rSecret") {
+			t.Fatalf("%s leaked the native password: %q", name, surface)
+		}
+		if !strings.Contains(surface, "[REDACTED]") {
+			t.Fatalf("%s was not redacted: %q", name, surface)
+		}
+	}
+	if !strings.Contains(string(persisted), "-c LdapOnly") {
+		t.Fatalf("non-secret arguments must survive redaction: %q", string(persisted))
+	}
+}
+
 // Execution history stores the runner's error summary, so a failing run must
 // never carry a credential into SQLite.
 func TestExecuteRedactsErrorSummaryRecordedInHistory(t *testing.T) {

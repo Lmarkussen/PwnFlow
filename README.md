@@ -88,17 +88,36 @@ redirected by a caller. JSON artifacts are written to
 `results/sccm.lab/Enumeration/RustHoundCE/artifacts/<run timestamp>/` so a later
 run never overwrites an earlier one, while the sanitized terminal log stays
 separate under `results/sccm.lab/Enumeration/RustHoundCE/`. Execution history
-keeps status, exit code, artifact path, and a redacted error summary only; no
-credential is passed on the command line, streamed, or recorded.
+keeps status, exit code, artifact path, and a redacted error summary only.
 
-Collection is disabled. Module Information reports `Execution: blocked - Scope
-Restricted` together with both outstanding blockers: RustHound-CE 2.5.25 accepts
-the LDAP password only as a command-line value, which would expose it in the
-process list (its only argument-free transport is `--kerberos` with an
-operator-supplied `KRB5CCNAME` cache, and none exists on the assessment host),
-and `LdapOnly` with a pinned DC address does not prove that DNS lookups and LDAP
-referrals stay on `10.1.10.40`. Lifting the restriction requires an
-argument-free credential transport and verified DC-only egress confinement.
+RustHound-CE 2.5.25 accepts the LDAP password only as a command-line value.
+That native `-p` argument is used for this private single-operator lab, by
+operator decision; the password therefore exists briefly in the collector's
+process arguments, exactly as NetExec's does. It is never rendered in the
+Module Information command preview (`-p [REDACTED]`, and the same for
+`--ldappassword`, `-H/--hashes`, and `--pfx-pass`), never streamed to the
+output pane or the persisted log (the runner redacts by value, so both flag
+forms are covered), never stored in SQLite or the execution history, and never
+appended to an error message. No credential is committed to Git.
+
+Collection is still disabled. Module Information reports `Execution: blocked -
+Scope Restricted` with the remaining blocker: no verified process-specific
+egress enforcement is in place, so nothing pins the collector's connections to
+`10.1.10.40`, and this host resolves names through Tailscale MagicDNS
+(`100.100.100.100`) rather than the DC. `LdapOnly` plus a pinned `-i` describes
+intended LDAP-only behaviour but is not a network boundary, so it is not treated
+as one. Firejail and slirp4netns are not installed, an unprivileged network
+namespace has no route to the DC, Landlock's network rules match ports rather
+than addresses, and `nft`/`iptables` rules are global - none of which satisfies
+the requirement without changing the host firewall or requiring root.
+
+Lifting the restriction requires a process-specific egress boundary that can be
+verified without sending traffic to an unauthorized destination. The most
+promising candidate is a transient user unit that confines the whole PwnFlow
+process with cgroup BPF (`systemd-run --user -p IPAddressAllow=10.1.10.40 -p
+IPAddressDeny=any …`), verified as root with `bpftool cgroup tree` rather than by
+probing a forbidden address; PwnFlow itself would then need to detect that
+confinement before enabling execution.
 
 Cargo performs every install build in a temporary directory under `TMPDIR`, and
 Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for
