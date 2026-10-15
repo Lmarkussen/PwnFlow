@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 func (m *model) refreshFindings() {
@@ -20,6 +21,15 @@ func (m *model) refreshFindings() {
 	search := strings.ToLower(strings.TrimSpace(m.findingSearch))
 	filtered := rows[:0]
 	for _, finding := range rows {
+		if m.findingViewMode == "" {
+			m.findingViewMode = "findings"
+		}
+		if m.findingViewMode == "findings" && !actionableFinding(finding) {
+			continue
+		}
+		if m.findingViewMode == "observations" && actionableFinding(finding) {
+			continue
+		}
 		if m.findingSeverity != "" && !strings.EqualFold(finding.Severity, m.findingSeverity) {
 			continue
 		}
@@ -32,6 +42,32 @@ func (m *model) refreshFindings() {
 	m.findingRows = append(m.findingRows[:0], filtered...)
 	if m.findingCursor >= len(m.findingRows) {
 		m.findingCursor = max(0, len(m.findingRows)-1)
+	}
+	m.keepFindingVisible()
+}
+
+func actionableFinding(finding storage.Finding) bool {
+	if strings.HasPrefix(finding.FindingType, "ad_acl_") {
+		return finding.Severity == "high" || strings.Contains(strings.ToLower(finding.Title), "privileged")
+	}
+	return finding.Severity != "informational"
+}
+
+func (m *model) findingPageSize() int {
+	return max(1, m.height-8)
+}
+
+func (m *model) keepFindingVisible() {
+	page := m.findingPageSize()
+	if m.findingCursor < m.findingTop {
+		m.findingTop = m.findingCursor
+	}
+	if m.findingCursor >= m.findingTop+page {
+		m.findingTop = m.findingCursor - page + 1
+	}
+	maxTop := max(0, len(m.findingRows)-page)
+	if m.findingTop > maxTop {
+		m.findingTop = maxTop
 	}
 }
 
@@ -57,10 +93,13 @@ func (m *model) findingsViewRender() string {
 	if m.findingSearch != "" {
 		content.WriteString(dim.Render("Search: "+m.findingSearch) + "\n")
 	}
+	content.WriteString(dim.Render("View: "+strings.Title(m.findingViewMode)+"   f Findings   o Observations   a All") + "\n")
 	if m.findingSeverity != "" {
 		content.WriteString(dim.Render("Severity: "+strings.ToUpper(m.findingSeverity)) + "\n")
 	}
 	content.WriteString("\n")
+	m.keepFindingVisible()
+	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
 	if m.findingDetail && len(m.findingRows) > 0 {
 		finding := m.findingRows[m.findingCursor]
 		content.WriteString(lipgloss.NewStyle().Bold(true).Render(finding.Title) + "\n\n")
@@ -78,7 +117,8 @@ func (m *model) findingsViewRender() string {
 	if len(m.findingRows) == 0 {
 		content.WriteString("No findings match the current filters.\n\n")
 	} else {
-		for index, finding := range m.findingRows {
+		for index := m.findingTop; index < end; index++ {
+			finding := m.findingRows[index]
 			prefix := "  "
 			if index == m.findingCursor {
 				prefix = "> "
@@ -91,7 +131,7 @@ func (m *model) findingsViewRender() string {
 			content.WriteString(line + "\n")
 		}
 	}
-	content.WriteString(fmt.Sprintf("\n%d findings", len(m.findingRows)))
+	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
 	if m.findingSearchMode {
 		content.WriteString("\nSearch text: " + m.findingSearch + "_")
 	}

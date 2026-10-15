@@ -24,9 +24,11 @@ type model struct {
 	findingDetail       bool
 	findingRows         []storage.Finding
 	findingCursor       int
+	findingTop          int
 	findingSearch       string
 	findingSearchMode   bool
 	findingSeverity     string
+	findingViewMode     string
 	modules             []modules.Module
 	moduleIDs           []int64
 	moduleKeys          []int
@@ -145,7 +147,7 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 	if len(availability) > 0 && availability[0] != nil {
 		moduleAvailability = availability[0]
 	}
-	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24}
+	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24, findingViewMode: "findings"}
 	if db != nil {
 		m.findings = findingengine.NewManager(ctx, db)
 	}

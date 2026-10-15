@@ -141,6 +141,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishElevation(msg.err)
 	case detailsRefreshedMsg:
 		return m, nil
+	case tea.MouseMsg:
+		if m.findingsView {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.findingCursor -= 3
+			case tea.MouseButtonWheelDown:
+				m.findingCursor += 3
+			default:
+				return m, nil
+			}
+			if m.findingCursor < 0 {
+				m.findingCursor = 0
+			}
+			if m.findingCursor >= len(m.findingRows) {
+				m.findingCursor = max(0, len(m.findingRows)-1)
+			}
+			m.keepFindingVisible()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -506,7 +525,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.resizeWatcher()
 		}
 		m.findingsFromWatcher = false
-	case "esc", "f":
+	case "esc":
 		m.findingsView = false
 		if m.findingsFromWatcher {
 			m.watcher = true
@@ -520,11 +539,17 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "pgup":
 		m.findingCursor -= 10
 	case "pgdown":
-		m.findingCursor += 10
+		m.findingCursor += m.findingPageSize()
 	case "home":
 		m.findingCursor = 0
 	case "end":
 		m.findingCursor = len(m.findingRows) - 1
+	case "f":
+		m.findingViewMode = "findings"
+	case "o":
+		m.findingViewMode = "observations"
+	case "a":
+		m.findingViewMode = "all"
 	case "enter":
 		if len(m.findingRows) > 0 {
 			m.findingDetail = true
@@ -548,6 +573,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	if m.findingCursor >= len(m.findingRows) {
 		m.findingCursor = max(0, len(m.findingRows)-1)
 	}
+	m.keepFindingVisible()
 	m.refreshFindings()
 	return m, nil
 }

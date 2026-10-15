@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,45 @@ func TestFindingsWarningWrappingAndWatcherNavigation(t *testing.T) {
 	updated, _ = updated.(*model).handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if updated.(*model).watcher {
 		t.Fatal("Esc did not leave watcher")
+	}
+}
+
+func TestFindingsViewportHandlesLargeResultSets(t *testing.T) {
+	rows := make([]storage.Finding, 10000)
+	for index := range rows {
+		rows[index] = storage.Finding{FindingInput: storage.FindingInput{
+			Title: fmt.Sprintf("Synthetic condition %05d", index), Severity: "medium", AffectedObject: fmt.Sprintf("object-%05d", index),
+		}}
+	}
+	model := &model{findingsView: true, findingViewMode: "all", width: 100, height: 24, findingRows: rows}
+	frame := ansi.Strip(model.View())
+	if strings.Count(frame, "Synthetic condition") > model.findingPageSize() {
+		t.Fatalf("rendered more than one viewport page: %d", strings.Count(frame, "Synthetic condition"))
+	}
+	if _, command := model.handleFindingsKey("end"); command != nil || model.findingCursor != len(rows)-1 {
+		t.Fatalf("End did not select final finding: cursor=%d", model.findingCursor)
+	}
+	if model.findingTop <= 0 {
+		t.Fatalf("End did not move viewport: top=%d", model.findingTop)
+	}
+	if !strings.Contains(ansi.Strip(model.View()), "Synthetic condition 09999") {
+		t.Fatal("final finding is not visible after End")
+	}
+	_, _ = model.handleFindingsKey("home")
+	if model.findingCursor != 0 || model.findingTop != 0 {
+		t.Fatalf("Home did not restore first page: cursor=%d top=%d", model.findingCursor, model.findingTop)
+	}
+}
+
+func TestFindingsViewportHandlesMouseWheel(t *testing.T) {
+	rows := make([]storage.Finding, 50)
+	model := &model{findingsView: true, findingViewMode: "all", width: 100, height: 24, findingRows: rows}
+	_, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	if model.findingCursor != 3 {
+		t.Fatalf("wheel down moved cursor to %d, want 3", model.findingCursor)
+	}
+	_, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	if model.findingCursor != 0 {
+		t.Fatalf("wheel up moved cursor to %d, want 0", model.findingCursor)
 	}
 }

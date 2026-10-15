@@ -67,7 +67,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		moduleIDs[i] = id
 	}
 	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
-	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
 	if model.batch != nil {
 		model.cancelBatch()
 		waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
