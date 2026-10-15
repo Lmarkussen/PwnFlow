@@ -33,6 +33,7 @@ const (
 	BloodHoundCE ID = "bloodhound-ce"
 	BloodHoundPy ID = "bloodhound-ce-python"
 	RustHoundCE  ID = "rusthound-ce"
+	Certipy      ID = "certipy"
 )
 
 type Definition struct {
@@ -47,6 +48,11 @@ type Definition struct {
 	ProbeArgs            []string
 	VersionArgs          []string
 	Detection            DetectionMethod
+	// ProbeMustContain lists text the capability probe must report. It exists so
+	// a definition can require the tool to identify itself, which keeps an
+	// unrelated program that happens to share a command name from counting as
+	// installed.
+	ProbeMustContain []string
 }
 
 type Status struct {
@@ -69,6 +75,11 @@ func DefaultRegistry() Registry {
 		{ID: BloodHoundCE, DisplayName: "BloodHound CE", Executable: "bloodhound", Install: "the official BloodHound CE application", InstallMethod: InstallOfficialApplication, Package: "bloodhound", Required: false, Detection: DetectDebianPackage},
 		{ID: BloodHoundPy, DisplayName: "BloodHound CE Python ingestor", Executable: "bloodhound-ce-python", ExecutableCandidates: []string{"bloodhound-ce-python", "bloodhound-python"}, Install: "the bloodhound-ce package", InstallMethod: InstallPipx, Package: "bloodhound-ce", Required: false, ProbeArgs: []string{"--help"}},
 		{ID: RustHoundCE, DisplayName: "RustHound-CE", Executable: "rusthound-ce", Install: "install.sh --with-rusthound-ce", InstallMethod: InstallCargo, Package: "rusthound-ce", Required: false, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
+		// Kali's package installs Certipy's AD CS tool as certipy-ad; the
+		// pipx/PyPI distribution exposes the same tool as certipy. Both names are
+		// tried, and the probe has to show the AD CS tool's own banner so an
+		// unrelated command named certipy is never mistaken for it.
+		{ID: Certipy, DisplayName: "Certipy (AD CS)", Executable: "certipy-ad", ExecutableCandidates: []string{"certipy"}, Install: "install.sh --with-certipy", InstallMethod: InstallAPT, Package: "certipy-ad", Required: false, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}, ProbeMustContain: []string{"Active Directory Certificate Services"}},
 	}}
 }
 
@@ -117,6 +128,13 @@ func check(ctx context.Context, definition Definition) Status {
 		status.State = state
 		status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", definition.DisplayName, strings.Join(probeArgs, " "), diagnostic(probeStdout.String(), probeStderr.String(), err))
 		return status
+	}
+	for _, required := range definition.ProbeMustContain {
+		if !strings.Contains(probeStdout.String(), required) && !strings.Contains(probeStderr.String(), required) {
+			status.State = "broken"
+			status.Detail = fmt.Sprintf("%s at %s did not identify itself during the capability probe (expected %q); install %s", definition.DisplayName, path, required, installationDescription(definition))
+			return status
+		}
 	}
 	status.Available = true
 	status.State = "installed"

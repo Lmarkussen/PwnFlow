@@ -145,14 +145,20 @@ func (m *model) infoView() string {
 }
 
 func (m *model) moduleAvailability(module modules.Module) string {
+	dependencyKey := module.ID()
+	if provider, ok := module.(modules.DependencyKeyProvider); ok {
+		if key := provider.DependencyKey(); key != "" {
+			dependencyKey = key
+		}
+	}
 	if policy, ok := module.(modules.ExecutionPolicy); ok && !policy.ExecutionEnabled() {
 		reason := policy.AvailabilityReason()
-		if dependencyReason := m.availability[module.ID()]; dependencyReason != "" {
+		if dependencyReason := m.availability[dependencyKey]; dependencyReason != "" {
 			return reason + "; " + dependencyReason
 		}
 		return reason
 	}
-	if reason := m.availability[module.ID()]; reason != "" {
+	if reason := m.availability[dependencyKey]; reason != "" {
 		return reason
 	}
 	if module.ToolFamily() == modules.ToolFamilyNetExec {

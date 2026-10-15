@@ -114,6 +114,13 @@ type CommandPreviewProvider interface {
 	CommandPreview(*Runtime) string
 }
 
+// DependencyKeyProvider is implemented by modules whose availability is gated by
+// a dependency registry entry with a different ID, such as a tool that
+// contributes several modules under one installed program.
+type DependencyKeyProvider interface {
+	DependencyKey() string
+}
+
 // DetailProvider is implemented by modules that expose their fixed configuration
 // in the Module Information pane, such as a pinned collection method or the
 // expected output directory. Lines must be cheap to compute and free of

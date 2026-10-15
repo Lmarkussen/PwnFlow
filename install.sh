@@ -3,14 +3,17 @@ set -euo pipefail
 
 install_rusthound_ce=0
 install_netexec_requested=0
+install_certipy=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
+certipy_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
   case "$argument" in
     --with-netexec) install_netexec_requested=1 ;;
     --with-rusthound-ce) install_rusthound_ce=1 ;;
+    --with-certipy) install_certipy=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -18,12 +21,11 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy]"
       echo ""
-      echo "Installs the supported Kali dependencies: NetExec and RustHound-CE."
-      echo "BloodHound CE and its Python ingestor are not installed by this script;"
-      echo "BloodHound CE is the separate graph application used to import and view"
-      echo "collected data. Kali Linux is the only supported installation target."
+      echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
+      echo "Certipy (AD CS enumeration, from the certipy-ad package)."
+      echo "Kali Linux is the only supported installation target."
       exit 0
       ;;
     *) echo "Unknown option: $argument" >&2; exit 2 ;;
@@ -35,6 +37,7 @@ done
 if [[ $# -eq 0 ]]; then
   install_netexec_requested=1
   install_rusthound_ce=1
+  install_certipy=1
 fi
 
 ensure_sudo_authenticated() {
@@ -335,12 +338,117 @@ install_rusthound_ce() {
   echo "RustHound-CE installed and functional at ${executable}: $("$executable" --version 2>/dev/null || echo version unavailable)"
 }
 
+# Certipy's AD CS tool is installed by Kali's certipy-ad package as `certipy-ad`;
+# the pipx/PyPI distribution exposes the same tool as `certipy`. Both names are
+# detection candidates, and whichever is found has to identify itself as the AD
+# CS tool before it is accepted: unrelated programs named certipy exist.
+certipy_adcs_marker="Active Directory Certificate Services"
+
+# The arguments the installed Certipy must document for the enumeration modules
+# PwnFlow registers. A version that renames or drops one is reported instead of
+# being accepted and then producing a different command in the TUI.
+certipy_find_options=(-dc-ip -u -p -dc-only -ldap-scheme -ldap-port -json -text -output -enabled -vulnerable)
+
+certipy_reports_adcs() {
+  local executable="$1" help
+  help="$("$executable" --help 2>&1)" || return 1
+  [[ "$help" == *"$certipy_adcs_marker"* ]]
+}
+
+certipy_find_help() {
+  local executable="$1" help
+  help="$("$executable" find --help 2>&1)" || return 1
+  # The shipped find subcommand describes itself in terms of these components;
+  # the shorter "Enumerate AD CS" phrase appears only in the top-level action
+  # list, so it cannot be used to recognise the subcommand's own help.
+  [[ "$help" == *"$certipy_adcs_marker"* ]] || return 1
+  local option
+  for option in "${certipy_find_options[@]}"; do
+    [[ "$help" == *"$option"* ]] || return 1
+  done
+  printf '%s\n' "$help"
+}
+
+certipy_candidate() {
+  local candidate path
+  for candidate in certipy-ad certipy; do
+    path="$(command -v "$candidate" 2>/dev/null)" || continue
+    if [[ -n "$path" ]] && certipy_reports_adcs "$path"; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# certipy_functional accepts only an AD CS Certipy that documents the arguments
+# PwnFlow passes; anything else is reported rather than silently reused.
+certipy_functional() {
+  local executable="$1"
+  certipy_find_help "$executable" >/dev/null
+}
+
+# certipy_banner reports the first line of the version banner. Certipy writes it
+# to standard error, so both streams are captured, and the line is cut in the
+# shell so the detection path needs nothing beyond the interpreter.
+certipy_banner() {
+  local banner
+  banner="$("$1" --version 2>&1 || true)"
+  printf '%s\n' "${banner%%$'\n'*}"
+}
+
+install_certipy() {
+  local executable
+  if executable="$(certipy_candidate)"; then
+    if ! certipy_functional "$executable"; then
+      echo "Certipy is present at ${executable} but does not document the find arguments PwnFlow uses; refusing to replace or upgrade it automatically." >&2
+      certipy_status="Failed (${executable} is not a supported Certipy version)"
+      return 1
+    fi
+    echo "Certipy already installed and functional: $(certipy_banner "$executable") at ${executable}"
+    certipy_status="Already installed"
+    return 0
+  fi
+  if command -v certipy-ad >/dev/null 2>&1; then
+    echo "certipy-ad is installed but does not identify itself as AD CS Certipy; refusing to replace or upgrade it automatically." >&2
+    certipy_status="Failed (the installed certipy-ad is not AD CS Certipy)"
+    return 1
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "No supported package manager found. Install Certipy (AD CS) with Kali's certipy-ad package." >&2
+    certipy_status="Failed (APT is unavailable)"
+    return 1
+  fi
+  echo "Installing missing Certipy (AD CS) from the Kali APT repository."
+  if ! run_apt update; then
+    certipy_status="Failed (APT update failed)"
+    return 1
+  fi
+  if ! run_apt_install certipy-ad; then
+    certipy_status="Failed (APT transaction not applied)"
+    return 1
+  fi
+  if ! executable="$(certipy_candidate)"; then
+    echo "APT completed but no functional AD CS Certipy executable was found on PATH (expected certipy-ad)." >&2
+    certipy_status="Failed (APT completed without a functional certipy-ad)"
+    return 1
+  fi
+  if ! certipy_functional "$executable"; then
+    echo "APT installed ${executable}, but it does not document the find arguments PwnFlow uses." >&2
+    certipy_status="Failed (${executable} does not support the required find arguments)"
+    return 1
+  fi
+  certipy_status="Installed"
+  echo "Certipy installed and functional at ${executable}: $(certipy_banner "$executable")"
+}
+
 print_summary() {
   echo ""
   echo "Installation summary:"
   echo "  NetExec: ${netexec_status}"
   echo "  RustHound-CE: ${rusthound_ce_status}"
   echo "  Cargo: ${cargo_status}"
+  echo "  Certipy: ${certipy_status}"
 }
 
 if [[ ${install_netexec_requested} -eq 1 ]]; then
@@ -361,5 +469,13 @@ if [[ ${install_rusthound_ce} -eq 1 ]]; then
     exit 1
   fi
 fi
-echo "BloodHound CE is not installed, started, or configured by this script; an existing BloodHound CE application is left unchanged and RustHound-CE output remains importable there."
+if [[ ${install_certipy} -eq 1 ]]; then
+  if ! install_certipy; then
+    if [[ ${certipy_status} == "Skipped" ]]; then
+      certipy_status="Failed"
+    fi
+    print_summary
+    exit 1
+  fi
+fi
 print_summary

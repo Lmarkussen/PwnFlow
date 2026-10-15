@@ -127,6 +127,30 @@ func writeFailingPackageManagerMocks(t *testing.T, bin string) {
 	writeExecutable(t, bin, "pipx", `echo pipx-should-not-run >&2; exit 99`)
 }
 
+// writeCertipyADCSMock writes a stand-in for Certipy's AD CS tool under the
+// command name the installer is expected to find. It answers the capability
+// probes the installer performs: the AD CS banner, the find action, and the find
+// arguments PwnFlow's modules pass.
+func writeCertipyADCSMock(t *testing.T, directory, name string) {
+	t.Helper()
+	writeExecutable(t, directory, name, `case "$1" in
+--version) echo 'Certipy v5.1.0 - by Oliver Lyak (ly4k)' >&2 ;;
+--help) echo 'Active Directory Certificate Services enumeration and abuse'; echo '    find                Enumerate AD CS' ;;
+find) echo 'Discover and analyze Active Directory Certificate Services components.'; echo '-dc-only -dc-ip -u -p -ldap-scheme -ldap-port -json -text -output -enabled -vulnerable' ;;
+*) exit 1 ;;
+esac`)
+}
+
+// writeUnrelatedCertipyMock writes a different program that happens to be called
+// certipy. It must never be mistaken for the AD CS tool.
+func writeUnrelatedCertipyMock(t *testing.T, directory, name string) {
+	t.Helper()
+	writeExecutable(t, directory, name, `case "$1" in
+--version) echo 'certipy 0.1 - certificate helper' ;;
+*) echo 'certificate helper: no AD CS support'; exit 0 ;;
+esac`)
+}
+
 func readLoggedTMPDIR(t *testing.T, logPath string) string {
 	t.Helper()
 	contents, err := os.ReadFile(logPath)
@@ -142,6 +166,7 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'ii  9.8.0~rc3-0kali1'`)
 	writeFailingPackageManagerMocks(t, bin)
 
@@ -152,8 +177,10 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	for _, want := range []string{
 		"NetExec already installed and functional",
 		"RustHound-CE already installed and functional",
+		"Certipy already installed and functional",
 		"NetExec: Already installed",
 		"RustHound-CE: Already installed",
+		"Certipy: Already installed",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q: %s", want, output)
@@ -215,6 +242,7 @@ func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "systemctl", `echo systemctl-should-not-run >&2; exit 99`)
 	writeExecutable(t, bin, "apt-cache", `echo apt-cache-should-not-run >&2; exit 99`)
 	writeFailingPackageManagerMocks(t, bin)
@@ -233,8 +261,17 @@ func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 			t.Errorf("installer performed unrelated work: %s", stdout)
 		}
 	}
-	if !strings.Contains(stdout, "BloodHound CE is not installed, started, or configured by this script") {
-		t.Errorf("installer must state that BloodHound CE is out of scope: %s", stdout)
+	// The installer no longer narrates BloodHound at all: no application
+	// messaging, no retired installer rows, and no summary entry. The mock
+	// directory is named after this test, so it is normalised away first.
+	narrated := strings.ReplaceAll(stdout, bin, "<mock>")
+	if strings.Contains(narrated, "BloodHound") {
+		t.Errorf("installer still displays obsolete BloodHound messaging: %s", narrated)
+	}
+	for _, unwanted := range []string{"BloodHound CE:", "BloodHound CE Python", "bloodhound-ce"} {
+		if strings.Contains(narrated, unwanted) {
+			t.Errorf("installer still displays %q: %s", unwanted, narrated)
+		}
 	}
 }
 
@@ -315,7 +352,7 @@ func TestInstallerHelpDocumentsStandaloneDefaultAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	for _, want := range []string{"--with-netexec", "--with-rusthound-ce"} {
+	for _, want := range []string{"--with-netexec", "--with-rusthound-ce", "--with-certipy"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("help missing %s", want)
 		}
@@ -564,5 +601,139 @@ esac`)
 	}
 	if strings.Contains(logText, "bloodhound") || strings.Contains(logText, "pipx") {
 		t.Errorf("BloodHound components must never be installed: %s", logText)
+	}
+}
+
+// A functional AD CS Certipy, whatever name it is exposed as, must be reused
+// instead of sending APT after a package that is already configured.
+func TestInstallerReusesExistingCertipyWithoutAPT(t *testing.T) {
+	for _, name := range []string{"certipy-ad", "certipy"} {
+		t.Run(name, func(t *testing.T) {
+			bin := t.TempDir()
+			writeCertipyADCSMock(t, bin, name)
+			writeFailingPackageManagerMocks(t, bin)
+
+			output, err := runInstaller(t, bin, "--with-certipy")
+			if err != nil {
+				t.Fatalf("existing Certipy was not accepted: %v\n%s", err, output)
+			}
+			if !strings.Contains(output, "Certipy already installed and functional") {
+				t.Errorf("existing Certipy was not reported: %s", output)
+			}
+			// Certipy reports its banner on stderr, so the installer has to read
+			// both streams to name the version it accepted.
+			if !strings.Contains(output, "Certipy v5.1.0") {
+				t.Errorf("the accepted Certipy version was not reported: %s", output)
+			}
+			if !strings.Contains(output, "Certipy: Already installed") {
+				t.Errorf("summary did not record the existing installation: %s", output)
+			}
+			for _, unwanted := range []string{"apt-should-not-run", "sudo-should-not-run", "pipx-should-not-run"} {
+				if strings.Contains(output, unwanted) {
+					t.Errorf("installer performed installation work for an existing Certipy: %s", output)
+				}
+			}
+		})
+	}
+}
+
+// A different program that happens to be called certipy must not be treated as
+// the AD CS tool, and must not stop the supported package from being installed.
+func TestInstallerRejectsUnrelatedCertipyAndInstallsTheADCSPackage(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "apt.log")
+	writeUnrelatedCertipyMock(t, bin, "certipy")
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
+	writeExecutable(t, bin, "apt-get", `printf '%s\n' "$*" >> "$APT_LOG"; case " $* " in
+*" install "*) `+certipyPackageBody+` ;;
+esac; exit 0`)
+	t.Setenv("PWNFlow_ASSUME_YES", "1")
+	t.Setenv("APT_LOG", log)
+	t.Setenv("FAKE_BIN", bin)
+
+	output, err := runInstaller(t, bin, "--with-certipy")
+	if err != nil {
+		t.Fatalf("Certipy installation failed: %v\n%s", err, output)
+	}
+	contents, readErr := os.ReadFile(log)
+	if readErr != nil {
+		t.Fatalf("%v\ninstaller output: %s", readErr, output)
+	}
+	logText := string(contents)
+	if !strings.Contains(logText, "certipy-ad") {
+		t.Errorf("the certipy-ad package was not requested: %s", logText)
+	}
+	if strings.Contains(output, "certipy 0.1") {
+		t.Errorf("the unrelated certipy was accepted as AD CS Certipy: %s", output)
+	}
+	if !strings.Contains(output, "Installing missing Certipy (AD CS) from the Kali APT repository.") {
+		t.Errorf("installer did not explain the installation: %s", output)
+	}
+	if !strings.Contains(output, "Certipy: Installed") {
+		t.Errorf("summary did not record the installation: %s", output)
+	}
+}
+
+// certipyPackageBody stands in for the package manager installing the Certipy
+// package: it places the expected executable next to the mocks.
+const certipyPackageBody = `printf '%s\n' \
+'#!/bin/sh' \
+'case "$1" in' \
+'--version) echo "Certipy v5.1.0 - by Oliver Lyak (ly4k)" >&2 ;;' \
+'--help) echo "Active Directory Certificate Services enumeration and abuse"; echo "    find                Enumerate AD CS" ;;' \
+'find) echo "Discover and analyze Active Directory Certificate Services components."; echo "-dc-only -dc-ip -u -p -ldap-scheme -ldap-port -json -text -output -enabled -vulnerable" ;;' \
+'*) exit 1 ;;' \
+'esac' > "$FAKE_BIN/certipy-ad"
+/bin/chmod 700 "$FAKE_BIN/certipy-ad"`
+
+// An APT transaction still needs the operator's explicit approval: without it the
+// simulation runs, the installation does not.
+func TestInstallerCertipyInstallRequiresApproval(t *testing.T) {
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "apt.log")
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
+	writeExecutable(t, bin, "apt-get", `printf '%s\n' "$*" >> "$APT_LOG"; exit 0`)
+	t.Setenv("PWNFlow_ASSUME_YES", "")
+	t.Setenv("APT_LOG", log)
+
+	stdout, stderr, err := runInstallerSplit(t, bin, "--with-certipy")
+	if err == nil {
+		t.Fatalf("the installer applied an unapproved transaction:\n%s", stdout)
+	}
+	if !strings.Contains(stdout+stderr, "APT transaction cancelled") {
+		t.Errorf("the cancellation was not reported: %s%s", stdout, stderr)
+	}
+	contents, readErr := os.ReadFile(log)
+	if readErr != nil {
+		t.Fatalf("%v\ninstaller output: %s", readErr, stdout)
+	}
+	if strings.Contains(string(contents), "install -y") {
+		t.Errorf("an installation ran without operator approval: %s", contents)
+	}
+	if !strings.Contains(stdout, "APT simulation for: certipy-ad") {
+		t.Errorf("the transaction was not simulated before approval: %s", contents)
+	}
+	if !strings.Contains(stdout, "Certipy: Failed") {
+		t.Errorf("summary did not record the cancelled installation: %s", stdout)
+	}
+}
+
+// Selective installation stays selective: a tool that was not requested is
+// reported as skipped and is not touched.
+func TestInstallerSkipsCertipyUnlessRequested(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeFailingPackageManagerMocks(t, bin)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err != nil {
+		t.Fatalf("selective installation failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Certipy: Skipped") {
+		t.Errorf("unselected Certipy was not reported as skipped: %s", output)
+	}
+	for _, unwanted := range []string{"apt-should-not-run", "sudo-should-not-run"} {
+		if strings.Contains(output, unwanted) {
+			t.Errorf("unselected Certipy still performed installation work: %s", output)
+		}
 	}
 }

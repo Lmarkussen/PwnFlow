@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/certipy"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -21,6 +22,9 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		registry.Register(module)
 	}
 	registry.Register(rusthound.Module{})
+	for _, module := range certipy.EnumerationModules() {
+		registry.Register(module)
+	}
 	registered := registry.All()
 	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
 	if err != nil {

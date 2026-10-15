@@ -28,7 +28,7 @@ make install PREFIX="$HOME/.local"
 make uninstall PREFIX="$HOME/.local"
 ```
 
-`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `install.sh` in the repository root is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec and RustHound-CE (including Cargo/build prerequisites when needed). Existing functional tools are skipped. Use `--with-netexec` or `--with-rusthound-ce` for selective installation. Kali Linux is the only supported installation target.
+`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `install.sh` in the repository root is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec, RustHound-CE (including Cargo/build prerequisites when needed), and Certipy for AD CS enumeration. Existing functional tools are skipped, whichever name they are exposed under. Use `--with-netexec`, `--with-rusthound-ce`, or `--with-certipy` for selective installation. Kali Linux is the only supported installation target.
 
 The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `./install.sh`.
 
@@ -36,7 +36,7 @@ PwnFlow is a general-purpose framework: the target, domain, and credentials are 
 
 The application root is resolved from the executable location (or the nearest `go.mod` during development), not the current working directory. Results are written to `results/<domain>/Enumeration/NetExec/`, with prior output under `history/`, and metadata in `enumeration.db`.
 
-The active executable scope is NetExec → Enumeration. LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. RustHound-CE is registered separately under Active Directory → Enumeration with a scope-restricted status; it is not a NetExec module and is never included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, Reporting, AD CS, and Network remain visible as inactive taxonomy entries until their workflows are implemented. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
+The active executable scopes are NetExec → Enumeration, Active Directory → Enumeration (RustHound-CE), and AD CS → Enumeration (Certipy). LDAP and SMB are separate protocol scopes, so their arguments are never mixed. Credential Auditing remains visible with disabled sensitive Kerberos modules. None of the non-NetExec modules is a NetExec module or is ever included in NetExec YOLO mode. Credential Dumping, Privilege Escalation, Reporting, and Network remain visible as inactive taxonomy entries until their workflows are implemented. `A` runs every available module in the selected NetExec Enumeration protocol scope and never expands the authorized target scope.
 
 NetExec LDAP and SMB capabilities are checked locally at execution time with `nxc <protocol> --help`; NetExec LDAP plugin modules are checked with `nxc ldap -L`. Unsupported options are marked unavailable rather than substituted. The current installed Kali lab version was inspected locally as NetExec 1.5.1. No capability check supplies a target or initiates enumeration.
 
@@ -213,6 +213,45 @@ before compiling, and refuses to start a build when the filesystem has less
 than 2 GiB free. An explicitly configured `TMPDIR` is used when it is a writable
 directory with enough room and is never replaced silently; when it is unusable
 the installer stops and explains how to correct it.
+
+### AD CS enumeration with Certipy
+
+Certipy's AD CS tool is registered under AD CS → Enumeration → LDAP as three
+read-only modules: **AD CS Discovery** (`certipy find`), **Enabled Certificate
+Templates** (`find -enabled`), and **Potentially Vulnerable Certificate
+Templates** (`find -vulnerable`). Kali's `certipy-ad` package and a pipx
+installation of the same tool are both detected, and whichever is found has to
+report the AD CS tool's own banner and document the arguments PwnFlow passes
+before it is accepted; an unrelated program that happens to be called `certipy`
+is reported instead of being run.
+
+Request the dependency explicitly with `./install.sh --with-certipy`, which
+installs or reuses the `certipy-ad` package. The installer simulates the APT
+transaction and asks for confirmation before applying it, never upgrades or
+replaces a Certipy that is already installed but unusable, and reports the
+result in the installation summary.
+
+Every module passes `-dc-only` together with the target, domain, and credentials
+supplied to PwnFlow at startup, so the collection stays on the configured domain
+controller: certificate authorities, templates, and their configuration are read
+over LDAP, and CA registry retrieval, Web Enrollment checks, and member-machine
+contact are skipped. The transport is pinned to LDAPS (`-ldap-scheme ldaps
+-ldap-port 636`) and is never downgraded to unsigned LDAP, which is the
+condition a signing-requiring controller would otherwise reject. `-dc-only` and
+the pinned flags express the intended scope; DNS resolution and LDAP referral
+handling remain Certipy's own behaviour, and Module Information states that they
+are not a network boundary.
+
+Certipy's native `-u`/`-p` credentials are used for this private
+single-operator lab, by operator decision, so the password exists briefly in the
+collector's process arguments exactly as NetExec's does. It is redacted from the
+Module Information preview, from streamed output and persisted logs, and from
+the SQLite execution history, where only status, exit code, artifact path, and a
+redacted error summary are recorded. JSON and text reports are written to
+`results/<domain>/Enumeration/Certipy/artifacts/<run timestamp>/` with a
+per-run prefix, so a later run never overwrites an earlier one, and they stay
+separate from the sanitized terminal log under
+`results/<domain>/Enumeration/Certipy/`.
 
 ## Emergency terminal recovery
 

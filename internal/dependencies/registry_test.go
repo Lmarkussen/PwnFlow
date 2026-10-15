@@ -229,3 +229,49 @@ func TestBloodHoundPackageDetectionDistinguishesMissingAndBrokenQueries(t *testi
 		})
 	}
 }
+
+// certipyADCSHelp is the identifying part of Certipy's own help output.
+const certipyADCSHelp = "Active Directory Certificate Services enumeration and abuse\n    find                Enumerate AD CS"
+
+func writeFakeCertipy(t *testing.T, directory, name, help string) {
+	t.Helper()
+	body := "#!/bin/sh\ncase \"$1\" in\n--help) printf '%s\\n' \"" + help + "\" ;;\n--version) echo 'Certipy v5.1.0' ;;\n*) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Kali packages Certipy's AD CS tool as certipy-ad; the pipx distribution
+// exposes it as certipy. Both names are detected, and the capability probe has to
+// show the AD CS tool itself.
+func TestCertipyIsDetectedUnderEitherCommandName(t *testing.T) {
+	for _, name := range []string{"certipy-ad", "certipy"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFakeCertipy(t, dir, name, certipyADCSHelp)
+			t.Setenv("PATH", dir)
+			status := DefaultRegistry().CheckOne(context.Background(), Certipy)
+			if !status.Available || status.State != "installed" {
+				t.Fatalf("Certipy was not detected as %s: %#v", name, status)
+			}
+			if status.FoundExecutable != name {
+				t.Fatalf("unexpected executable: %q", status.FoundExecutable)
+			}
+		})
+	}
+}
+
+// A different program that happens to be called certipy must not be reported as
+// installed: detection is read-only and never installs or replaces anything.
+func TestUnrelatedCertipyIsNotAccepted(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeCertipy(t, dir, "certipy", "certificate helper: no AD CS support")
+	t.Setenv("PATH", dir)
+	status := DefaultRegistry().CheckOne(context.Background(), Certipy)
+	if status.Available {
+		t.Fatalf("an unrelated certipy was accepted: %#v", status)
+	}
+	if status.State != "broken" || !strings.Contains(status.Detail, "Active Directory Certificate Services") {
+		t.Fatalf("the mismatch was not explained: %#v", status)
+	}
+}
