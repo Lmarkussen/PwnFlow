@@ -35,7 +35,7 @@ OPTIONAL VALUES:
   -u, --ldapusername <ldapusername>  LDAP username, like: user@domain.local
   -p, --ldappassword <ldappassword>  LDAP password
   -H, --hashes <hashes>              NT hash for pass-the-hash authentication (NTLM)
-  -i, --ldapip <ldapip>              Domain Controller IP address like: 192.168.1.10
+  -i, --ldapip <ldapip>              Domain Controller IP address like: 198.51.100.10
   -o, --output <output>              Output directory where you would like to save JSON files [default: ./]
 
 OPTIONAL FLAGS:

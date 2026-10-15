@@ -14,8 +14,10 @@ package ldaptransport
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -111,7 +113,40 @@ type Options struct {
 	// RootCAs overrides the trust store used for verification; nil means the
 	// system trust store.
 	RootCAs *x509.CertPool
+	// CertificateTrust is consulted when, and only when, the presented chain is
+	// signed by an authority the trust store does not know. The rest of the
+	// certificate - host name, validity window, server-auth usage - must already
+	// hold, so this can approve an unknown authority but never a bad certificate.
+	CertificateTrust TrustHandler
 }
+
+// TrustDecision is the operator's answer about an untrusted certificate.
+type TrustDecision int
+
+const (
+	// TrustReject refuses the certificate; the connection must not proceed.
+	TrustReject TrustDecision = iota
+	// TrustSession accepts the certificate for this run only.
+	TrustSession
+	// TrustPersist accepts it and remembers it for this target.
+	TrustPersist
+)
+
+// CertificateInfo describes a presented certificate for a trust decision. It
+// never contains credentials.
+type CertificateInfo struct {
+	Target      string
+	Identity    string
+	Subject     string
+	Issuer      string
+	NotBefore   time.Time
+	NotAfter    time.Time
+	Fingerprint string
+	Reason      string
+}
+
+// TrustHandler asks the operator about an untrusted issuing authority.
+type TrustHandler func(CertificateInfo) (TrustDecision, error)
 
 // Binder performs one NTLM bind over one transport. It is an interface so the
 // transport policy can be exercised without a domain controller.
@@ -308,13 +343,121 @@ func newTLSVerification(cfg config.Config, options Options) tlsVerification {
 	if serverName == "" {
 		serverName = cfg.Target
 	}
-	return tlsVerification{
+	verification := tlsVerification{
 		serverName: serverName,
-		config: &tls.Config{ // #nosec G402 -- InsecureSkipVerify is an explicit operator opt-in, off by default
-			ServerName:         serverName,
-			InsecureSkipVerify: options.InsecureSkipVerify,
-			RootCAs:            options.RootCAs,
-		},
+		config:     &tls.Config{ServerName: serverName, RootCAs: options.RootCAs}, // #nosec G402 -- see below
+	}
+	switch {
+	case options.InsecureSkipVerify:
+		// The explicit operator opt-in: no certificate checks at all.
+		verification.config.InsecureSkipVerify = true
+	case options.CertificateTrust != nil:
+		// Verification is not weakened, it is delegated: the callback below runs
+		// the same chain, host name, validity and usage checks, and additionally
+		// lets the operator decide about an unknown issuing authority.
+		verification.config.InsecureSkipVerify = true
+		verification.config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			return verifyPresentedCertificate(rawCerts, serverName, cfg, options)
+		}
+	}
+	return verification
+}
+
+// verifyPresentedCertificate performs the certificate checks PwnFlow relies on
+// and consults the trust handler only for an unknown issuing authority.
+func verifyPresentedCertificate(rawCerts [][]byte, serverName string, cfg config.Config, options Options) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("the server presented no certificate")
+	}
+	leaf, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("the presented certificate could not be parsed: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	for _, raw := range rawCerts[1:] {
+		if chainCert, parseErr := x509.ParseCertificate(raw); parseErr == nil {
+			intermediates.AddCert(chainCert)
+		}
+	}
+	_, verifyErr := leaf.Verify(x509.VerifyOptions{
+		Roots:         options.RootCAs,
+		Intermediates: intermediates,
+		DNSName:       serverName,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	if verifyErr == nil {
+		return nil
+	}
+	// Only an untrusted authority is a decision the operator may make. A wrong
+	// name, an expired certificate, or a certificate that is unusable for server
+	// authentication stays fatal, so a decision can never paper over them.
+	if !isUnknownAuthority(verifyErr) {
+		return verifyErr
+	}
+	if err := verifyApartFromChainTrust(leaf, serverName); err != nil {
+		return err
+	}
+	if options.CertificateTrust == nil {
+		return verifyErr
+	}
+	decision, err := options.CertificateTrust(certificateInfo(rawCerts[0], leaf, cfg, serverName, verifyErr))
+	if err != nil {
+		return err
+	}
+	if decision == TrustReject {
+		return fmt.Errorf("the untrusted certificate for %s was rejected", serverName)
+	}
+	return nil
+}
+
+// verifyApartFromChainTrust checks everything except which authority signed the
+// certificate: validity window, host name, and server-auth suitability.
+func verifyApartFromChainTrust(leaf *x509.Certificate, serverName string) error {
+	now := time.Now()
+	if now.Before(leaf.NotBefore) {
+		return fmt.Errorf("the certificate is not valid before %s", leaf.NotBefore.UTC().Format(time.RFC3339))
+	}
+	if now.After(leaf.NotAfter) {
+		return fmt.Errorf("the certificate expired on %s", leaf.NotAfter.UTC().Format(time.RFC3339))
+	}
+	if err := leaf.VerifyHostname(serverName); err != nil {
+		return fmt.Errorf("the certificate is not valid for %q: %w", serverName, err)
+	}
+	serverAuth := false
+	for _, usage := range leaf.ExtKeyUsage {
+		if usage == x509.ExtKeyUsageServerAuth || usage == x509.ExtKeyUsageAny {
+			serverAuth = true
+			break
+		}
+	}
+	if !serverAuth {
+		return fmt.Errorf("the certificate is not valid for server authentication")
+	}
+	return nil
+}
+
+func isUnknownAuthority(err error) bool {
+	var unknownAuthority x509.UnknownAuthorityError
+	return errors.As(err, &unknownAuthority)
+}
+
+// certificateInfo builds the operator-facing description of a presented
+// certificate. It carries no credentials.
+func certificateInfo(der []byte, leaf *x509.Certificate, cfg config.Config, serverName string, reason error) CertificateInfo {
+	digest := sha256.Sum256(der)
+	parts := make([]string, 0, len(digest))
+	for _, value := range digest {
+		parts = append(parts, strings.ToUpper(hex.EncodeToString([]byte{value})))
+	}
+	return CertificateInfo{
+		Target:      cfg.Target,
+		Identity:    serverName,
+		Subject:     leaf.Subject.String(),
+		Issuer:      leaf.Issuer.String(),
+		NotBefore:   leaf.NotBefore,
+		NotAfter:    leaf.NotAfter,
+		Fingerprint: strings.Join(parts, ":"),
+		Reason:      reason.Error(),
 	}
 }
 

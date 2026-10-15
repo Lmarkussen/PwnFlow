@@ -17,6 +17,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/password"
 	"github.com/pwnflow/pwnflow/internal/preflight"
 	"github.com/pwnflow/pwnflow/internal/storage"
+	"github.com/pwnflow/pwnflow/internal/trust"
 	"github.com/pwnflow/pwnflow/internal/tui"
 	"golang.org/x/term"
 )
@@ -82,7 +83,7 @@ func main() {
 		fail(err)
 	}
 	cfg.InsecureSkipVerify = *insecureSkipVerify
-	connection, err := preflight.Run(ctx, cfg)
+	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg))
 	if err != nil {
 		fail(err)
 	}
@@ -108,6 +109,26 @@ func main() {
 	if err := tui.Run(ctx, cfg, db, version, dependencyReasons); err != nil && !errors.Is(err, tui.ErrQuit) {
 		fail(err)
 	}
+}
+
+// trustOptions builds the verification options for the LDAP preflight: the
+// operator's explicit flag, plus the interactive certificate decision that lets
+// an internal CA be approved for one run or remembered for this target. When no
+// approval store is reachable the decision stays session-only.
+func trustOptions(cfg config.Config) ldaptransport.Options {
+	options := ldaptransport.Options{InsecureSkipVerify: cfg.InsecureSkipVerify}
+	path, err := trust.DefaultPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[!] certificate approvals cannot be stored: %v\n", err)
+	} else {
+		store, loadErr := trust.Load(path)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v\n", loadErr)
+		} else {
+			options.CertificateTrust = (&trust.Decider{Store: store, In: os.Stdin, Out: os.Stderr}).Decide
+		}
+	}
+	return options
 }
 
 func fail(err error) { fmt.Fprintln(os.Stderr, "pwnflow:", err); os.Exit(1) }

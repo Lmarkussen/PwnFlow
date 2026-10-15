@@ -101,6 +101,46 @@ issuing authority, expired certificate, failed TLS handshake, or a refused bind.
 `--insecure-skip-verify` remains the explicit, operator-approved escape hatch for
 lab testing and is reported whenever it is in effect.
 
+### Certificate trust decisions
+
+A chain that does not reach a trusted authority is a trust problem, not an
+identity problem, so PwnFlow asks rather than guessing. When the presented
+certificate is signed by an unknown authority — and only then — startup shows the
+certificate and offers three choices:
+
+```
+[!] The certificate presented by <target> (<identity>) is not trusted:
+      Subject:   CN=domain controller
+      Issuer:    CN=Lab Issuing CA
+      Valid:     <notBefore> .. <notAfter> (N days remaining)
+      SHA-256:   AA:BB:CC:…
+      Problem:   x509: certificate signed by unknown authority
+    [t] trust and remember this certificate for this target
+    [s] accept this certificate for this session only
+    [r] reject and exit (default)
+```
+
+- An affirmative answer that is not given is a rejection: an empty line, end of
+  input, an unrecognised answer, or a run without an interactive terminal all
+  refuse the certificate, and a non-interactive run is told to re-run in a
+  terminal or to use `--insecure-skip-verify` deliberately.
+- `t` stores non-secret metadata — target, certificate identity, SHA-256
+  fingerprint, subject, issuer, expiry — in
+  `$XDG_CONFIG_HOME/pwnflow/trusted-certificates.json` (or
+  `~/.config/pwnflow/trusted-certificates.json`), created `0600` inside a `0700`
+  directory. Credentials are never part of a decision or the store.
+- An approval is scoped to the target and certificate identity and matched by
+  fingerprint, so the same controller is not asked again; a certificate that has
+  changed since it was approved triggers a fresh decision instead of being
+  accepted silently. `s` accepts for the current run only.
+- Approving an unknown authority can never approve a bad certificate. Host name,
+  validity window, and server-auth usage are verified before the question is
+  asked, so an expired, wrongly named, or client-only certificate is refused
+  outright without an offer to trust it.
+- Nothing is written to Kali's CA store, no sudo, APT, or installer is invoked,
+  and standard chain verification stays the preferred path: a certificate the
+  host already trusts connects without any prompt.
+
 ### BloodHound CE and RustHound-CE
 
 PwnFlow registers NetExec BloodHound capability metadata separately from the

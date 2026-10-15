@@ -93,7 +93,7 @@ func TestUnknownFailureIsNotAccepted(t *testing.T) {
 // success for an unperformed bind.
 func TestRunRequiresTheDependencyAndNeverFakesSuccess(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	result, err := Run(context.Background(), config.Config{Target: "198.51.100.10", Domain: "corp.example", Username: "user", Password: "secret"})
+	result, err := Run(context.Background(), config.Config{Target: "198.51.100.10", Domain: "corp.example", Username: "user", Password: "secret"}, ldaptransport.Options{})
 	if err == nil {
 		t.Fatalf("Run reported success without its dependency: %#v", result)
 	}

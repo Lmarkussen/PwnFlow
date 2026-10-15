@@ -10,3 +10,6 @@
 .env.*
 *.secret
 *.credentials
+# Local list of real environment identifiers to keep out of the repository. The
+# file itself is never tracked, so the identifiers stay out of source control.
+.sanitization-denylist

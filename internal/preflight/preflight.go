@@ -53,18 +53,19 @@ func BindIdentity(username, domain string) string {
 }
 
 // Run performs the NTLM bind with the operator's credentials and reports how the
-// connection was protected.
-func Run(ctx context.Context, cfg config.Config) (Result, error) {
+// connection was protected. The options carry the operator's verification
+// choices, including the certificate trust decision for an unknown authority.
+func Run(ctx context.Context, cfg config.Config, options ldaptransport.Options) (Result, error) {
 	if _, err := exec.LookPath("nxc"); err != nil {
 		return Result{}, fmt.Errorf("required dependency nxc is unavailable; run ./install.sh")
 	}
-	connector := ldaptransport.Connector{
-		Binder:  ldaptransport.SystemBinder{},
-		Options: ldaptransport.Options{InsecureSkipVerify: cfg.InsecureSkipVerify},
+	if !options.InsecureSkipVerify {
+		options.InsecureSkipVerify = cfg.InsecureSkipVerify
 	}
+	connector := ldaptransport.Connector{Binder: ldaptransport.SystemBinder{}, Options: options}
 	session, err := connector.Connect(ctx, cfg)
 	if err != nil {
-		return Result{}, classifyBindFailure(err, cfg.InsecureSkipVerify)
+		return Result{}, classifyBindFailure(err, options.InsecureSkipVerify)
 	}
 	return Result{Transport: session.Transport, Endpoint: session.Endpoint, Insecure: session.Insecure, Identity: session.Identity}, nil
 }

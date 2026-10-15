@@ -62,6 +62,12 @@ func (ca *testCA) pool(t *testing.T) *x509.CertPool {
 // issue returns a server certificate for the supplied identities.
 func (ca *testCA) issue(t *testing.T, dnsNames []string, addresses []net.IP, notBefore, notAfter time.Time) tls.Certificate {
 	t.Helper()
+	return ca.issueWithUsages(t, dnsNames, addresses, notBefore, notAfter, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+}
+
+// issueWithUsages returns a certificate with explicit extended key usages.
+func (ca *testCA) issueWithUsages(t *testing.T, dnsNames []string, addresses []net.IP, notBefore, notAfter time.Time, usages []x509.ExtKeyUsage) tls.Certificate {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +80,7 @@ func (ca *testCA) issue(t *testing.T, dnsNames []string, addresses []net.IP, not
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		ExtKeyUsage:  usages,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
 	if err != nil {
