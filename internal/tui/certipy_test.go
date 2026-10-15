@@ -97,12 +97,19 @@ func TestCertipyModuleInformationShowsConfiguration(t *testing.T) {
 	}
 }
 
-// Certipy is not a NetExec enumeration module, so category-scoped YOLO stays
-// limited to NetExec and can never sweep it in.
-func TestCertipyIsNeverSweptIntoYolo(t *testing.T) {
+// Certipy modules are part of the global plan: YOLO covers every tool family, not
+// only the one on screen.
+func TestCertipyIsPartOfTheGlobalPlan(t *testing.T) {
 	m := certipyModel(t)
-	if command := m.executeAll(); command != nil || m.status != "category is inactive; no modules executed" {
-		t.Fatalf("Certipy entered YOLO execution: cmd=%v status=%q", command, m.status)
+	plan := m.globalPlan()
+	if len(plan.indices) != len(m.allModules) {
+		t.Fatalf("the global plan holds %d of %d modules: %v", len(plan.indices), len(m.allModules), plan.skipped)
+	}
+	for _, module := range m.allModules {
+		if module.ToolFamily() == modules.ToolFamilyADCS {
+			continue
+		}
+		t.Fatalf("unexpected module in the model: %s", module.ID())
 	}
 }
 

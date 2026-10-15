@@ -28,6 +28,9 @@ type entry struct {
 	// cannot do anything, and they were taken from the module's own --options.
 	options  []string
 	required []string
+	// inputUsage explains each required option in one sentence, which is what the
+	// interactive prompt shows the operator.
+	inputUsage map[string]string
 	// admin names the elevated target-side right, empty when the module needs
 	// nothing beyond valid credentials.
 	admin string
@@ -72,7 +75,7 @@ func (e entry) definition() Definition {
 		ToolValue: "NetExec (nxc)", ToolFamilyValue: modules.ToolFamilyNetExec,
 		CategoryValue: e.category, ProtocolValue: e.protocol,
 		Arguments: e.args, ModuleName: e.module,
-		OptionKeys: e.options, RequiredOptions: e.required,
+		OptionKeys: e.options, RequiredOptions: e.required, InputUsage: e.inputUsage,
 		OptionDefaults: e.optionDefaults, DynamicOptions: e.dynamicOptions,
 		DynamicArgs: e.dynamicArgs,
 		OutputValue: output, PrerequisiteValues: prerequisites,

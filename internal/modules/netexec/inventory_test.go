@@ -316,6 +316,25 @@ func TestModuleIdentifiersAreUnique(t *testing.T) {
 	}
 }
 
+// The cleanup removed the registrations that ran the same query twice - the SMB
+// SAMR variants of the domain queries, and the modules WMI shares with SMB - and
+// this keeps them from coming back: no two registrations may build the same
+// command for the same target data.
+func TestNoTwoRegistrationsRunTheSameCommand(t *testing.T) {
+	signatures := map[string]string{}
+	for _, module := range RegisteredModules() {
+		entry := module.(Module)
+		signature := strings.Join(append([]string{protocolCommand(entry.Protocol()), entry.ModuleName()}, entry.definition.Arguments...), " ")
+		if signature == "" {
+			continue
+		}
+		if previous, ok := signatures[signature]; ok {
+			t.Fatalf("%s and %s both build %q; one of them is a duplicate", previous, entry.ID(), signature)
+		}
+		signatures[signature] = entry.ID()
+	}
+}
+
 func TestModuleOptionsAreDeclaredConsistently(t *testing.T) {
 	for _, module := range RegisteredModules() {
 		entry := module.(Module)

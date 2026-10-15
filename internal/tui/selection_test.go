@@ -151,6 +151,12 @@ func press(t *testing.T, m *model, key string) {
 		m.handleKey(tea.KeyMsg{Type: tea.KeyHome})
 	case "end":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyEnd})
+	case "ctrl+c":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	case "esc":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	case "backspace":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	default:
 		// Any other single character goes through as itself, so a prompt can be
 		// answered in a test exactly as the operator answers it.
@@ -376,8 +382,9 @@ func TestEnterRunsOnlyTheHighlightedModule(t *testing.T) {
 	}
 }
 
-// YOLO stays scoped to the visible navigation context and never uses the global
-// selection to widen itself.
+// YOLO covers the registry and never uses the global selection to decide what to
+// run: a module the operator selected is not treated specially, and a module they
+// did not select is still in the plan.
 func TestYoloIgnoresTheGlobalSelection(t *testing.T) {
 	log := &executionLog{}
 	m := selectionModel(t, log)
@@ -389,26 +396,19 @@ func TestYoloIgnoresTheGlobalSelection(t *testing.T) {
 	m.setProtocol(0)
 
 	press(t, m, "a")
-	if got := batchIDs(m); strings.Join(got, ",") != "nxc-ldap-users,nxc-ldap-groups" {
-		t.Fatalf("YOLO left its navigation scope: %v", got)
+	if m.approvalPrompt {
+		press(t, m, "n")
+	}
+	// Every registered module is in the plan, whether or not it was selected.
+	if len(m.batchItems) != len(m.allModules)-1 {
+		t.Fatalf("YOLO ran %d of %d modules: %v", len(m.batchItems), len(m.allModules), batchIDs(m))
+	}
+	if !contains(batchIDs(m), "rusthound-collect") {
+		t.Fatalf("an unselected module was left out of the plan: %v", batchIDs(m))
 	}
 	waitForBatch(t, m)
-	if got := log.executed(); strings.Join(got, ",") != "nxc-ldap-users,nxc-ldap-groups" {
-		t.Fatalf("YOLO executed outside its scope: %v", got)
-	}
 	if selected := m.selectedCount(); selected != 2 {
 		t.Fatalf("YOLO changed the global selection: %d", selected)
-	}
-
-	// In a non-NetExec family YOLO remains inactive, whatever is selected.
-	navigateTo(t, m, modules.ToolFamilyADCS, modules.CategoryEnumeration)
-	m.batch, m.batchItems, m.running = nil, nil, false
-	press(t, m, "a")
-	if m.batch != nil {
-		t.Fatalf("YOLO started outside NetExec enumeration: %v", batchIDs(m))
-	}
-	if !strings.Contains(m.status, "inactive") {
-		t.Fatalf("YOLO refusal was not explained: %q", m.status)
 	}
 }
 
@@ -426,8 +426,9 @@ func TestUnavailableSelectedModuleIsSkippedAndReported(t *testing.T) {
 	if got := batchIDs(m); strings.Join(got, ",") != "nxc-ldap-users" {
 		t.Fatalf("an unavailable selection entered the batch: %v", got)
 	}
-	if !strings.Contains(m.status, "rusthound-collect") {
-		t.Fatalf("the skipped module was not named: %q", m.status)
+	// The refusal names what could not run, and R started without it.
+	if strings.Contains(strings.Join(batchIDs(m), ","), "rusthound-collect") {
+		t.Fatalf("an unavailable module entered the batch: %v", batchIDs(m))
 	}
 	waitForBatch(t, m)
 	if got := log.executed(); len(got) != 1 || got[0] != "nxc-ldap-users" {
@@ -441,7 +442,7 @@ func TestUnavailableSelectedModuleIsSkippedAndReported(t *testing.T) {
 	if m.batch != nil {
 		t.Fatal("R started a batch with no eligible module")
 	}
-	if !strings.Contains(m.status, "unavailable") {
+	if !strings.Contains(m.status, "cannot run") || !strings.Contains(m.status, "rusthound-collect") {
 		t.Fatalf("empty eligible set was not explained: %q", m.status)
 	}
 }

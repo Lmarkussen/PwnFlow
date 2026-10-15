@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -26,6 +27,10 @@ type endpointStore struct {
 
 const endpointSnapshotTTL = 2 * time.Second
 
+// errNoEndpointStore is what a store that is not attached to an assessment
+// database answers, so a module reports it instead of dereferencing nothing.
+var errNoEndpointStore = errors.New("no assessment endpoint store is available")
+
 func newEndpointStore(db *storage.DB) *endpointStore {
 	if db == nil {
 		return nil
@@ -34,6 +39,9 @@ func newEndpointStore(db *storage.DB) *endpointStore {
 }
 
 func (s *endpointStore) RecordEndpoints(ctx context.Context, endpoints []modules.Endpoint) error {
+	if s == nil || s.db == nil {
+		return errNoEndpointStore
+	}
 	records := make([]storage.EndpointRecord, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		records = append(records, storage.EndpointRecord{
@@ -55,6 +63,9 @@ func (s *endpointStore) RecordEndpoints(ctx context.Context, endpoints []modules
 }
 
 func (s *endpointStore) Endpoints(ctx context.Context, domain string) ([]modules.Endpoint, error) {
+	if s == nil || s.db == nil {
+		return nil, errNoEndpointStore
+	}
 	s.mutex.Lock()
 	if s.domain == domain && s.items != nil && time.Since(s.at) < endpointSnapshotTTL {
 		items := append([]modules.Endpoint(nil), s.items...)

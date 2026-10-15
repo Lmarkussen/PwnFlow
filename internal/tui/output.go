@@ -101,6 +101,14 @@ func (m *model) statusText(fallback string) string {
 
 func (m *model) outputView() string {
 	m.refreshOutput()
+	// A pending question takes the pane: the operator is answering something the
+	// plan cannot start without, and the module list stays visible beside it.
+	if m.inputPrompt {
+		return m.inputPromptView()
+	}
+	if m.approvalPrompt {
+		return m.approvalPromptView()
+	}
 	if len(m.modules) == 0 {
 		// A registry-wide batch can outlive the scope it was started from, so an
 		// empty scope still says where the running output is.

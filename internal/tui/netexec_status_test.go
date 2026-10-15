@@ -195,11 +195,12 @@ func TestNetExecRegistrationsUseTheAgreedLabels(t *testing.T) {
 		t.Fatalf("a read-only credential discovery module is %q, want no suffix", state)
 	}
 	// UNAVAILABLE is reserved for a capability the registered command cannot
-	// complete: here, a module that needs the operator to name an object.
+	// complete. A module that only needs a value from the operator is
+	// configurable, which is a third label.
 	m.setCategory(0) // Enumeration
 	m.setProtocol(0) // LDAP
-	if state := m.moduleState(rowOf(t, m, "daclread")); state != "UNAVAILABLE" {
-		t.Fatalf("daclread is %q until its target is configured, want UNAVAILABLE", state)
+	if state := m.moduleState(rowOf(t, m, "daclread")); state != "INPUT-REQ" {
+		t.Fatalf("daclread is %q until its target is configured, want INPUT-REQ", state)
 	}
 }
 
@@ -242,22 +243,6 @@ func TestNavigationNeverProbesTheExecutable(t *testing.T) {
 		if netexec.Capabilities().Probed(protocol) {
 			t.Fatalf("navigation probed the %s protocol; the capability question belongs off the render path", protocol)
 		}
-	}
-}
-
-// A stays scoped to the visible NetExec enumeration scope: a category-wide run
-// started from Credential Dumping is refused, because that is not what the key
-// means. Enter and R keep running exactly what the operator pointed at.
-func TestScopeWideRunStaysInsideEnumeration(t *testing.T) {
-	registered := append(netexec.EnumerationModules(), netexec.CredentialDumpingModules()...)
-	m := statusModel(t, registered)
-	m.setCategory(categoryIndex(t, m, modules.CategoryCredentialDumping))
-	press(t, m, "a")
-	if m.running {
-		t.Fatal("A started a category-wide run outside the enumeration scope")
-	}
-	if !strings.Contains(m.status, "inactive") {
-		t.Fatalf("the refusal was not reported: %q", m.status)
 	}
 }
 

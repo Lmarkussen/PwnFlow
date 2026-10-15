@@ -154,24 +154,48 @@ func TestDefaultedOptionsKeepModulesAvailable(t *testing.T) {
 
 // Only the registrations that genuinely need an operator-supplied object are
 // unavailable on a fresh run.
-func TestOnlyOptionRequiringModulesAreUnavailable(t *testing.T) {
+// A registration that only needs a value from the operator is configurable, not
+// unsupported: it reports INPUT-REQ, and nothing in the registry reports
+// UNAVAILABLE on a fresh run.
+func TestOptionRequiringModulesAreConfigurableNotUnavailable(t *testing.T) {
 	bare := &modules.Runtime{
 		Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret",
 		ResultsRoot: "/tmp/pwnflow-results",
 	}
 	unavailable := make([]string, 0)
+	configure := make([]string, 0)
 	for _, module := range RegisteredModules() {
 		entry := module.(Module)
-		if entry.Status(bare) == modules.StatusUnavailable {
+		switch entry.Status(bare) {
+		case modules.StatusUnavailable:
 			unavailable = append(unavailable, entry.ID())
+		case modules.StatusInputRequired:
+			configure = append(configure, entry.ID())
 		}
 	}
-	slices.Sort(unavailable)
+	slices.Sort(configure)
 	want := []string{"daclread", "find-computer"}
-	if strings.Join(unavailable, ",") != strings.Join(want, ",") {
-		t.Fatalf("unavailable registrations = %v, want exactly %v", unavailable, want)
+	if strings.Join(configure, ",") != strings.Join(want, ",") {
+		t.Fatalf("configurable registrations = %v, want exactly %v", configure, want)
 	}
-	// Both become available once the operator supplies what they need.
+	if len(unavailable) != 0 {
+		t.Fatalf("registrations report UNAVAILABLE on a fresh run: %v", unavailable)
+	}
+	// Every one of them is configurable, with the field the operator has to supply.
+	for _, id := range want {
+		entry := findModule(t, id)
+		fields := entry.MissingInputs(bare)
+		if len(fields) == 0 {
+			t.Fatalf("%s reports INPUT-REQ without naming a field", id)
+		}
+		for _, field := range fields {
+			if field.Prompt == "" {
+				t.Fatalf("%s does not explain what %s is for", id, field.Key)
+			}
+		}
+	}
+	// Both become plainly available once the operator supplies what they need - by
+	// typing it, or by passing --module-options.
 	configured := &modules.Runtime{
 		Target: testTarget, Domain: testDomain, Username: "audituser", Password: "Sup3rSecret",
 		ResultsRoot: "/tmp/pwnflow-results",

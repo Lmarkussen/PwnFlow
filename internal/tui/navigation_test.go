@@ -97,8 +97,8 @@ func TestNavigationNeverShowsReporting(t *testing.T) {
 }
 
 // The retired module cannot be run through any execution path: it is not visible,
-// so it cannot be highlighted, selected, or swept up by YOLO, and R has nothing to
-// resolve it from.
+// so it cannot be highlighted or selected, and a global YOLO plan reports it as
+// skipped instead of running something the operator cannot see.
 func TestReportingModuleCannotBeExecuted(t *testing.T) {
 	log := &executionLog{}
 	registered, ids := mixedRegistry(log)
@@ -110,8 +110,24 @@ func TestReportingModuleCannotBeExecuted(t *testing.T) {
 	m.focus = focusModules
 
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
+	plan := m.globalPlan()
+	found := false
+	for _, index := range plan.indices {
+		if m.allModules[index].ID() == "reporting-generate" {
+			found = true
+		}
+	}
+	if found {
+		t.Fatal("the global plan includes a module outside the tool families")
+	}
 	press(t, m, "a")
+	press(t, m, "n") // decline the credential-access modules this plan also holds
 	waitForBatch(t, m)
+	for _, id := range log.executed() {
+		if id == "reporting-generate" {
+			t.Fatal("the retired Reporting module executed")
+		}
+	}
 
 	// Nothing is selected, so R has nothing to resolve: no batch may start.
 	m.batch, m.batchItems, m.running = nil, nil, false

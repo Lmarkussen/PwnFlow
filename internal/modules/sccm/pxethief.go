@@ -52,6 +52,21 @@ func (PXEThief) DependencyKey() string            { return string(dependencies.P
 // current run rather than whatever was stored before it.
 func (PXEThief) BatchPrerequisites() []string { return []string{moduleIDSCCMHunter} }
 
+// PlanApproval implements modules.ApprovalRequester. A run with stored endpoints
+// contacts those endpoints only, which is the assessment's own discovery. A run
+// without them falls back to mode 1, which broadcasts a DHCP discover on the local
+// segment: a wider action that a global run must not start on its own.
+func (m PXEThief) PlanApproval(runtime *modules.Runtime) (bool, string) {
+	endpoints, err := m.plannedEndpoints(context.Background(), runtime)
+	if err != nil {
+		return true, "the stored endpoint list could not be read, so the run mode is undetermined"
+	}
+	if len(endpoints) == 0 {
+		return true, "no stored endpoint for this assessment: it would run mode 1 (DHCP PXE broadcast discovery)"
+	}
+	return false, fmt.Sprintf("%d stored endpoint(s): one mode 2 invocation each", len(endpoints))
+}
+
 // ElevationRequired reports that PXEThief cannot craft its DHCP packets without
 // CAP_NET_RAW, which this process only has when the operator granted it.
 func (PXEThief) ElevationRequired() (bool, string) {

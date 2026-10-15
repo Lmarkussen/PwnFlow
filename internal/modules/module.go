@@ -123,12 +123,17 @@ const (
 //     a missing dependency, a build of the external tool that does not support
 //     it, or configuration the operator has not supplied. It takes precedence
 //     over StatusAdminRequired.
+//   - StatusInputRequired means the module is supported and installed, and it
+//     needs a value only the operator can supply - an object to read, a search
+//     term. PwnFlow asks for it when the operator runs the module, so the row is
+//     configurable rather than unavailable.
 type Status uint8
 
 const (
 	StatusAvailable Status = iota
 	StatusAdminRequired
 	StatusUnavailable
+	StatusInputRequired
 )
 
 // StatusProvider lets a module report its display status and, when it is not
@@ -138,6 +143,32 @@ const (
 type StatusProvider interface {
 	Status(*Runtime) Status
 	StatusReason(*Runtime) string
+}
+
+// InputField is one value a module needs from the operator before it can run.
+type InputField struct {
+	// Key is the option key the integration passes on, such as TARGET.
+	Key string
+	// Prompt explains what the value is for, in one sentence.
+	Prompt string
+	// Example is an optional hint shown with the prompt.
+	Example string
+}
+
+// InputRequester is implemented by modules that need operator-supplied values.
+// The TUI asks for the missing fields before a run - including before a global
+// run - so a batch never stops halfway to ask a question, and a module that is
+// waiting for input is described as configurable rather than unavailable.
+type InputRequester interface {
+	MissingInputs(*Runtime) []InputField
+}
+
+// ApprovalRequester is implemented by modules whose run needs an explicit
+// decision even when they are only part of a wider plan, because the operation
+// itself is not something a blanket run may start. The module answers with the
+// reason, which the plan shows the operator before anything runs.
+type ApprovalRequester interface {
+	PlanApproval(*Runtime) (bool, string)
 }
 
 // Endpoint is one SCCM-related system discovered during an assessment.

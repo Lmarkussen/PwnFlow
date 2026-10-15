@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
@@ -13,34 +14,50 @@ import (
 )
 
 type model struct {
-	ctx                 context.Context
-	cfg                 config.Config
-	db                  *storage.DB
-	modules             []modules.Module
-	moduleIDs           []int64
-	moduleKeys          []int
-	allModules          []modules.Module
-	allModuleIDs        []int64
-	endpoints           modules.EndpointStore
-	availability        map[string]string
-	toolFamilies        []modules.ToolFamily
-	toolFamilyIndex     int
-	categories          []modules.Category
-	categoryIndex       int
-	protocols           []modules.Protocol
-	protocolIndex       int
-	targetID            int64
-	selected, cursor    int
-	selectedModules     map[string]bool
-	running             bool
-	watcher             bool
-	focusBeforeWatcher  paneFocus
-	quitConfirm         bool
-	quitAfterCancel     bool
-	elevationPrompt     bool
-	elevationModules    []string
-	pendingIndices      []int
-	pendingName         string
+	ctx                context.Context
+	cfg                config.Config
+	db                 *storage.DB
+	modules            []modules.Module
+	moduleIDs          []int64
+	moduleKeys         []int
+	allModules         []modules.Module
+	allModuleIDs       []int64
+	endpoints          modules.EndpointStore
+	availability       map[string]string
+	toolFamilies       []modules.ToolFamily
+	toolFamilyIndex    int
+	categories         []modules.Category
+	categoryIndex      int
+	protocols          []modules.Protocol
+	protocolIndex      int
+	targetID           int64
+	selected, cursor   int
+	selectedModules    map[string]bool
+	running            bool
+	watcher            bool
+	focusBeforeWatcher paneFocus
+	quitConfirm        bool
+	quitAfterCancel    bool
+	elevationPrompt    bool
+	elevationModules   []string
+	pendingIndices     []int
+	pendingName        string
+	// pending is the plan a key press asked for, before it is handed to the batch
+	// runner. It carries the values the operator still has to supply and the
+	// modules that need an explicit approval.
+	pending         plan
+	planLine        string
+	inputPrompt     bool
+	inputQueue      []inputRequest
+	inputRequest    inputRequest
+	inputField      modules.InputField
+	approvalPrompt  bool
+	approvalIndices []int
+	// moduleInputs holds the values the operator typed in this session, keyed by
+	// module then option key. It is never persisted, so it cannot reach another
+	// assessment.
+	moduleInputs        map[string]map[string]string
+	textInput           textinput.Model
 	batchElevation      map[string]bool
 	detailsRefreshed    time.Time
 	buffer              *runner.Buffer
@@ -84,14 +101,31 @@ type model struct {
 
 type tickMsg time.Time
 
+// newTextInput builds the field the interactive prompt uses. It is a single-line
+// field with a plain prompt, deliberately without suggestions or history: the
+// value belongs to this assessment and nowhere else.
+func newTextInput() textinput.Model {
+	input := textinput.New()
+	input.Prompt = "> "
+	input.CharLimit = 256
+	input.Placeholder = "type a value, then press Enter"
+	return input
+}
+
 func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered []modules.Module, moduleIDs []int64, targetID int64, version string, availability ...map[string]string) *model {
 	moduleAvailability := map[string]string{}
 	if len(availability) > 0 && availability[0] != nil {
 		moduleAvailability = availability[0]
 	}
 	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24}
-	m.endpoints = newEndpointStore(db)
+	// A model without a database - a test, or a run that could not open the
+	// assessment store - keeps a nil store rather than an interface holding a nil
+	// pointer, so a module asking it a question gets an error it can report.
+	if store := newEndpointStore(db); store != nil {
+		m.endpoints = store
+	}
 	m.batchElevation = map[string]bool{}
+	m.textInput = newTextInput()
 	m.refreshNavigation()
 	m.resizeOutput()
 	return m
@@ -101,8 +135,22 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 // target, domain, and credentials, and the assessment's discovery store.
 func (m *model) moduleRuntime() *modules.Runtime {
 	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
-	if len(m.cfg.ModuleOptions) > 0 {
-		runtime.ModuleOptions = m.cfg.ModuleOptions
+	// The command line wins where it supplies a value; values the operator typed
+	// in this session fill in the rest.
+	options := make(map[string]map[string]string, len(m.cfg.ModuleOptions)+len(m.moduleInputs))
+	for id, values := range m.cfg.ModuleOptions {
+		options[id] = values
+	}
+	for id, values := range m.moduleInputs {
+		if options[id] == nil {
+			options[id] = make(map[string]string, len(values))
+		}
+		for key, value := range values {
+			options[id][key] = value
+		}
+	}
+	if len(options) > 0 {
+		runtime.ModuleOptions = options
 	}
 	if m.endpoints != nil {
 		runtime.Endpoints = m.endpoints

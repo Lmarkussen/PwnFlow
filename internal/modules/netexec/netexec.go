@@ -52,10 +52,14 @@ type Definition struct {
 	// are accepted from the operator.
 	OptionKeys []string
 	// RequiredOptions are option keys without which the module cannot do anything
-	// meaningful. A module with an unsatisfied required option reports
-	// UNAVAILABLE and refuses to run, rather than being registered with a
-	// placeholder argument.
+	// meaningful. A module with an unsatisfied required option reports that it
+	// needs input - it is configurable, not unsupported - and PwnFlow asks the
+	// operator for the value before the run instead of registering a placeholder
+	// argument.
 	RequiredOptions []string
+	// InputUsage explains each required option in one sentence, so the prompt can
+	// say what the value is for instead of only naming the key.
+	InputUsage map[string]string
 	// OptionDefaults are fixed values PwnFlow passes when the operator has not
 	// supplied one. They exist so a module with an obvious starting point - the
 	// registry key that names the operating system, the read action of a DACL
@@ -134,7 +138,7 @@ func (m Module) AdminRequired() (bool, string) {
 // snapshot, because the TUI asks for it while a frame is rendered.
 func (m Module) Status(runtime *modules.Runtime) modules.Status {
 	if reason := m.missingOptionReason(runtime); reason != "" {
-		return modules.StatusUnavailable
+		return modules.StatusInputRequired
 	}
 	if reason := m.missingArgumentReason(runtime); reason != "" {
 		return modules.StatusUnavailable
@@ -171,8 +175,50 @@ func (m Module) missingOptionReason(runtime *modules.Runtime) string {
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("requires the operator-supplied module option %s; set it with --module-options %s=%s=VALUE",
-		strings.Join(missing, ", "), m.ID(), strings.Join(missing, ","))
+	return fmt.Sprintf("needs %s - %s", strings.Join(missing, ", "), m.inputUsageList(missing))
+}
+
+// MissingInputs implements modules.InputRequester: the values this registration
+// still needs before it can run, each with the sentence that explains it.
+func (m Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
+	missing := m.missingOptionValues(runtime)
+	fields := make([]modules.InputField, 0, len(missing))
+	for _, key := range missing {
+		usage := m.definition.InputUsage[key]
+		if usage == "" {
+			usage = fmt.Sprintf("%s needs the %s option before it can run.", m.Name(), key)
+		}
+		fields = append(fields, modules.InputField{Key: key, Prompt: usage, Example: m.inputExample(key)})
+	}
+	return fields
+}
+
+// inputUsageList renders the explanations for the keys that are still missing.
+func (m Module) inputUsageList(missing []string) string {
+	parts := make([]string, 0, len(missing))
+	for _, key := range missing {
+		usage := m.definition.InputUsage[key]
+		if usage == "" {
+			usage = "the module refuses to run without it"
+		}
+		parts = append(parts, usage)
+	}
+	return strings.Join(parts, " ")
+}
+
+// inputExample gives the operator a concrete shape for the value, so the prompt
+// is answerable without going to find the module's documentation.
+func (m Module) inputExample(key string) string {
+	switch key {
+	case "TARGET":
+		return "a sAMAccountName, such as a group or a user name"
+	case "TEXT":
+		return "a fragment of a computer name or operating system"
+	case "PATH":
+		return `a registry key, such as HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`
+	default:
+		return ""
+	}
 }
 
 // missingOptionValues reports the required option keys that neither the operator
@@ -324,7 +370,7 @@ func (m Module) DetailLines(runtime *modules.Runtime) []string {
 		lines = append(lines, "Default options: "+strings.Join(defaulted, ", "))
 	}
 	if missing := m.missingOptionValues(runtime); len(missing) > 0 {
-		lines = append(lines, "Required options not configured: "+strings.Join(missing, ", "))
+		lines = append(lines, "Needs input before it can run: "+strings.Join(missing, ", ")+" (PwnFlow asks for it when you run the module)")
 	}
 	if admin, reason := m.AdminRequired(); admin {
 		lines = append(lines, "Target privilege: ADMIN-REQ ("+reason+")")

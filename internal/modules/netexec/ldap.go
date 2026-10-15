@@ -129,18 +129,24 @@ func LDAPEnumerationModules() []modules.Module {
 		},
 		{
 			id: "daclread", name: "Read Object DACL",
-			description:    "Reads the discretionary access control list of one object through -M daclread. Needs the operator to name the target via --module-options; daclread reads one object at a time and never recurses.",
+			description:    "Reads the discretionary access control list of one object through -M daclread. PwnFlow asks for the object when you run it; daclread reads one object at a time and never recurses.",
 			module:         "daclread",
 			options:        []string{"TARGET", "TARGET_DN", "PRINCIPAL", "ACTION", "ACE_TYPE", "RIGHTS", "RIGHTS_GUID"},
 			required:       []string{"ACTION", "TARGET"},
 			optionDefaults: map[string]string{"ACTION": "read"},
+			inputUsage: map[string]string{
+				"TARGET": "the object whose DACL to read, by sAMAccountName",
+			},
 		},
 		{
 			id: "find-computer", name: "Find Computers by Text",
-			description: "Searches computer names and operating systems for a text fragment through -M find-computer. Needs the operator to supply the search text via --module-options.",
+			description: "Searches computer names and operating systems for a text fragment through -M find-computer. PwnFlow asks for the text when you run it.",
 			module:      "find-computer",
 			options:     []string{"TEXT"},
 			required:    []string{"TEXT"},
+			inputUsage: map[string]string{
+				"TEXT": "the text to search for in computer names and operating systems",
+			},
 		},
 	})
 }

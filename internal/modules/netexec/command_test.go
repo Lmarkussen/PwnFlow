@@ -157,15 +157,25 @@ func TestModuleOptionsBecomeStructuredDashOArguments(t *testing.T) {
 	}
 }
 
-func TestRequiredModuleOptionMakesTheModuleUnavailableUntilItIsConfigured(t *testing.T) {
+// A module that needs a value from the operator asks for it rather than being
+// described as unsupported, and it still refuses to run with the value missing -
+// the prompt is the supported path, a placeholder is not.
+func TestRequiredModuleOptionIsRequestedNotMarkedUnsupported(t *testing.T) {
 	entry := findModule(t, "daclread")
 	without := &modules.Runtime{Target: testTarget, Domain: testDomain, Username: "u", Password: "p"}
-	if status := entry.Status(without); status != modules.StatusUnavailable {
-		t.Fatalf("status without the option = %v, want unavailable", status)
+	if status := entry.Status(without); status != modules.StatusInputRequired {
+		t.Fatalf("status without the option = %v, want input-required", status)
 	}
 	reason := entry.StatusReason(without)
-	if !strings.Contains(reason, "TARGET") || !strings.Contains(reason, "--module-options daclread=TARGET") {
-		t.Fatalf("reason does not tell the operator how to configure it: %q", reason)
+	if !strings.Contains(reason, "TARGET") || !strings.Contains(reason, "sAMAccountName") {
+		t.Fatalf("reason does not explain what the value is: %q", reason)
+	}
+	fields := entry.MissingInputs(without)
+	if len(fields) != 1 || fields[0].Key != "TARGET" {
+		t.Fatalf("the operator-facing fields are %#v", fields)
+	}
+	if fields[0].Prompt == "" || fields[0].Example == "" {
+		t.Fatalf("the prompt does not explain the field: %#v", fields[0])
 	}
 	installFakeNXC(t, `#!/bin/sh
 case "$1 $2" in
@@ -177,8 +187,8 @@ exit 0
 	if err := entry.Check(context.Background(), without); err == nil || !strings.Contains(err.Error(), "TARGET") {
 		t.Fatalf("Check allowed a module whose required option is missing: %v", err)
 	}
-	if status := entry.Status(testRuntime()); status == modules.StatusUnavailable {
-		t.Fatalf("status with the option configured = unavailable: %s", entry.StatusReason(testRuntime()))
+	if status := entry.Status(testRuntime()); status != modules.StatusAvailable {
+		t.Fatalf("status with the option configured = %v (%s), want available", status, entry.StatusReason(testRuntime()))
 	}
 	if err := entry.Check(context.Background(), testRuntime()); err != nil {
 		t.Fatalf("Check refused a module whose option is configured: %v", err)
@@ -321,6 +331,16 @@ func TestCommandPreviewProtectsTheRuntimePassword(t *testing.T) {
 	}
 	if preview := entry.CommandPreview(runtime); !strings.Contains(preview, "--port 636") {
 		t.Fatalf("preview hides the transport: %s", preview)
+	}
+	// A value the operator configured is part of the command diagnostics; the
+	// assessment credential never is, whatever else the command carries.
+	configured := findModule(t, "smb-reg-query")
+	preview := configured.CommandPreview(testRuntime())
+	if !strings.Contains(preview, "PATH=") || !strings.Contains(preview, "[REDACTED]") {
+		t.Fatalf("preview = %q; it must show options and mask the credential", preview)
+	}
+	if strings.Contains(preview, runtime.Password) {
+		t.Fatalf("preview leaked the credential: %s", preview)
 	}
 }
 

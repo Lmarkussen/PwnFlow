@@ -142,6 +142,41 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// The interactive input prompt owns the keyboard while it is open: the value
+	// is typed, stored for this assessment, or skipped, and the plan continues
+	// afterwards. Ctrl+C abandons the whole plan.
+	if m.inputPrompt {
+		switch key {
+		case "enter":
+			return m, m.acceptInput()
+		case "esc":
+			return m, m.skipInput()
+		case "ctrl+c":
+			m.cancelPlan()
+			return m, nil
+		}
+		var command tea.Cmd
+		m.textInput, command = m.textInput.Update(msg)
+		return m, command
+	}
+
+	// A plan that is not plain enumeration asks for one decision, naming the
+	// modules it will run: only "y" approves them, and any other answer runs the
+	// rest of the plan without them.
+	if m.approvalPrompt {
+		switch key {
+		case "y", "Y":
+			return m, m.approvePlan()
+		case "ctrl+c":
+			m.cancelPlan()
+			return m, nil
+		case "q":
+			// Fall through to the process-wide handlers.
+		default:
+			return m, m.declinePlan()
+		}
+	}
+
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
@@ -326,6 +361,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.running {
 			return m, m.executeAll()
 		}
+	case "i":
+		if !m.running {
+			return m, m.executeInput(m.cursor)
+		}
 	case "?":
 		m.status = helpText
 	}
@@ -343,54 +382,40 @@ func (m *model) closeWatcher() {
 	m.focus = m.focusBeforeWatcher
 }
 
-// execute runs the highlighted module. Eligibility is decided per module through
-// moduleAvailability, so an enabled module in any registered family can run while
-// policy-disabled modules stay unavailable. YOLO keeps its own narrower gate.
+// execute runs the highlighted module, and only that module. A module that needs
+// a value from the operator is asked before anything starts.
 func (m *model) execute(index int) tea.Cmd {
 	if index < 0 || index >= len(m.modules) {
 		return nil
 	}
-	if reason := m.moduleAvailability(m.modules[index]); reason != "" {
+	module := m.modules[index]
+	if reason := m.moduleAvailability(module); reason != "" {
 		m.status = "selected module is unavailable: " + reason
 		return nil
 	}
-	global, ok := m.globalIndex(index)
-	if !ok {
+	if status, reason := m.moduleStatus(module); status == "UNAVAILABLE" {
+		m.status = "selected module is unavailable: " + reason
 		return nil
 	}
-	return m.startBatch([]int{global}, "RUN")
+	return m.startPlan(m.singlePlan(module))
 }
 
 // executeSelected builds the batch from the global selected-module set: every
 // explicitly selected module in the registry, whatever tool family, category, or
-// protocol happens to be visible. Registry order keeps the batch deterministic.
+// protocol happens to be visible. Registry order keeps the batch deterministic,
+// and a module the operator selected is an explicit decision, so no further
+// approval is asked for.
 func (m *model) executeSelected() tea.Cmd {
-	selected := m.selectedModuleIDs()
-	indices := make([]int, 0, len(selected))
-	blocked := make([]string, 0)
-	for index, module := range m.allModules {
-		if !selected[module.ID()] {
-			continue
-		}
-		if m.moduleAvailability(module) != "" {
-			blocked = append(blocked, module.Name())
-			continue
-		}
-		indices = append(indices, index)
-	}
-	if len(indices) == 0 {
-		if len(blocked) > 0 {
-			m.status = "selected modules are unavailable: " + strings.Join(blocked, ", ")
-			return nil
-		}
+	if len(m.selectedModuleIDs()) == 0 {
 		m.status = "no modules selected; press Space to select a module"
 		return nil
 	}
-	command := m.startBatch(indices, "SELECTED")
-	if len(blocked) > 0 {
-		m.status = fmt.Sprintf("running %d selected module(s); skipped unavailable: %s", len(indices), strings.Join(blocked, ", "))
+	p := m.selectionPlan()
+	if len(p.indices) == 0 && !p.configureOnly {
+		m.status = "selected modules cannot run: " + strings.Join(p.skipped, "; ")
+		return nil
 	}
-	return command
+	return m.startPlan(p)
 }
 
 func (m *model) setWatcherSelection(position int, manual bool) {
@@ -420,31 +445,28 @@ func (m *model) moveWatcherSelection(delta int) {
 	m.setWatcherSelection(m.watcherListCursor+delta, true)
 }
 
+// executeAll is the YOLO key. It builds its plan from the entire registry - every
+// tool family, category, and protocol - so nothing about the visible scope, the
+// focus, the scroll offset, or the selection can change what it considers. Values
+// the plan needs are collected first, and modules that are not plain enumeration
+// are approved by the operator, in the plan, before anything runs.
 func (m *model) executeAll() tea.Cmd {
-	if !m.yoloScope() {
-		m.status = "category is inactive; no modules executed"
-		return nil
-	}
-	indices := make([]int, 0, len(m.modules))
-	for i := range m.modules {
-		if m.moduleAvailability(m.modules[i]) == "" {
-			if global, ok := m.globalIndex(i); ok {
-				indices = append(indices, global)
-			}
-		}
-	}
-	if len(indices) == 0 {
-		m.status = "no available modules in the current scope"
-		return nil
-	}
-	return m.startBatch(indices, "YOLO")
+	return m.startPlan(m.globalPlan())
 }
 
-// yoloScope gates category-scoped YOLO runs. It stays limited to NetExec
-// enumeration so a module registered in another family - RustHound-CE, for
-// instance - can never be swept into a YOLO batch.
-func (m *model) yoloScope() bool {
-	return m.toolFamilyIndex < len(m.toolFamilies) && m.categoryIndex < len(m.categories) && m.categories[m.categoryIndex] == modules.CategoryEnumeration && m.toolFamilies[m.toolFamilyIndex] == modules.ToolFamilyNetExec
+// executeInput opens the prompt for the highlighted module's required values
+// without running it, so an operator can configure a module now and run it later.
+func (m *model) executeInput(index int) tea.Cmd {
+	if index < 0 || index >= len(m.modules) {
+		return nil
+	}
+	module := m.modules[index]
+	requester, ok := module.(modules.InputRequester)
+	if !ok || len(requester.MissingInputs(m.moduleRuntime())) == 0 {
+		m.status = module.Name() + " needs no input"
+		return nil
+	}
+	return m.startPlan(m.configurePlan(module))
 }
 
 // startBatch runs the supplied registry-wide module indices as one batch. Items,

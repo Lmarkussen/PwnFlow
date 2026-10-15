@@ -139,6 +139,8 @@ func (m *model) moduleState(index int) string {
 		return "UNAVAILABLE"
 	case "ADMIN-REQ":
 		return "ADMIN-REQ"
+	case "INPUT-REQ":
+		return "INPUT-REQ"
 	}
 	return ""
 }
@@ -160,6 +162,8 @@ func (m *model) moduleStatus(module modules.Module) (status string, reason strin
 		return "UNAVAILABLE", provider.StatusReason(runtime)
 	case modules.StatusAdminRequired:
 		return "ADMIN-REQ", provider.StatusReason(runtime)
+	case modules.StatusInputRequired:
+		return "INPUT-REQ", provider.StatusReason(runtime)
 	}
 	return "AVAILABLE", ""
 }
@@ -177,6 +181,8 @@ func (m *model) infoView() string {
 		availability = "UNAVAILABLE: " + statusReason
 	case "ADMIN-REQ":
 		privilege = "ADMIN-REQ (" + statusReason + ")"
+	case "INPUT-REQ":
+		availability = "CONFIGURABLE: " + statusReason + " - press Enter to be asked for it, or pass it with --module-options"
 	}
 	if m.batch != nil {
 		states, _, _, _ := m.batch.Snapshot()

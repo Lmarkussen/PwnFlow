@@ -382,27 +382,58 @@ Neither operation was executed against the lab: they recover crackable material,
 which the engagement rules require separate authorization for. What was verified
 without executing them is recorded below.
 
-## Availability labels and what is still unavailable
+## Availability labels
 
 | Label | Meaning |
 |---|---|
 | *(nothing)* | Available |
 | `ADMIN-REQ` | Needs elevated rights on the target or domain. Informational: a test asserts the registry carries no execution policy, so the label can never block a run |
-| `UNAVAILABLE` | The installed build does not advertise the module or the flag, the operator has not supplied something the module needs, or the runtime cannot supply an argument it needs |
+| `INPUT-REQ` | Supported and installed, and waiting for a value only the operator can supply. Pressing Enter asks for it, and `I` stores it without running the module |
+| `UNAVAILABLE` | The installed build does not advertise the module or the flag, or the runtime cannot supply an argument the module's command needs. A missing value from the operator is *not* this: it is `INPUT-REQ` |
 
-On a fresh run exactly two registrations are `UNAVAILABLE`, and both say what to
-do about it:
+Two registrations are `INPUT-REQ` until they are configured, and both are
+configurable rather than unsupported or blocked:
 
-| Registration | Requirement | Why it is not a defect |
+| Registration | Field | Why it needs one |
 |---|---|---|
-| `daclread` | `--module-options daclread.TARGET=<object>` (the read action is the default) | Reading one object's DACL needs to know which object. The module reads one object at a time and never recurses, so no safe default exists |
-| `find-computer` | `--module-options find-computer.TEXT=<text>` | A search needs a search term |
+| `daclread` | `TARGET` (the read action is the default) | Reading one object's DACL needs to know which object. The module reads one object at a time and never recurses, so no safe default exists |
+| `find-computer` | `TEXT` | A search needs a search term |
 
 Everything else that used to be permanently unavailable is either removed or has
 a default: `groupmembership` defaults to the authenticated account,
 `smb-reg-query` defaults to the registry key that names the operating system,
 `smb-wcc` writes its report into the assessment tree, and `daclread`'s action
-defaults to `read`.
+defaults to `read`. On a fresh run, nothing in the registry reports `UNAVAILABLE`
+(`TestOptionRequiringModulesAreConfigurableNotUnavailable` asserts exactly that).
+
+## How a global run treats these registrations
+
+`A` builds its plan from the whole registry, so the labels above decide what
+happens to each registration rather than which scope is on screen:
+
+| State | Treatment in a global plan |
+|---|---|
+| Available, `ADMIN-REQ` | Runs, in registry order, with declared prerequisites honoured |
+| `INPUT-REQ` | PwnFlow asks for the value **before** the batch starts, and stores it for the assessment |
+| `UNAVAILABLE` | Skipped, and named in the plan |
+| Credential Auditing / Credential Dumping | Named and held for the operator's decision: approving runs them with the plan, declining runs the rest |
+| A module whose own run reaches wider than the assessment's discovery (PXEThief with no stored endpoint, which would broadcast a DHCP discover) | Same decision, with the module's own reason shown |
+| A module needing elevated execution (PXEThief without the raw-socket capability) | The existing amber confirmation and sudo handoff, unchanged |
+
+On the assessment workstation the global plan reports itself before it does
+anything, with the authorized lab's registry:
+
+```
+YOLO plan: 97 module(s) across 4 families, 13 need approval, 2 need input
+```
+
+97 registrations are eligible: 91 NetExec, 2 SCCM, 3 AD CS, and 1 Active
+Directory. The 13 that need a decision are the 12 credential-access
+registrations plus PXEThief, which had no stored endpoint and would therefore
+have run its DHCP broadcast mode; the 2 that need input are `daclread` and
+`find-computer`. Answering the two prompts moved the plan to the approval pane,
+which named each module with its category and reason, and cancelling at that
+point ran nothing.
 
 ## Declared module options audited against the installation
 

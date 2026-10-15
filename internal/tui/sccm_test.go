@@ -441,8 +441,9 @@ func TestElevationFailureSkipsOnlyThePrivilegedModule(t *testing.T) {
 }
 
 // Every entry point that can start PXEThief goes through the same approval gate: the
-// global selection with R, and the highlighted module with Enter. A stays scoped to
-// the visible NetExec enumeration, so it can never reach PXEThief at all.
+// global selection with R, the highlighted module with Enter, and the global plan
+// with A, which reaches it from any scope and therefore asks for the privilege
+// rather than starting a DHCP broadcast or a privileged run by itself.
 func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
 	log := &executionLog{}
 	elevating := elevatingModule{selectionModule: selectionModule{id: "pxethief-like", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log}, required: true}
@@ -479,25 +480,26 @@ func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
 		t.Fatalf("declining R still ran the module: %v", got)
 	}
 
-	// A runs the visible NetExec enumeration only, whatever is selected elsewhere.
+	// A covers the whole registry, so it reaches the privileged module and has to
+	// ask for it too - from a NetExec scope, and without the operator selecting
+	// anything.
 	m.batch, m.batchItems, m.running = nil, nil, false
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
-	m.cursor = rowOf(t, m, "nxc-ldap-users")
-	press(t, m, " ")
 	press(t, m, "a")
-	if m.elevationPrompt {
-		t.Fatal("A asked for elevation, which only a selected privileged module should")
+	if !m.elevationPrompt || m.running {
+		t.Fatalf("A started a privileged module without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
 	}
-	for _, id := range batchIDs(m) {
-		if id == "pxethief-like" {
-			t.Fatalf("A reached a module outside its scope: %v", batchIDs(m))
-		}
+	press(t, m, "n")
+	// Declining skips the privileged module and runs the rest of the plan.
+	if !m.running {
+		t.Fatalf("declining the privileged module left nothing to run: %q", m.status)
 	}
 	waitForBatch(t, m)
 	if got := log.executed(); len(got) != 1 || got[0] != "nxc-ldap-users" {
-		t.Fatalf("A executed outside its scope: %v", got)
+		t.Fatalf("the rest of the plan did not run: %v", got)
 	}
-	// The privileged module stayed unexecuted throughout.
+	// The privileged module stayed unexecuted: the plan's own approval and the
+	// sudo confirmation are both required, and it received neither.
 	for _, id := range log.executed() {
 		if id == "pxethief-like" {
 			t.Fatal("the privileged module ran without approval")

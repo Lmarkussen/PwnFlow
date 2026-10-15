@@ -79,17 +79,29 @@ func TestCategorySwitchingFiltersModulesAndPreservesSelection(t *testing.T) {
 	}
 }
 
-func TestInactiveCategoryCannotStartYolo(t *testing.T) {
-	model := newModel(context.Background(), config.Config{}, nil, []modules.Module{
-		categoryTestModule{category: modules.CategoryEnumeration, id: "enumeration"},
-		categoryTestModule{category: modules.CategoryCredentialAuditing, id: "credentials"},
-	}, []int64{1, 2}, 1, "test")
-	model.setCategory(1)
-	if command := model.executeAll(); command != nil {
-		t.Fatal("inactive category returned an execution command")
+// YOLO is global: an empty or inactive scope does not empty the plan, because the
+// plan comes from the registry rather than from what is on screen.
+func TestYoloFromAnEmptyScopeStillPlansTheEntireRegistry(t *testing.T) {
+	log := &executionLog{}
+	registered := []modules.Module{
+		selectionModule{id: "nxc-ldap-users", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log},
+		selectionModule{id: "adcs-discovery", family: modules.ToolFamilyADCS, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log},
+		selectionModule{id: "rusthound-collect", family: modules.ToolFamilyActiveDirectory, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log},
 	}
-	if model.status != "category is inactive; no modules executed" {
-		t.Fatalf("unexpected status: %q", model.status)
+	ids := []int64{1, 2, 3}
+	m := newModel(context.Background(), testConfig(t), nil, registered, ids, 1, "test")
+	m.width, m.height = 140, 45
+	m.resizeOutput()
+	m.focus = focusModules
+	// An empty scope: the AD CS family offers no Configuration Auditing modules.
+	navigateTo(t, m, modules.ToolFamilyADCS, modules.Category("Configuration Auditing"))
+	if len(m.modules) != 0 {
+		t.Fatalf("the scope under test is not empty: %v", moduleIDs(m.modules))
+	}
+	press(t, m, "a")
+	waitForBatch(t, m)
+	if got := log.executed(); strings.Join(got, ",") != "nxc-ldap-users,adcs-discovery,rusthound-collect" {
+		t.Fatalf("YOLO from an empty scope ran %v, want the whole registry", got)
 	}
 }
 
@@ -129,14 +141,17 @@ func TestNavigationChangesScopeWithoutExecuting(t *testing.T) {
 	}
 }
 
-func TestRustHoundIsActiveDirectoryScopedAndNeverYOLOEnabled(t *testing.T) {
+func TestRustHoundIsActiveDirectoryScopedAndPlannedGlobally(t *testing.T) {
 	model := newModel(context.Background(), config.Config{}, nil, []modules.Module{rusthound.Module{}}, []int64{1}, 1, "test")
 	model.setToolFamily(2)
 	if len(model.modules) != 1 || model.modules[0].ToolFamily() != modules.ToolFamilyActiveDirectory || model.modules[0].Protocol() != modules.ProtocolNA {
 		t.Fatalf("RustHound was not registered in Active Directory N/A scope: %#v", model.modules)
 	}
-	if command := model.executeAll(); command != nil || model.status != "category is inactive; no modules executed" {
-		t.Fatalf("RustHound unexpectedly entered YOLO execution: cmd=%v status=%q", command, model.status)
+	// It is not reachable from another family's scope, and YOLO does not care:
+	// the plan is global, so the module is included wherever the cursor happens to be.
+	plan := model.globalPlan()
+	if len(plan.indices) != 1 {
+		t.Fatalf("RustHound is missing from the global plan: %v", plan.indices)
 	}
 }
 
@@ -172,10 +187,10 @@ func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 	}
 }
 
-// An enabled module outside the NetExec enumeration family must be runnable from
-// Enter and from an explicit R selection, while category-scoped YOLO stays
-// limited to NetExec enumeration so it can never sweep it in.
-func TestEnabledModuleOutsideNetExecRunsIndividuallyButNotInYolo(t *testing.T) {
+// An enabled module outside NetExec is runnable from Enter, from an explicit R
+// selection, and from the global YOLO plan - the same module, one plan, whichever
+// key asked for it.
+func TestEnabledModuleOutsideNetExecRunsFromEveryEntryPoint(t *testing.T) {
 	registered := []modules.Module{categoryTestModule{family: modules.ToolFamilyActiveDirectory, category: modules.CategoryEnumeration, id: "admod"}}
 	// A real batch writes module output, so keep it in a temporary results root
 	// instead of the package directory.
@@ -185,9 +200,15 @@ func TestEnabledModuleOutsideNetExecRunsIndividuallyButNotInYolo(t *testing.T) {
 	if len(model.modules) != 1 {
 		t.Fatalf("module not reachable in the Active Directory scope: %#v", model.modules)
 	}
-	if command := model.executeAll(); command != nil || model.status != "category is inactive; no modules executed" {
-		t.Fatalf("YOLO accepted a non-NetExec module: cmd=%v status=%q", command, model.status)
+	if plan := model.globalPlan(); len(plan.indices) != 1 {
+		t.Fatalf("YOLO left a non-NetExec module out of the global plan: %v", plan.indices)
 	}
+	model.executeAll()
+	if err := model.batch.Wait(context.Background()); err != nil {
+		t.Fatalf("wait for the YOLO run: %v", err)
+	}
+	model.running = false
+
 	// startBatch returns no tea.Cmd even on success, so the batch state is the
 	// signal: a refusal leaves running false and explains itself in status.
 	model.execute(0)
@@ -224,7 +245,15 @@ func TestUnavailableModuleRefusesIndividualExecution(t *testing.T) {
 	if command := model.executeSelected(); command != nil || model.running {
 		t.Fatalf("R started a blocked module: cmd=%v running=%t", command, model.running)
 	}
-	if !strings.Contains(model.status, "selected modules are unavailable") || !strings.Contains(model.status, "blocked") {
+	if !strings.Contains(model.status, "cannot run") || !strings.Contains(model.status, "blocked") {
 		t.Fatalf("refusal did not name the unavailable selection: %q", model.status)
+	}
+	// The global plan leaves it out too, and says why.
+	plan := model.globalPlan()
+	if len(plan.indices) != 0 {
+		t.Fatalf("the global plan includes a blocked module: %v", plan.indices)
+	}
+	if len(plan.skipped) != 1 || !strings.Contains(plan.skipped[0], "scope restricted") {
+		t.Fatalf("the global plan did not report the blocked module: %v", plan.skipped)
 	}
 }
