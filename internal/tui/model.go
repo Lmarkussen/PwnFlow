@@ -40,8 +40,15 @@ type model struct {
 	quitAfterCancel    bool
 	elevationPrompt    bool
 	elevationModules   []string
-	pendingIndices     []int
-	pendingName        string
+	// elevationRenewal carries a privileged module's request for fresh sudo
+	// authorization while the batch waits before it. The module blocks on the
+	// reply channel; the model answers after the terminal handoff.
+	elevationRenewal chan renewalRequest
+	renewing         bool
+	renewalModule    string
+	renewalReply     chan bool
+	pendingIndices   []int
+	pendingName      string
 	// pending is the plan a key press asked for, before it is handed to the batch
 	// runner. It carries the values the operator still has to supply and the
 	// modules that need an explicit approval.
@@ -126,6 +133,9 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 	}
 	m.batchElevation = map[string]bool{}
 	m.textInput = newTextInput()
+	// The renewal channel is buffered so a module can hand over its request even
+	// while the loop is drawing a frame.
+	m.elevationRenewal = make(chan renewalRequest, 1)
 	m.refreshNavigation()
 	m.resizeOutput()
 	return m

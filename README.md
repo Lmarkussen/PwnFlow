@@ -58,6 +58,22 @@ Modules that need a value only the operator can supply - a registry path, a sear
 
 Where a module has an obvious starting point PwnFlow supplies it - `groupmembership` defaults to the account you authenticated with, `smb-reg-query` to the registry key that names the operating system, `smb-wcc` to a report inside the assessment tree, and `daclread` to the read action - and your value always wins. An option key no registration uses is reported at startup instead of being silently dropped.
 
+### Local sudo, and what PwnFlow does with it
+
+Some tools need privileges the PwnFlow process does not have - PXEThief cannot craft its DHCP packets without `CAP_NET_RAW`. PwnFlow asks before the batch starts, in the amber confirmation, naming the modules that need it:
+
+```
+YOLO includes tools requiring local sudo privileges (pxethief): PXEThief discovery requires
+Linux raw-socket privileges (CAP_NET_RAW), which this process does not have.
+Authenticate with sudo before starting? [y/N]
+```
+
+Only `y` approves. Approval releases the terminal through Bubble Tea's external-process handoff, so **sudo reads the password itself**; PwnFlow never receives, stores, caches, logs or forwards it. There is no `sudo -S`, no password in an environment variable or in `argv`, no temporary password file, no askpass helper, no passwordless sudoers rule, no capability handed to an interpreter, and no elevation of the whole PwnFlow process - a test walks the repository for exactly those patterns.
+
+What the handoff leaves behind is sudo's own cached authorization, which has a lifetime (15 minutes by default) and, on a default sudo (`timestamp_type=tty`), is keyed to the terminal. PwnFlow therefore does not assume it lasts: before every privileged invocation it asks sudo, noninteractively (`sudo -n -v`), whether the cache is still valid. A valid cache is reused, so a batch with several privileged invocations prompts once. An expired one pauses the batch *before* that invocation and asks you to authenticate again; declining skips the privileged work - PwnFlow never retries a privileged tool unprivileged - and the rest of the batch continues. Sudo is never allowed to prompt from the background worker.
+
+Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the remote target or domain**. Approving sudo authorizes local elevation for the batch that asked; it does not authorize credential access, coercion, or any other operation, each of which keeps its own approval.
+
 When a module needs a value that has no sensible default - the object whose DACL to read, the text to search computers for - pressing `Enter` (or `I`, to configure it without running it) opens an input prompt that explains the field and validates the answer. A value entered this way is used for the rest of the assessment and by any batch that includes the module, including a global run, which collects every value it needs before it starts rather than interrupting itself halfway. `Esc` during a prompt skips that one module and the rest of the plan still runs; `Ctrl+C` abandons the plan. Values live in the running session only, so they cannot reach another assessment, and automation can keep supplying them up front with `--module-options`.
 
 PwnFlow is an enumeration and assessment framework, so the NetExec registry holds reads: directory, host, share, service, and configuration enumeration; the credential checks for each protocol; and the credential material a plain read exposes, which lives in `Credential Dumping` rather than `Enumeration`. AS-REP roasting and Kerberoasting are registered under LDAP in `Credential Auditing`: they use the directory protocol and your credentials, change nothing on the target, and write the crackable material into the assessment tree for you to audit offline - PwnFlow never cracks it, and it never runs them for you. Exploitation, coercion, relay execution, payload delivery, remote command execution, credential dumping that needs code execution, and anything that configures a listener are not registered at all, so an enumeration scope cannot reach them even by accident.

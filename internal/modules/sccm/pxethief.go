@@ -82,7 +82,7 @@ func (PXEThief) ElevationRequired() (bool, string) {
 // capability is missing and the operator approved elevated execution for this run.
 // sudo receives fixed paths and a structured argument list - no shell, no sudo -i,
 // and no injected environment.
-func (m PXEThief) elevationCommand(runtime *modules.Runtime, status dependencies.Status) (string, []string, bool, error) {
+func (m PXEThief) elevationCommand(ctx context.Context, runtime *modules.Runtime, status dependencies.Status) (string, []string, bool, error) {
 	program, base, err := interpreterCommand(status)
 	if err != nil {
 		return "", nil, false, err
@@ -94,8 +94,16 @@ func (m PXEThief) elevationCommand(runtime *modules.Runtime, status dependencies
 	if runtime == nil || runtime.Elevation == nil || !runtime.Elevation.ElevationApproved(moduleIDPXEThief) {
 		return "", nil, false, fmt.Errorf("%s; approve it in PwnFlow to run PXEThief with sudo", elevationRefusal)
 	}
-	// -n keeps sudo non-interactive inside the batch: the operator's approval was
-	// authenticated once, before the batch started, and sudo reuses that timestamp.
+	// The approval covers the batch, but sudo's own timestamp does not last
+	// forever. Validate it here, at the boundary before this invocation, so an
+	// expired timestamp is answered by asking the operator again instead of by a
+	// sudo that prompts where nobody can see it.
+	if err := ensureSudoAuthorised(ctx, runtime, moduleIDPXEThief, elevationRefusal); err != nil {
+		return "", nil, false, err
+	}
+	// -n keeps sudo non-interactive inside the batch: the operator authenticated
+	// once, before the batch started, and every invocation is validated against
+	// the cache this check just confirmed.
 	return "sudo", append([]string{"-n", program}, base...), true, nil
 }
 
@@ -259,7 +267,7 @@ func (m PXEThief) Check(ctx context.Context, runtime *modules.Runtime) error {
 	// The privilege requirement is part of the eligibility check, not something the
 	// run discovers halfway through: without the capability and without an approved
 	// elevation the module is unavailable, and nothing is launched.
-	if _, _, _, elevationErr := m.elevationCommand(runtime, status); elevationErr != nil {
+	if _, _, _, elevationErr := m.elevationCommand(ctx, runtime, status); elevationErr != nil {
 		return elevationErr
 	}
 	_ = verified
@@ -278,21 +286,15 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	if err != nil {
 		return err
 	}
-	program, base, elevated, err := m.elevationCommand(runtime, status)
-	if err != nil {
-		return err
-	}
 	endpoints, err := m.plannedEndpoints(ctx, runtime)
 	if err != nil {
 		return err
 	}
-	// A missing capability is the one failure worth warning about before the tool
-	// runs: it is not a dependency problem, and the tool's own error is a traceback.
-	if elevated {
-		// Stated once, and only when it is true: the tool is running with the
-		// privileges the operator approved, not being told to go and approve them.
-		fmt.Fprintln(sink, "[i] Running PXEThief with the elevated execution you approved (this process has no raw-socket capability of its own).")
-	}
+	// Each invocation resolves its own elevation, which validates sudo's cache at
+	// that boundary: a batch with several endpoints asks for a renewal only if the
+	// authorization really expired between them, and never starts a privileged
+	// run on a cache that is no longer valid.
+	elevationNoted := false
 	started := time.Now()
 	runDirectory := m.RunDirectory(runtime, started)
 	if err := prepareDirectory(runDirectory); err != nil {
@@ -300,6 +302,11 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	}
 	output := sink
 	if len(endpoints) == 0 {
+		program, base, elevated, err := m.elevationCommand(ctx, runtime, status)
+		if err != nil {
+			return err
+		}
+		elevationNoted = m.noteElevation(elevated, elevationNoted, output)
 		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) as explicitly requested.")
 		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, elevated, output); err != nil {
 			return err
@@ -313,6 +320,15 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 			return ctx.Err()
 		}
 		directory := filepath.Join(runDirectory, filepath.Base(endpoint.Address))
+		program, base, elevated, err := m.elevationCommand(ctx, runtime, status)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			failures = append(failures, fmt.Sprintf("%s (%s): %v", endpoint.Address, endpoint.Role, err))
+			continue
+		}
+		elevationNoted = m.noteElevation(elevated, elevationNoted, output)
 		fmt.Fprintf(output, "[i] %s (%s): PXEThief mode 2\n", endpoint.Address, endpoint.Role)
 		if err := m.runOne(ctx, program, base, []string{"2", endpoint.Address}, directory, endpoint.Address, status.Root, runtime.Password, elevated, output); err != nil {
 			if ctx.Err() != nil {
@@ -326,6 +342,17 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 		return fmt.Errorf("PXEThief failed for %d of %d endpoint(s): %s", len(failures), len(endpoints), strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+// noteElevation states once per run that the tool is running with the privileges
+// the operator approved: it is not a dependency problem, and the tool's own error
+// is a traceback, so it is worth saying plainly. Later invocations stay quiet.
+func (m PXEThief) noteElevation(elevated, alreadyNoted bool, sink modules.OutputSink) bool {
+	if !elevated || alreadyNoted {
+		return alreadyNoted
+	}
+	fmt.Fprintln(sink, "[i] Running PXEThief with the elevated execution you approved (this process has no raw-socket capability of its own).")
+	return true
 }
 
 // runOne executes one PXEThief invocation in its own directory, with the operator's

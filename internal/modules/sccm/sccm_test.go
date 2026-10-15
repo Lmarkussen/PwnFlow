@@ -3,6 +3,7 @@ package sccm
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,10 +137,34 @@ func withRawSocketPrivileges(t *testing.T, available bool) {
 	t.Cleanup(func() { rawSocketPrivilegesFunc = previous })
 }
 
-// approvingPolicy is the operator's approval for one run.
+// approvingPolicy is the operator's approval for one run. A renewal asks the same
+// question again, so a module the operator approved is approved for the renewal
+// unless the test says otherwise.
 type approvingPolicy map[string]bool
 
 func (p approvingPolicy) ElevationApproved(moduleID string) bool { return p[moduleID] }
+
+func (p approvingPolicy) RenewElevation(_ context.Context, moduleID, _ string) bool {
+	return p[moduleID]
+}
+
+// sudoCache makes the noninteractive sudo check report a valid or an expired
+// timestamp. It stands in for sudo's own cached authorization, which a test cannot
+// produce without authenticating.
+func sudoCache(t *testing.T, valid bool) *bool {
+	t.Helper()
+	state := new(bool)
+	*state = valid
+	previous := sudoCheckFunc
+	sudoCheckFunc = func(context.Context, string, ...string) error {
+		if *state {
+			return nil
+		}
+		return errors.New("sudo: a password is required")
+	}
+	t.Cleanup(func() { sudoCheckFunc = previous })
+	return state
+}
 
 // sudoMock puts a stand-in sudo on PATH that records its arguments and then runs the
 // command it was given, so a test can see exactly what would have been elevated.
@@ -805,6 +830,7 @@ exit 0`
 		t.Fatal(err)
 	}
 	dependencyCacheTTL = 0
+	sudoCache(t, true)
 	sudoRecord := sudoMock(t, "")
 	endpoints := []modules.Endpoint{
 		{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain},
@@ -861,6 +887,7 @@ func TestPXEThiefReportsRefusedAuthorisation(t *testing.T) {
 		t.Fatal(err)
 	}
 	dependencyCacheTTL = 0
+	sudoCache(t, true)
 	sudoMock(t, "sudo: a password is required")
 	runtime := testRuntime(t, &fakeStore{records: []modules.Endpoint{{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain}}})
 	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
@@ -896,6 +923,7 @@ func TestPXEThiefCheckRefusesWithoutApproval(t *testing.T) {
 	if err := module.Check(context.Background(), runtime); err == nil || !strings.Contains(err.Error(), "CAP_NET_RAW") {
 		t.Fatalf("an unapproved run was considered eligible: %v", err)
 	}
+	sudoCache(t, true)
 	runtime.Elevation = approvingPolicy{moduleIDPXEThief: true}
 	if err := module.Check(context.Background(), runtime); err != nil {
 		t.Fatalf("an approved run was refused: %v", err)
@@ -934,6 +962,7 @@ func TestPXEThiefModeOneFollowsTheSamePrivilegePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	dependencyCacheTTL = 0
+	sudoCache(t, true)
 	sudoRecord := sudoMock(t, "")
 	module := PXEThief{}
 

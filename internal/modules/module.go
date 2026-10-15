@@ -209,6 +209,17 @@ type DetailRefresher interface {
 // run time and never elevates itself, and a module that never asks is unaffected.
 type ElevationPolicy interface {
 	ElevationApproved(moduleID string) bool
+	// RenewElevation asks the operator for fresh sudo authorization when an
+	// earlier approval is no longer valid - sudo's cached timestamp has a limited
+	// lifetime, and the operator's approval was for the batch that asked for it.
+	// It blocks the caller until the operator has answered and, when the answer is
+	// yes, until sudo has been handed the terminal for its own password prompt. It
+	// returns true only when the operator approved and the caller should verify
+	// the cache again before starting the privileged work.
+	//
+	// PwnFlow never sees, stores, or forwards the password: sudo collects it from
+	// the terminal itself.
+	RenewElevation(ctx context.Context, moduleID, reason string) bool
 }
 
 // ElevationRequester is implemented by modules whose external tool needs privileges

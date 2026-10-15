@@ -88,6 +88,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		quit := m.syncBatch()
 		m.refreshWatcher()
 		m.refreshOutput()
+		// A privileged module waiting for renewed authorization is picked up here,
+		// off the render path: the batch is paused at that boundary until the
+		// operator answers, and the prompt is drawn on the next frame.
+		if request, waiting := m.nextRenewal(); waiting {
+			m.requestRenewalPrompt(request)
+		}
 		if quit != nil {
 			return m, quit
 		}
@@ -133,11 +139,23 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "y", "Y":
 			m.elevationPrompt = false
+			if m.renewing {
+				m.status = "authenticating sudo again for " + m.renewalModule + "; complete sudo's own prompt"
+				return m, sudoAuthenticate(exec.Command("sudo", "-v"))
+			}
 			m.status = "authenticating sudo for " + strings.Join(m.elevationModules, ", ") + "; complete sudo's own prompt"
 			return m, sudoAuthenticate(exec.Command("sudo", "-v"))
 		case "ctrl+c", "q":
 			// Fall through to the process-wide handlers, so those keys keep working.
 		default:
+			if m.renewing {
+				// The batch keeps running: the module that asked is told no, and
+				// its privileged work is skipped.
+				m.elevationPrompt = false
+				m.answerRenewal(false)
+				m.status = "sudo authorization was not renewed; the privileged module is skipped and the batch continues"
+				return m, nil
+			}
 			return m, m.declineElevation("elevated execution was not approved")
 		}
 	}
@@ -481,7 +499,8 @@ func (m *model) startBatch(indices []int, name string) tea.Cmd {
 	if len(needed) > 0 {
 		m.pendingIndices, m.pendingName, m.elevationModules = indices, name, needed
 		m.elevationPrompt = true
-		m.status = fmt.Sprintf("%s. Run %s with sudo? [y/N]", reason, strings.Join(needed, ", "))
+		m.status = fmt.Sprintf("%s includes tools requiring local sudo privileges (%s): %s. Authenticate with sudo before starting? [y/N]",
+			name, strings.Join(needed, ", "), reason)
 		return nil
 	}
 	return m.runBatch(indices, name)
@@ -516,6 +535,17 @@ func (m *model) elevationNeeded(indices []int) ([]string, string) {
 // authentication marks the approved modules for this run only; a refused or cancelled
 // one skips exactly those modules.
 func (m *model) finishElevation(err error) tea.Cmd {
+	if m.renewing {
+		// A renewal happens while the batch is paused before a privileged module:
+		// there is nothing to start, only an answer to give.
+		m.answerRenewal(err == nil)
+		if err != nil {
+			m.status = "sudo authentication failed or was cancelled; the privileged module is skipped and the batch continues"
+			return nil
+		}
+		m.status = "sudo authorization renewed; the batch continues"
+		return nil
+	}
 	if err != nil {
 		return m.declineElevation("sudo authentication failed or was cancelled; " + err.Error())
 	}
