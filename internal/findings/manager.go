@@ -1,0 +1,232 @@
+package findings
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/pwnflow/pwnflow/internal/storage"
+)
+
+// Job is the durable hand-off between execution and offline evidence analysis.
+// ArtifactPath is captured after the module has finalized its run directory.
+type Job struct {
+	AssessmentID int64
+	ExecutionID  int64
+	SourceTool   string
+	ArtifactPath string
+	ObservedAt   time.Time
+}
+
+type Manager struct {
+	db        *storage.DB
+	ctx       context.Context
+	queue     chan queuedJob
+	workers   sync.WaitGroup
+	pending   sync.WaitGroup
+	closeOnce sync.Once
+}
+
+type queuedJob struct {
+	job Job
+	key string
+}
+
+func NewManager(ctx context.Context, db *storage.DB) *Manager {
+	manager := &Manager{db: db, ctx: ctx, queue: make(chan queuedJob, 32)}
+	manager.workers.Add(1)
+	go manager.worker()
+	return manager
+}
+
+func (m *Manager) Submit(job Job) error {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	if job.ObservedAt.IsZero() {
+		job.ObservedAt = time.Now().UTC()
+	}
+	key := jobKey(job)
+	inserted, err := m.db.QueueAnalysis(m.ctx, key, job.AssessmentID, job.ExecutionID, job.SourceTool, job.ArtifactPath)
+	if err != nil || !inserted {
+		return err
+	}
+	m.pending.Add(1)
+	select {
+	case m.queue <- queuedJob{job: job, key: key}:
+		return nil
+	case <-m.ctx.Done():
+		_ = m.db.SetAnalysisStatus(context.Background(), key, storage.AnalysisPending, "", "queued for a later run")
+		m.pending.Done()
+		return m.ctx.Err()
+	}
+}
+
+func (m *Manager) Wait(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() { m.pending.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *Manager) Close() {
+	if m == nil {
+		return
+	}
+	m.closeOnce.Do(func() { m.pending.Wait(); close(m.queue) })
+	m.workers.Wait()
+}
+
+// Summary is intentionally small enough for a status line; the Findings view
+// remains the detailed, cached inspection surface.
+func (m *Manager) Summary(ctx context.Context, assessmentID int64) (string, error) {
+	if m == nil || m.db == nil {
+		return "", nil
+	}
+	jobs, err := m.db.ListAnalysisJobs(ctx, assessmentID)
+	if err != nil {
+		return "", err
+	}
+	counts := map[string]int{}
+	for _, job := range jobs {
+		counts[job.Status]++
+	}
+	rows, err := m.db.ListFindings(ctx, assessmentID)
+	if err != nil {
+		return "", err
+	}
+	severity := map[string]int{}
+	for _, row := range rows {
+		severity[strings.ToLower(row.Severity)]++
+	}
+	return fmt.Sprintf("Findings: %d High · %d Medium · %d Informational (%d analyzed, %d pending)", severity["high"], severity["medium"], severity["informational"], counts[storage.AnalysisComplete], counts[storage.AnalysisPending]+counts[storage.AnalysisAnalyzing]), nil
+}
+
+func (m *Manager) worker() {
+	defer m.workers.Done()
+	for queued := range m.queue {
+		m.analyze(queued)
+		m.pending.Done()
+	}
+}
+
+func (m *Manager) analyze(queued queuedJob) {
+	job := queued.job
+	_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisAnalyzing, "", "")
+	var inputs []storage.FindingInput
+	var err error
+	switch strings.ToLower(job.SourceTool) {
+	case "rusthound-ce", "rusthound":
+		inputs, err = analyzeRustHoundJob(m.ctx, job)
+	case "certipy":
+		inputs, err = AnalyzeCertipy(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "relayking":
+		inputs, err = AnalyzeRelayKing(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	default:
+		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
+		return
+	}
+	if err != nil {
+		status := storage.AnalysisFailed
+		if job.ArtifactPath == "" || err == context.Canceled || err == context.DeadlineExceeded {
+			status = storage.AnalysisPartial
+		}
+		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, status, ParserVersionFor(job.SourceTool), err.Error())
+		return
+	}
+	if err := m.db.IngestFindings(m.ctx, inputs); err != nil {
+		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisFailed, ParserVersionFor(job.SourceTool), err.Error())
+		return
+	}
+	_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisComplete, ParserVersionFor(job.SourceTool), "")
+}
+
+func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, error) {
+	if job.ArtifactPath == "" {
+		return nil, fmt.Errorf("RustHound artifact directory not found")
+	}
+	inputs, _, err := AnalyzeRustHound(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	if err != nil {
+		return nil, err
+	}
+	return inputs, nil
+}
+
+func ParserVersionFor(tool string) string {
+	switch strings.ToLower(tool) {
+	case "rusthound-ce", "rusthound":
+		return ParserVersion
+	case "certipy":
+		return "certipy-v1"
+	case "relayking":
+		return "relayking-v1"
+	default:
+		return ""
+	}
+}
+
+func jobKey(job Job) string {
+	hash := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%d\x00%s\x00%s", job.AssessmentID, job.ExecutionID, job.SourceTool, job.ArtifactPath)))
+	return "analysis:" + hex.EncodeToString(hash[:])
+}
+
+// DiscoverArtifact chooses only the newest run-scoped artifact. It never scans
+// the whole historical results tree and therefore cannot re-analyze old runs as
+// a side effect of a new execution.
+func DiscoverArtifact(tool, outputPath string) string {
+	if outputPath == "" {
+		return ""
+	}
+	base := filepath.Join(filepath.Dir(outputPath), "artifacts")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return ""
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() > entries[j].Name() })
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(base, entry.Name())
+		switch strings.ToLower(tool) {
+		case "rusthound-ce", "rusthound":
+			return dir
+		case "certipy":
+			if path := newestMatching(dir, ".json"); path != "" {
+				return path
+			}
+		case "relayking":
+			if path := newestMatching(dir, "relayking-scan.json"); path != "" {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+func newestMatching(dir, suffix string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if !entries[i].IsDir() && strings.HasSuffix(strings.ToLower(entries[i].Name()), strings.ToLower(suffix)) {
+			return filepath.Join(dir, entries[i].Name())
+		}
+	}
+	return ""
+}

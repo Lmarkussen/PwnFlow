@@ -204,11 +204,23 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		if ace.Object.HighValue && broad {
 			severity = "high"
 		}
+		if rightKey == "addkeycredentiallink" {
+			confidence = "potential-condition"
+		}
 		title := fmt.Sprintf("Direct ACL %s on %s", right, ace.Object.Name)
 		if ace.Object.Name == "" {
 			title = fmt.Sprintf("Direct ACL %s on %s", right, ace.Object.ID)
 		}
+		if rightKey == "addkeycredentiallink" {
+			title = "Potential Shadow Credentials exposure on " + objectLabel(ace.Object)
+		}
+		if rightKey == "writedacl" && ace.Object.HighValue {
+			title = "WriteDacl over privileged AD object: " + objectLabel(ace.Object)
+		}
 		description := fmt.Sprintf("RustHound collected a direct %s ACE from %s to %s. This is an observed relationship, not an effective-access or attack-path conclusion.", right, principalName, objectLabel(ace.Object))
+		if rightKey == "addkeycredentiallink" {
+			description += " This indicates a potential key-credential modification condition; no shadow credential was added by PwnFlow."
+		}
 		if aceBool(ace.ACE, "IsInherited") {
 			description += " The ACE is marked inherited in the export."
 		}

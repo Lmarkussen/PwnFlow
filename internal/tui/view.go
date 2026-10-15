@@ -13,6 +13,9 @@ func (m *model) View() string {
 	if m.watcher {
 		return m.watcherView()
 	}
+	if m.findingsView {
+		return m.findingsViewRender()
+	}
 	width := max(16, (m.width-4)/2)
 	var left strings.Builder
 	// The count is registry-wide, because R runs the selection across every tool

@@ -55,6 +55,11 @@ func (d *DB) migrate() error {
 			return err
 		}
 	}
+	if version < 3 {
+		if _, err := transaction.Exec(`CREATE TABLE IF NOT EXISTS analysis_jobs (id INTEGER PRIMARY KEY, job_key TEXT NOT NULL UNIQUE, assessment_id INTEGER NOT NULL, execution_id INTEGER NOT NULL, source_tool TEXT NOT NULL, artifact_path TEXT NOT NULL, status TEXT NOT NULL, error_summary TEXT NOT NULL DEFAULT '', parser_version TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(assessment_id) REFERENCES targets(id), FOREIGN KEY(execution_id) REFERENCES executions(id)); CREATE INDEX IF NOT EXISTS analysis_jobs_assessment_idx ON analysis_jobs(assessment_id); CREATE INDEX IF NOT EXISTS analysis_jobs_status_idx ON analysis_jobs(status); INSERT INTO schema_migrations(version) VALUES(3);`); err != nil {
+			return err
+		}
+	}
 	return transaction.Commit()
 }
 func (d *DB) UpsertTarget(ctx context.Context, domain, address string) error {
@@ -76,8 +81,16 @@ func (d *DB) RegisterModule(ctx context.Context, name, tool, protocol, descripti
 	return id, err
 }
 func (d *DB) RecordExecution(ctx context.Context, targetID, moduleID int64, started, finished time.Time, status string, exitCode int, output, summary string) error {
-	_, err := d.ExecContext(ctx, `INSERT INTO executions(target_id,module_id,started_at,finished_at,duration_ms,status,exit_code,output_path,error_summary) VALUES(?,?,?,?,?,?,?,?,?)`, targetID, moduleID, started.UTC().Format(time.RFC3339Nano), finished.UTC().Format(time.RFC3339Nano), finished.Sub(started).Milliseconds(), status, exitCode, output, summary)
+	_, err := d.RecordExecutionID(ctx, targetID, moduleID, started, finished, status, exitCode, output, summary)
 	return err
+}
+
+func (d *DB) RecordExecutionID(ctx context.Context, targetID, moduleID int64, started, finished time.Time, status string, exitCode int, output, summary string) (int64, error) {
+	result, err := d.ExecContext(ctx, `INSERT INTO executions(target_id,module_id,started_at,finished_at,duration_ms,status,exit_code,output_path,error_summary) VALUES(?,?,?,?,?,?,?,?,?)`, targetID, moduleID, started.UTC().Format(time.RFC3339Nano), finished.UTC().Format(time.RFC3339Nano), finished.Sub(started).Milliseconds(), status, exitCode, output, summary)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
 }
 
 func (d *DB) RecordExecutionFor(ctx context.Context, domain, address, moduleName, moduleTool string, started, finished time.Time, status string, exitCode int, output, summary string) error {

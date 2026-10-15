@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/runner"
 )
@@ -86,6 +87,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scrollModuleList()
 	case tickMsg:
 		quit := m.syncBatch()
+		m.refreshFindings()
+		if !m.running && m.batchRecorded && !m.analysisPending && !m.batchSummaryShown && m.findings != nil {
+			if summary, err := m.findings.Summary(m.ctx, m.targetID); err == nil && summary != "" {
+				m.status = summary
+				if strings.HasSuffix(summary, "0 pending)") {
+					m.batchSummaryShown = true
+				}
+			}
+		}
 		m.refreshWatcher()
 		m.refreshOutput()
 		// A privileged module waiting for renewed authorization is picked up here,
@@ -106,6 +116,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+	case findingsCompleteMsg:
+		m.analysisPending = false
+		m.batchSummaryShown = true
+		if msg.err != nil {
+			m.status = "Findings analysis partial: " + msg.err.Error()
+		} else if m.findings != nil {
+			if summary, err := m.findings.Summary(m.ctx, m.targetID); err == nil {
+				m.status = summary
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case sudoAuthorisedMsg:
@@ -118,6 +139,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.findingsView {
+		return m.handleFindingsKey(key)
+	}
 	if m.quitConfirm {
 		switch key {
 		case "y", "Y":
@@ -405,7 +429,86 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?":
 		m.status = helpText
+	case "f":
+		m.findingsView = true
+		m.findingDetail = false
+		m.findingSearchMode = false
+		m.refreshFindings()
 	}
+	return m, nil
+}
+
+func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if m.findingSearchMode {
+		switch key {
+		case "enter", "esc":
+			m.findingSearchMode = false
+		case "backspace":
+			if len(m.findingSearch) > 0 {
+				m.findingSearch = m.findingSearch[:len(m.findingSearch)-1]
+			}
+		default:
+			if len(key) == 1 && key >= " " && key <= "~" {
+				m.findingSearch += key
+			}
+		}
+		m.refreshFindings()
+		return m, nil
+	}
+	if m.findingDetail {
+		switch key {
+		case "esc", "enter":
+			m.findingDetail = false
+		case "up", "k":
+			m.findingCursor--
+		case "down", "j":
+			m.findingCursor++
+		}
+		if m.findingCursor < 0 {
+			m.findingCursor = 0
+		}
+		if m.findingCursor >= len(m.findingRows) {
+			m.findingCursor = max(0, len(m.findingRows)-1)
+		}
+		return m, nil
+	}
+	switch key {
+	case "esc", "f":
+		m.findingsView = false
+	case "up", "k":
+		m.findingCursor--
+	case "down", "j":
+		m.findingCursor++
+	case "pgup":
+		m.findingCursor -= 10
+	case "pgdown":
+		m.findingCursor += 10
+	case "home":
+		m.findingCursor = 0
+	case "end":
+		m.findingCursor = len(m.findingRows) - 1
+	case "enter":
+		if len(m.findingRows) > 0 {
+			m.findingDetail = true
+		}
+	case "/":
+		m.findingSearchMode = true
+	case "1":
+		m.findingSeverity = "high"
+	case "2":
+		m.findingSeverity = "medium"
+	case "3":
+		m.findingSeverity = "informational"
+	case "0":
+		m.findingSeverity = ""
+	}
+	if m.findingCursor < 0 {
+		m.findingCursor = 0
+	}
+	if m.findingCursor >= len(m.findingRows) {
+		m.findingCursor = max(0, len(m.findingRows)-1)
+	}
+	m.refreshFindings()
 	return m, nil
 }
 
@@ -627,6 +730,8 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.batchItems = items
 	m.batch = runner.NewBatchRun(items)
 	m.batchRecorded = false
+	m.batchSummaryShown = false
+	m.analysisPending = false
 	m.batchName = name
 	m.running = true
 	m.status = "running"
@@ -687,11 +792,17 @@ func (m *model) syncBatch() tea.Cmd {
 			if m.db != nil {
 				for _, state := range states {
 					if state.Index >= 0 && state.Index < len(m.allModuleIDs) {
-						_ = m.db.RecordExecution(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
+						executionID, err := m.db.RecordExecutionID(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
+						if err == nil && m.findings != nil {
+							module := state.Module
+							artifact := findingengine.DiscoverArtifact(module.Tool(), state.Result.OutputPath)
+							_ = m.findings.Submit(findingengine.Job{AssessmentID: m.targetID, ExecutionID: executionID, SourceTool: module.Tool(), ArtifactPath: artifact, ObservedAt: state.Result.Finished})
+						}
 					}
 				}
 			}
 			m.batchRecorded = true
+			m.analysisPending = m.findings != nil
 			m.batchElevation = map[string]bool{}
 			m.detailsRefreshed = time.Time{}
 			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", m.batchName, len(states), finished.Format("15:04:05"))
@@ -699,9 +810,23 @@ func (m *model) syncBatch() tea.Cmd {
 		if m.quitAfterCancel {
 			return tea.Quit
 		}
+		if m.analysisPending && !m.batchSummaryShown {
+			m.status = "enumeration complete; findings analysis pending"
+			m.batchSummaryShown = true
+			return m.waitForFindings()
+		}
 	default:
 	}
 	return nil
+}
+
+func (m *model) waitForFindings() tea.Cmd {
+	return func() tea.Msg {
+		if m.findings == nil {
+			return findingsCompleteMsg{}
+		}
+		return findingsCompleteMsg{err: m.findings.Wait(context.Background())}
+	}
 }
 
 func errorText(err error) string {

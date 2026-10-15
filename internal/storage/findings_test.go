@@ -69,7 +69,7 @@ func TestLegacyDatabaseGetsFindingsMigration(t *testing.T) {
 		t.Fatalf("legacy target was not preserved: %q %v", target, err)
 	}
 	var version int
-	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 2 {
+	if err := db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 3 {
 		t.Fatalf("migration version=%d err=%v", version, err)
 	}
 }

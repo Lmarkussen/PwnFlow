@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
+	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -17,6 +18,14 @@ type model struct {
 	ctx                context.Context
 	cfg                config.Config
 	db                 *storage.DB
+	findings           *findingengine.Manager
+	findingsView       bool
+	findingDetail      bool
+	findingRows        []storage.Finding
+	findingCursor      int
+	findingSearch      string
+	findingSearchMode  bool
+	findingSeverity    string
 	modules            []modules.Module
 	moduleIDs          []int64
 	moduleKeys         []int
@@ -77,6 +86,8 @@ type model struct {
 	batch             *runner.BatchRun
 	batchItems        []runner.BatchItem
 	batchRecorded     bool
+	batchSummaryShown bool
+	analysisPending   bool
 	batchName         string
 	watcherSelected   int
 	watcherListCursor int
@@ -113,6 +124,7 @@ type model struct {
 }
 
 type tickMsg time.Time
+type findingsCompleteMsg struct{ err error }
 
 // newTextInput builds the field the interactive prompt uses. It is a single-line
 // field with a plain prompt, deliberately without suggestions or history: the
@@ -131,6 +143,9 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 		moduleAvailability = availability[0]
 	}
 	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24}
+	if db != nil {
+		m.findings = findingengine.NewManager(ctx, db)
+	}
 	// A model without a database - a test, or a run that could not open the
 	// assessment store - keeps a nil store rather than an interface holding a nil
 	// pointer, so a module asking it a question gets an error it can report.
