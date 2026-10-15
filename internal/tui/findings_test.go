@@ -121,3 +121,21 @@ func TestFindingCategoryOverviewIsBounded(t *testing.T) {
 		t.Fatal("category overview rendered duplicate category rows")
 	}
 }
+
+func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_genericall", Title: "GenericAll", Severity: "medium", RelatedObjectID: "S-1-5-21-principal", RelatedObject: "LAB\\Helpdesk", AffectedObjectID: "S-1-5-21-target", AffectedObject: "LAB\\Domain Admins"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_writedacl", Title: "WriteDacl", Severity: "high", RelatedObjectID: "S-1-5-21-principal", RelatedObject: "LAB\\Helpdesk", AffectedObjectID: "S-1-5-21-target", AffectedObject: "LAB\\Domain Admins"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_acl_genericall", Title: "GenericAll", Severity: "high", RelatedObjectID: "S-1-5-21-other", RelatedObject: "LAB\\Other", AffectedObjectID: "S-1-5-21-target", AffectedObject: "LAB\\Domain Admins"}},
+	}
+	grouped := groupACLFindings(rows)
+	if len(grouped) != 2 {
+		t.Fatalf("grouped %d relationships, want 2", len(grouped))
+	}
+	if !strings.Contains(grouped[0].Description, "genericall") || !strings.Contains(grouped[0].Description, "writedacl") {
+		t.Fatalf("grouped rights missing: %s", grouped[0].Description)
+	}
+	if len(rows) != 3 || rows[0].FindingType != "ad_acl_genericall" {
+		t.Fatal("grouping modified stored presentation input")
+	}
+}

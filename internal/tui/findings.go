@@ -109,11 +109,56 @@ func (m *model) refreshFindings() {
 		filtered = append(filtered, finding)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool { return severityRank(filtered[i].Severity) > severityRank(filtered[j].Severity) })
+	if m.findingCategory == "acl" {
+		filtered = groupACLFindings(filtered)
+	}
 	m.findingRows = append(m.findingRows[:0], filtered...)
 	if m.findingCursor >= len(m.findingRows) {
 		m.findingCursor = max(0, len(m.findingRows)-1)
 	}
 	m.keepFindingVisible()
+}
+
+func groupACLFindings(rows []storage.Finding) []storage.Finding {
+	type group struct {
+		finding storage.Finding
+		rights  []string
+		seen    map[string]bool
+	}
+	groups := make(map[string]*group)
+	order := make([]string, 0, len(rows))
+	for _, finding := range rows {
+		key := finding.RelatedObjectID + "|" + finding.RelatedObject + "->" + finding.AffectedObjectID + "|" + finding.AffectedObject
+		entry := groups[key]
+		if entry == nil {
+			entry = &group{finding: finding, seen: make(map[string]bool)}
+			groups[key] = entry
+			order = append(order, key)
+		}
+		right := strings.TrimSpace(strings.TrimPrefix(finding.FindingType, "ad_acl_"))
+		if right == "" {
+			right = finding.Title
+		}
+		if !entry.seen[right] {
+			entry.seen[right] = true
+			entry.rights = append(entry.rights, right)
+		}
+		if severityRank(finding.Severity) > severityRank(entry.finding.Severity) {
+			entry.finding.Severity = finding.Severity
+		}
+	}
+	result := make([]storage.Finding, 0, len(order))
+	for _, key := range order {
+		entry := groups[key]
+		finding := entry.finding
+		principal := displayFindingObject(finding.RelatedObject, finding.RelatedObjectID)
+		target := displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)
+		finding.Title = fmt.Sprintf("AD control: %s → %s", principal, target)
+		finding.Description = fmt.Sprintf("Direct ACL relationship. Observed rights: %s. Grouped %d stored ACE record(s); this presentation does not establish effective access or an attack path.", strings.Join(entry.rights, ", "), len(entry.rights))
+		finding.FindingType = "ad_acl_group"
+		result = append(result, finding)
+	}
+	return result
 }
 
 func actionableFinding(finding storage.Finding) bool {
