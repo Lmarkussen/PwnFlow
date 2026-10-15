@@ -84,8 +84,12 @@ func TestRegistrationsAreNetworkScopedAndCredentialled(t *testing.T) {
 		t.Fatalf("%d registrations, want two", len(modulesHere))
 	}
 	for _, entry := range modulesHere {
-		if entry.ToolFamily() != modules.ToolFamilyNetwork || entry.Category() != modules.CategoryEnumeration {
-			t.Fatalf("%s is not under Network → Enumeration", entry.ID())
+		if entry.ToolFamily() != modules.ToolFamilyNetwork {
+			t.Fatalf("%s is not under the Network family", entry.ID())
+		}
+		offered := modules.CategoriesForFamily(modules.ToolFamilyNetwork)
+		if !slices.Contains(offered, entry.Category()) {
+			t.Fatalf("%s is filed under %s, which the Network family does not offer (%v)", entry.ID(), entry.Category(), offered)
 		}
 		if entry.DependencyKey() != "relayking" {
 			t.Fatalf("%s is gated by %q", entry.ID(), entry.DependencyKey())

@@ -28,6 +28,15 @@ const (
 	CategoryCredentialAuditing  Category = "Credential Auditing"
 	CategoryCredentialDumping   Category = "Credential Dumping"
 	CategoryPrivilegeEscalation Category = "Privilege Escalation"
+	// The remaining taxonomy entries are named here rather than spelled out at
+	// each use: a family offers a fixed set of categories, and a registration
+	// that names one of them has to name the same constant, or it is filed
+	// somewhere its own family never shows.
+	CategoryConfigurationAuditing Category = "Configuration Auditing"
+	CategoryPermissionsAuditing   Category = "Permissions Auditing"
+	CategoryHostDiscovery         Category = "Host Discovery"
+	CategoryServiceEnumeration    Category = "Service Enumeration"
+	CategorySecurityAuditing      Category = "Security Auditing"
 )
 
 func Categories() []Category {
@@ -71,13 +80,13 @@ func CategoriesForFamily(family ToolFamily) []Category {
 		// exploitation category with nothing legitimate in it.
 		return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping}
 	case ToolFamilyADCS:
-		return []Category{CategoryEnumeration, Category("Configuration Auditing"), CategoryPrivilegeEscalation}
+		return []Category{CategoryEnumeration, CategoryConfigurationAuditing, CategoryPrivilegeEscalation}
 	case ToolFamilyActiveDirectory:
-		return []Category{CategoryEnumeration, Category("Permissions Auditing"), CategoryPrivilegeEscalation}
+		return []Category{CategoryEnumeration, CategoryPermissionsAuditing, CategoryPrivilegeEscalation}
 	case ToolFamilySCCM:
 		return []Category{CategoryEnumeration}
 	case ToolFamilyNetwork:
-		return []Category{Category("Host Discovery"), Category("Service Enumeration"), Category("Security Auditing")}
+		return []Category{CategoryHostDiscovery, CategoryServiceEnumeration, CategorySecurityAuditing}
 	default:
 		return nil
 	}

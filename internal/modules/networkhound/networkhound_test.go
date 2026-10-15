@@ -63,8 +63,14 @@ func module(t *testing.T, id string) Module {
 // controller, and nothing else: no port scan, no service validation, no sweep.
 func TestTopologyCollectionStaysOnTheDomainController(t *testing.T) {
 	entry := module(t, "networkhound-topology")
-	if entry.ToolFamily() != modules.ToolFamilyNetwork || entry.Category() != modules.CategoryEnumeration {
-		t.Fatalf("%s is not under Network → Enumeration", entry.ID())
+	if entry.ToolFamily() != modules.ToolFamilyNetwork {
+		t.Fatalf("%s is not under the Network family", entry.ID())
+	}
+	// The category has to be one the Network family actually offers, or the module
+	// is filed somewhere the operator can never reach.
+	offered := modules.CategoriesForFamily(modules.ToolFamilyNetwork)
+	if !slices.Contains(offered, entry.Category()) {
+		t.Fatalf("%s is filed under %s, which the Network family does not offer (%v)", entry.ID(), entry.Category(), offered)
 	}
 	runtime := runtimeWith(t, nil)
 	args := entry.CommandArgs(runtime)

@@ -62,6 +62,7 @@ type Definition struct {
 	NameValue        string
 	DescriptionValue string
 	SlugValue        string
+	CategoryValue    modules.Category
 }
 
 type Module struct{ definition Definition }
@@ -75,15 +76,19 @@ func EnumerationModules() []Module {
 			IDValue:   "relayking-target-assessment",
 			NameValue: "Relay Exposure Assessment (Targeted)",
 			SlugValue: "target",
+			// Security Auditing: relay exposure is an authentication and signing
+			// configuration finding about the host.
+			CategoryValue: modules.CategorySecurityAuditing,
 			DescriptionValue: "Assesses NTLM and Kerberos relay exposure on the configured target with RelayKing: SMB and LDAP signing, " +
 				"LDAPS channel binding, HTTP/HTTPS authentication protection, MSSQL relay-related settings, and the domain NTLMv1 policy. " +
 				"Operates on the single host the operator configured, enumerates nothing from the directory beyond what the checks need, " +
 				"and writes both plaintext and JSON reports plus the relay target list into this run's artifact directory.",
 		}},
 		{definition: Definition{
-			IDValue:   "relayking-domain-audit",
-			NameValue: "Relay Exposure Audit (Full Domain)",
-			SlugValue: "audit",
+			IDValue:       "relayking-domain-audit",
+			NameValue:     "Relay Exposure Audit (Full Domain)",
+			SlugValue:     "audit",
+			CategoryValue: modules.CategorySecurityAuditing,
 			DescriptionValue: "Runs RelayKing's audit profile: it enumerates the computers of the domain with the operator's low-privilege " +
 				"credentials and assesses each one for relay exposure, with the port pre-scan, the domain NTLMv1 policy check and the relay " +
 				"target list. This contacts every computer RelayKing discovers, which is a domain-wide active scan, so PwnFlow asks for " +
@@ -95,7 +100,7 @@ func EnumerationModules() []Module {
 func (m Module) ID() string                       { return m.definition.IDValue }
 func (m Module) Name() string                     { return m.definition.NameValue }
 func (m Module) ToolFamily() modules.ToolFamily   { return modules.ToolFamilyNetwork }
-func (m Module) Category() modules.Category       { return modules.CategoryEnumeration }
+func (m Module) Category() modules.Category       { return m.definition.CategoryValue }
 func (m Module) Tool() string                     { return "RelayKing" }
 func (m Module) Protocol() modules.Protocol       { return modules.ProtocolNA }
 func (m Module) Description() string              { return m.definition.DescriptionValue }

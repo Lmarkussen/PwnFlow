@@ -83,6 +83,7 @@ type Definition struct {
 	NameValue        string
 	DescriptionValue string
 	SlugValue        string
+	CategoryValue    modules.Category
 }
 
 type Module struct{ definition Definition }
@@ -95,6 +96,9 @@ func EnumerationModules() []Module {
 			IDValue:   "networkhound-topology",
 			NameValue: "AD Network Topology",
 			SlugValue: "topology",
+			// Host Discovery: this is the collection that discovers the domain's
+			// computers and the addresses they answer on.
+			CategoryValue: modules.CategoryHostDiscovery,
 			DescriptionValue: "Collects the Active Directory network topology with NetworkHound and writes BloodHound-compatible " +
 				"OpenGraph JSON: computer objects, their operating systems, and the addresses they resolve to. The collection is " +
 				"LDAP against the configured domain controller plus DNS resolution through the same server; NetworkHound's port scan, " +
@@ -104,6 +108,9 @@ func EnumerationModules() []Module {
 			IDValue:   "networkhound-scope-validation",
 			NameValue: "Scoped Network & Service Validation",
 			SlugValue: "scope-validation",
+			// Service Enumeration: it validates the services on the scope the
+			// operator names.
+			CategoryValue: modules.CategoryServiceEnumeration,
 			DescriptionValue: "Runs NetworkHound's port and service validation against a network scope the operator supplies for this " +
 				"run: CIDR blocks, address ranges and single addresses. Nothing is derived from Active Directory and no credential is " +
 				"passed - NetworkHound's manual mode ignores the LDAP options - so the scan reaches exactly the addresses the operator " +
@@ -115,7 +122,7 @@ func EnumerationModules() []Module {
 func (m Module) ID() string                       { return m.definition.IDValue }
 func (m Module) Name() string                     { return m.definition.NameValue }
 func (m Module) ToolFamily() modules.ToolFamily   { return modules.ToolFamilyNetwork }
-func (m Module) Category() modules.Category       { return modules.CategoryEnumeration }
+func (m Module) Category() modules.Category       { return m.definition.CategoryValue }
 func (m Module) Tool() string                     { return "NetworkHound" }
 func (m Module) Protocol() modules.Protocol       { return modules.ProtocolNA }
 func (m Module) Description() string              { return m.definition.DescriptionValue }
@@ -166,6 +173,28 @@ func (m Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
 		Prompt:  "which network scope should be validated? PwnFlow scans exactly these addresses.",
 		Example: "198.51.100.0/29 or 198.51.100.10-198.51.100.20",
 	}}
+}
+
+// Status implements modules.StatusProvider, with the same vocabulary the NetExec
+// registrations use: a module waiting for a value the operator has to supply is
+// configurable, not unavailable, and the family view says so instead of looking
+// ready and then asking a question.
+func (m Module) Status(runtime *modules.Runtime) modules.Status {
+	if !m.scoped() {
+		return modules.StatusAvailable
+	}
+	if _, ok := runtime.ModuleOption(m.ID(), "NETWORKS"); !ok {
+		return modules.StatusInputRequired
+	}
+	return modules.StatusAvailable
+}
+
+// StatusReason explains the status, so Module Information names the value.
+func (m Module) StatusReason(runtime *modules.Runtime) string {
+	if status := m.Status(runtime); status == modules.StatusInputRequired {
+		return "needs NETWORKS - the network scope this run may scan"
+	}
+	return ""
 }
 
 // PlanApproval implements modules.ApprovalRequester: a network scan is not
