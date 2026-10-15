@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-install_bloodhound_ce=0
-install_bloodhound_python=0
 install_rusthound_ce=0
 install_netexec_requested=0
 netexec_status="Skipped"
-bloodhound_ce_status="Skipped"
-bloodhound_python_status="Skipped"
 rusthound_ce_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
   case "$argument" in
     --with-netexec) install_netexec_requested=1 ;;
-    --with-bloodhound) install_bloodhound_ce=1; install_bloodhound_python=1 ;;
-    --with-bloodhound-ce) install_bloodhound_ce=1 ;;
-    --with-bloodhound-python) install_bloodhound_python=1 ;;
     --with-rusthound-ce) install_rusthound_ce=1 ;;
+    --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
+      echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
+      echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
+      echo "RustHound-CE is the supported BloodHound CE collector: use --with-rusthound-ce." >&2
+      exit 2
+      ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-bloodhound-ce] [--with-bloodhound-python] [--with-bloodhound] [--with-rusthound-ce]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce]"
+      echo ""
+      echo "Installs the supported Kali dependencies: NetExec and RustHound-CE."
+      echo "BloodHound CE and its Python ingestor are not installed by this script;"
+      echo "BloodHound CE is the separate graph application used to import and view"
+      echo "collected data. Kali Linux is the only supported installation target."
       exit 0
       ;;
     *) echo "Unknown option: $argument" >&2; exit 2 ;;
@@ -30,8 +34,6 @@ done
 # Explicit flags remain available for selective tool-group installation.
 if [[ $# -eq 0 ]]; then
   install_netexec_requested=1
-  install_bloodhound_ce=1
-  install_bloodhound_python=1
   install_rusthound_ce=1
 fi
 
@@ -106,29 +108,6 @@ prepend_path_once() {
   esac
 }
 
-install_pipx() {
-  if command -v pipx >/dev/null 2>&1; then
-    echo "pipx already installed: $(pipx --version 2>/dev/null || echo version unavailable)"
-  else
-    if ! command -v apt-get >/dev/null 2>&1; then
-      echo "pipx is missing and no supported APT package manager was found." >&2
-      return 1
-    fi
-    echo "Installing pipx from the configured Kali APT repository."
-    run_apt update
-    run_apt_install pipx
-  fi
-  command -v pipx >/dev/null 2>&1 || { echo "pipx installation did not provide pipx" >&2; return 1; }
-  pipx ensurepath
-  local pipx_bin
-  pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
-  if [[ -z "$pipx_bin" ]]; then
-    pipx_bin="${HOME}/.local/bin"
-  fi
-  prepend_path_once "$pipx_bin"
-  echo "pipx applications available immediately from: ${pipx_bin}"
-}
-
 confirm_install() {
   local prompt="$1"
   if [[ "${PWNFlow_ASSUME_YES:-0}" == "1" ]]; then
@@ -163,6 +142,73 @@ refresh_cargo_path() {
   cargo_bin="$(cargo_bin_directory)"
   prepend_path_once "$cargo_bin"
   echo "Cargo applications available immediately from: ${cargo_bin}"
+}
+
+# Minimum free space the RustHound-CE release build needs in its build directory.
+cargo_build_min_free_kb() {
+  printf '%s\n' 2097152 # 2 GiB
+}
+
+filesystem_free_kb() {
+  local directory="$1" line value=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+  done < <(df -k --output=avail "$directory" 2>/dev/null || true)
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+  fi
+}
+
+free_space_description() {
+  local free
+  free="$(filesystem_free_kb "$1")"
+  if [[ -z "$free" ]]; then
+    printf '%s\n' "free space unknown"
+  else
+    printf '%s\n' "$((free / 1024)) MiB free"
+  fi
+}
+
+cargo_build_dir=""
+
+# Chooses where Cargo builds RustHound-CE and records it in cargo_build_dir.
+# Cargo performs every install build under TMPDIR, and Kali's /tmp is a tmpfs
+# limited to about half of RAM, so the installer prefers a disk-backed cache
+# directory. An operator-supplied TMPDIR is used when it is usable and is never
+# replaced silently; this function narrates its own diagnostics on stdout so an
+# operator sees them in the same stream as the installation summary.
+cargo_build_directory() {
+  local preferred="${HOME}/.cache/pwnflow/cargo-tmp" minimum free
+  minimum="$(cargo_build_min_free_kb)"
+  cargo_build_dir=""
+  if [[ -n "${TMPDIR:-}" ]]; then
+    if [[ ! -d "$TMPDIR" || ! -w "$TMPDIR" ]]; then
+      echo "TMPDIR is set to '${TMPDIR}', which is not a writable directory."
+      echo "Point TMPDIR at a writable, disk-backed directory, or unset it so Cargo can use ${preferred}."
+      return 1
+    fi
+    free="$(filesystem_free_kb "$TMPDIR")"
+    if [[ -n "$free" ]] && (( free < minimum )); then
+      echo "TMPDIR is set to '${TMPDIR}' with $((free / 1024)) MiB free; the RustHound-CE release build needs at least $((minimum / 1024)) MiB."
+      echo "Point TMPDIR at a larger filesystem, or unset it so Cargo can use ${preferred}."
+      return 1
+    fi
+    cargo_build_dir="$TMPDIR"
+    return 0
+  fi
+  if [[ ! -d "$preferred" ]] && ! mkdir -p "$preferred" 2>/dev/null; then
+    echo "Could not create the Cargo build directory ${preferred}."
+    return 1
+  fi
+  free="$(filesystem_free_kb "$preferred")"
+  if [[ -n "$free" ]] && (( free < minimum )); then
+    echo "${preferred} has $((free / 1024)) MiB free; the RustHound-CE release build needs at least $((minimum / 1024)) MiB."
+    echo "Free space on that filesystem, or set TMPDIR to a directory with more room."
+    return 1
+  fi
+  cargo_build_dir="$preferred"
 }
 
 package_installed() {
@@ -230,92 +276,6 @@ install_netexec() {
   netexec_status="Installed"
 }
 
-bloodhound_python_functional() {
-  local executable
-  for executable in bloodhound-ce-python bloodhound-python; do
-    if command -v "$executable" >/dev/null 2>&1 && "$executable" --help >/dev/null 2>&1; then
-      echo "$executable"
-      return 0
-    fi
-  done
-  return 1
-}
-
-install_bloodhound_python() {
-  local executable
-  if executable="$(bloodhound_python_functional)"; then
-    echo "BloodHound CE Python ingestor already installed and functional: ${executable}"
-    bloodhound_python_status="Already installed"
-    return 0
-  fi
-  install_pipx
-  echo "Installing BloodHound CE Python ingestor with pipx (package: bloodhound-ce)."
-	if ! pipx install bloodhound-ce; then
-		echo "pipx installation failed for package bloodhound-ce; no existing installation was changed." >&2
-		return 1
-	fi
-  if ! executable="$(bloodhound_python_functional)"; then
-    echo "pipx completed but no working bloodhound-ce-python or bloodhound-python executable was found." >&2
-    return 1
-  fi
-  echo "BloodHound CE Python ingestor installed and functional: ${executable}"
-  bloodhound_python_status="Installed"
-}
-
-bloodhound_ce_package_version() {
-  local query
-  if ! command -v dpkg-query >/dev/null 2>&1; then
-    return 2
-  fi
-  if ! query="$(dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' bloodhound 2>&1)"; then
-    case "$query" in
-      *"no packages found matching"*) return 1 ;;
-      *) return 2 ;;
-    esac
-  fi
-  if [[ ${query:0:3} != "ii " ]]; then
-    return 2
-  fi
-  local version
-  read -r _ version _ <<< "$query"
-  if [[ -z "${version:-}" ]]; then
-    return 2
-  fi
-  printf '%s\n' "$version"
-}
-
-install_bloodhound_ce() {
-  local version
-  if version="$(bloodhound_ce_package_version)"; then
-    echo "BloodHound CE package already installed and configured: ${version}"
-    bloodhound_ce_status="Already installed"
-    return 0
-  else
-    local package_state=$?
-    if [[ ${package_state} -eq 2 ]]; then
-      echo "BloodHound CE package verification failed; refusing to reinstall an uncertain package state." >&2
-      return 1
-    fi
-  fi
-  if ! command -v apt-get >/dev/null 2>&1 || ! command -v apt-cache >/dev/null 2>&1; then
-    echo "BloodHound CE requires its official application installation method; APT tooling is unavailable." >&2
-    return 1
-  fi
-  if ! apt-cache show bloodhound >/dev/null 2>&1; then
-    echo "BloodHound CE is not available in the configured repositories; use its official application installation procedure." >&2
-    return 1
-  fi
-  echo "Installing missing BloodHound CE from the configured official application package."
-  run_apt update
-  run_apt_install bloodhound
-  if ! version="$(bloodhound_ce_package_version)"; then
-    echo "APT completed but dpkg does not confirm a fully installed/configured BloodHound CE package." >&2
-    return 1
-  fi
-  bloodhound_ce_status="Installed"
-  echo "BloodHound CE package installed and configured: ${version}"
-}
-
 rusthound_executable() {
   command -v rusthound-ce 2>/dev/null
 }
@@ -327,6 +287,9 @@ rusthound_functional() {
 }
 
 install_rusthound_ce() {
+  # Cargo installs into $CARGO_HOME/bin, which Kali does not place on PATH by
+  # default, so refresh it before deciding whether RustHound-CE is already here.
+  refresh_cargo_path
   if command -v rusthound-ce >/dev/null 2>&1; then
     if rusthound_functional; then
       echo "RustHound-CE already installed and functional: $(rusthound-ce --version 2>/dev/null || echo version unavailable)"
@@ -340,14 +303,21 @@ install_rusthound_ce() {
     return 1
   fi
   refresh_cargo_path
+  local build_directory
+  if ! cargo_build_directory; then
+    rusthound_ce_status="Failed (no usable Cargo build directory)"
+    return 1
+  fi
+  build_directory="${cargo_build_dir}"
+  echo "Cargo build directory: ${build_directory} ($(free_space_description "$build_directory"))"
   echo "Installing missing RustHound-CE with Cargo."
   local cargo_exit=0
-  if cargo install rusthound-ce; then
+  if TMPDIR="$build_directory" cargo install rusthound-ce; then
     :
   else
     cargo_exit=$?
     rusthound_ce_status="Failed (cargo install exit ${cargo_exit})"
-    echo "RustHound-CE Cargo installation failed (exit ${cargo_exit}). Review the Cargo output above; verify clang, libclang-dev, libkrb5-dev, and GSSAPI development packages are installed, and that Cargo's build directory (TMPDIR, default /tmp) has enough free space."
+    echo "RustHound-CE Cargo installation failed (exit ${cargo_exit}). Review the Cargo output above; the build ran in ${build_directory}. Verify clang, libclang-dev, libkrb5-dev, and GSSAPI development packages are installed, and that the build directory has enough free space and memory."
     return 1
   fi
   local executable
@@ -369,8 +339,6 @@ print_summary() {
   echo ""
   echo "Installation summary:"
   echo "  NetExec: ${netexec_status}"
-  echo "  BloodHound CE: ${bloodhound_ce_status}"
-  echo "  BloodHound CE Python: ${bloodhound_python_status}"
   echo "  RustHound-CE: ${rusthound_ce_status}"
   echo "  Cargo: ${cargo_status}"
 }
@@ -378,20 +346,6 @@ print_summary() {
 if [[ ${install_netexec_requested} -eq 1 ]]; then
   if ! install_netexec; then
     netexec_status="Failed"
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_bloodhound_ce} -eq 1 ]]; then
-  if ! install_bloodhound_ce; then
-    bloodhound_ce_status="Failed"
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_bloodhound_python} -eq 1 ]]; then
-  if ! install_bloodhound_python; then
-    bloodhound_python_status="Failed"
     print_summary
     exit 1
   fi
@@ -407,9 +361,5 @@ if [[ ${install_rusthound_ce} -eq 1 ]]; then
     exit 1
   fi
 fi
-if [[ ${install_bloodhound_ce} -eq 0 && ${install_bloodhound_python} -eq 0 && ${install_rusthound_ce} -eq 0 ]]; then
-  echo "BloodHound components are optional and unchanged. Use --with-bloodhound-ce and/or --with-bloodhound-python for explicit installation."
-else
-  echo "BloodHound services were not started; configure local-only binding before launching any CE application."
-fi
+echo "BloodHound CE is not installed, started, or configured by this script; an existing BloodHound CE application is left unchanged and RustHound-CE output remains importable there."
 print_summary

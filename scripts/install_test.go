@@ -1,11 +1,17 @@
 package scripts
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+)
+
+const (
+	ampleFreeSpaceKB        = 2147483648 // 2 TiB
+	insufficientFreeSpaceKB = 102400     // 100 MiB
 )
 
 func runInstaller(t *testing.T, bin string, args ...string) (string, error) {
@@ -49,8 +55,15 @@ func writeExecutable(t *testing.T, directory, name, body string) {
 	}
 }
 
-// writeCargoPrerequisiteMocks satisfies every native prerequisite the installer
-// checks before invoking Cargo, so the RustHound paths reach the Cargo call.
+// writeAvailableSpaceMock replaces df so a test decides how much free space the
+// installer observes for a Cargo build directory.
+func writeAvailableSpaceMock(t *testing.T, bin string, availableKB int) {
+	t.Helper()
+	writeExecutable(t, bin, "df", fmt.Sprintf("printf '%%s\\n' '    Avail' '%d'", availableKB))
+}
+
+// writeCargoPrerequisiteMocks satisfies every native prerequisite and filesystem
+// helper the installer uses before and around the Cargo call.
 func writeCargoPrerequisiteMocks(t *testing.T, bin string) {
 	t.Helper()
 	for _, name := range []string{"cc", "clang", "pkg-config", "gcc"} {
@@ -58,31 +71,60 @@ func writeCargoPrerequisiteMocks(t *testing.T, bin string) {
 	}
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
 	writeExecutable(t, bin, "grep", `exec /usr/bin/grep "$@"`)
+	writeExecutable(t, bin, "mkdir", `exec /usr/bin/mkdir "$@"`)
+	writeAvailableSpaceMock(t, bin, ampleFreeSpaceKB)
 }
 
+func writeFailingPackageManagerMocks(t *testing.T, bin string) {
+	t.Helper()
+	writeExecutable(t, bin, "apt-get", `echo apt-should-not-run >&2; exit 99`)
+	writeExecutable(t, bin, "apt-cache", `echo apt-cache-should-not-run >&2; exit 99`)
+	writeExecutable(t, bin, "sudo", `echo sudo-should-not-run >&2; exit 99`)
+	writeExecutable(t, bin, "pipx", `echo pipx-should-not-run >&2; exit 99`)
+}
+
+func readLoggedTMPDIR(t *testing.T, logPath string) string {
+	t.Helper()
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("cargo recorded no TMPDIR: %v", err)
+	}
+	return strings.TrimSpace(string(contents))
+}
+
+// The default invocation must only manage the supported Kali dependencies and
+// must not reach for APT, sudo, pipx, or any BloodHound component.
 func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
-	writeExecutable(t, bin, "bloodhound", `exit 1`)
-	writeExecutable(t, bin, "bloodhound-ce-python", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'ii  9.8.0~rc3-0kali1'`)
+	writeFailingPackageManagerMocks(t, bin)
+
 	output, err := runInstaller(t, bin)
 	if err != nil {
 		t.Fatalf("default installer check failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
 		"NetExec already installed and functional",
-		"BloodHound CE package already installed and configured",
-		"BloodHound CE Python ingestor already installed and functional",
 		"RustHound-CE already installed and functional",
 		"NetExec: Already installed",
-		"BloodHound CE: Already installed",
-		"BloodHound CE Python: Already installed",
 		"RustHound-CE: Already installed",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	for _, unwanted := range []string{
+		"apt-should-not-run",
+		"apt-cache-should-not-run",
+		"sudo-should-not-run",
+		"pipx-should-not-run",
+		"BloodHound CE:",
+		"BloodHound CE Python",
+	} {
+		if strings.Contains(output, unwanted) {
+			t.Errorf("default installer referenced %q: %s", unwanted, output)
 		}
 	}
 }
@@ -100,16 +142,55 @@ func TestInstallerSkipsExistingNetExecWithoutAPT(t *testing.T) {
 	}
 }
 
-func TestInstallerBloodHoundUsesPackageStateNotDeprecatedCLI(t *testing.T) {
+// BloodHound CE is the separate graph application for importing and viewing
+// collected data. The installer must not install it, and the retired flags must
+// fail loudly instead of silently doing nothing.
+func TestInstallerRefusesRetiredBloodHoundFlagsWithoutInstalling(t *testing.T) {
 	bin := t.TempDir()
-	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'ii  9.8.0~rc3-0kali1'`)
-	writeExecutable(t, bin, "bloodhound", `echo deprecated >&2; exit 1`)
-	output, err := runInstaller(t, bin, "--with-bloodhound-ce")
-	if err != nil || !strings.Contains(output, "BloodHound CE: Already installed") {
-		t.Fatalf("package-aware detection failed: err=%v\n%s", err, output)
+	writeFailingPackageManagerMocks(t, bin)
+	for _, flag := range []string{"--with-bloodhound-ce", "--with-bloodhound-python", "--with-bloodhound"} {
+		t.Run(flag, func(t *testing.T) {
+			stdout, stderr, err := runInstallerSplit(t, bin, flag)
+			if err == nil {
+				t.Fatalf("%s unexpectedly succeeded:\n%s", flag, stdout)
+			}
+			combined := stdout + stderr
+			if !strings.Contains(combined, "no longer installs BloodHound CE") {
+				t.Errorf("%s did not explain the retirement: %s", flag, combined)
+			}
+			for _, unwanted := range []string{"apt-should-not-run", "apt-cache-should-not-run", "pipx-should-not-run", "sudo-should-not-run"} {
+				if strings.Contains(combined, unwanted) {
+					t.Errorf("%s performed installation work: %s", flag, combined)
+				}
+			}
+		})
 	}
-	if strings.Contains(output, "deprecated") {
-		t.Fatal("deprecated BloodHound wrapper was executed")
+}
+
+func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeExecutable(t, bin, "systemctl", `echo systemctl-should-not-run >&2; exit 99`)
+	writeExecutable(t, bin, "apt-cache", `echo apt-cache-should-not-run >&2; exit 99`)
+	writeFailingPackageManagerMocks(t, bin)
+
+	stdout, _, err := runInstallerSplit(t, bin)
+	if err != nil {
+		t.Fatalf("default installer run failed: %v\n%s", err, stdout)
+	}
+	for _, unwanted := range []string{
+		"systemctl-should-not-run",
+		"apt-cache-should-not-run",
+		"apt-should-not-run",
+		"pipx-should-not-run",
+	} {
+		if strings.Contains(stdout, unwanted) {
+			t.Errorf("installer performed unrelated work: %s", stdout)
+		}
+	}
+	if !strings.Contains(stdout, "BloodHound CE is not installed, started, or configured by this script") {
+		t.Errorf("installer must state that BloodHound CE is out of scope: %s", stdout)
 	}
 }
 
@@ -151,39 +232,86 @@ func TestInstallerCargoOnlyDoesNotRequireSudo(t *testing.T) {
 	}
 }
 
+// Kali does not put ~/.cargo/bin on PATH, so an existing RustHound-CE install
+// must still be detected through CARGO_HOME/bin instead of being reinstalled.
+func TestInstallerDetectsRustHoundInCargoBinWithoutRunningCargo(t *testing.T) {
+	bin := t.TempDir()
+	cargoHome := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "cargo-ran")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", "")
+	t.Setenv("CARGO_RAN_MARKER", marker)
+	writeExecutable(t, bin, "cargo", `case "$1" in
+--version) echo 'cargo 1.95.0';;
+install) : > "$CARGO_RAN_MARKER";;
+esac`)
+	if err := os.MkdirAll(filepath.Join(cargoHome, "bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(cargoHome, "bin"), "rusthound-ce", `case "$1" in --help) exit 0;; --version) echo 'rusthound-ce 2.5.25';; esac`)
+
+	output, err := runInstaller(t, bin, "--with-rusthound-ce")
+	if err != nil {
+		t.Fatalf("existing RustHound-CE was not accepted: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "RustHound-CE already installed and functional") {
+		t.Errorf("installer did not report the existing installation: %s", output)
+	}
+	if !strings.Contains(output, "RustHound-CE: Already installed") {
+		t.Errorf("summary did not record the existing installation: %s", output)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("installer ran cargo install for a functional existing RustHound-CE")
+	}
+}
+
 func TestInstallerHelpDocumentsStandaloneDefaultAndFlags(t *testing.T) {
 	output, err := runInstaller(t, t.TempDir(), "--help")
 	if err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	for _, want := range []string{"--with-netexec", "--with-bloodhound-ce", "--with-bloodhound-python", "--with-rusthound-ce"} {
+	for _, want := range []string{"--with-netexec", "--with-rusthound-ce"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("help missing %s", want)
 		}
 	}
+	for _, unwanted := range []string{"--with-bloodhound", "pipx"} {
+		if strings.Contains(output, unwanted) {
+			t.Errorf("help still advertises %s: %s", unwanted, output)
+		}
+	}
 }
 
-func TestInstallerRustHoundCargoSuccessRefreshesPath(t *testing.T) {
+// Cargo installs build under TMPDIR. Kali's /tmp is a small tmpfs, so the
+// installer must use a disk-backed cache directory when the operator has not
+// chosen one, and must hand that directory to Cargo.
+func TestInstallerUsesDiskBackedCargoBuildDirectory(t *testing.T) {
 	bin := t.TempDir()
 	cargoHome := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	tmpLog := filepath.Join(t.TempDir(), "tmpdir.log")
+	t.Setenv("HOME", home)
 	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", "")
+	t.Setenv("CARGO_TMP_LOG", tmpLog)
 	writeExecutable(t, bin, "cargo", `case "$1" in
 --version) echo 'cargo 1.95.0';;
-install) /bin/mkdir -p "$CARGO_HOME/bin"; printf '%s\n' '#!/bin/sh' 'case "$1" in --help) echo rusthound-help;; --version) echo rusthound-ce 2.5.25;; esac' > "$CARGO_HOME/bin/rusthound-ce"; /bin/chmod 700 "$CARGO_HOME/bin/rusthound-ce";;
+install) printf '%s\n' "$TMPDIR" > "$CARGO_TMP_LOG"; /bin/mkdir -p "$CARGO_HOME/bin"; printf '%s\n' '#!/bin/sh' 'case "$1" in --help) echo rusthound-help;; --version) echo rusthound-ce 2.5.25;; esac' > "$CARGO_HOME/bin/rusthound-ce"; /bin/chmod 700 "$CARGO_HOME/bin/rusthound-ce";;
 esac`)
-	writeExecutable(t, bin, "cc", `exit 0`)
-	writeExecutable(t, bin, "clang", `exit 0`)
-	writeExecutable(t, bin, "pkg-config", `exit 0`)
-	writeExecutable(t, bin, "gcc", `exit 0`)
-	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
-	writeExecutable(t, bin, "grep", `exec /usr/bin/grep "$@"`)
+	writeCargoPrerequisiteMocks(t, bin)
+	writeFailingPackageManagerMocks(t, bin)
 
 	output, err := runInstaller(t, bin, "--with-rusthound-ce")
 	if err != nil {
 		t.Fatalf("RustHound mock installation failed: %v\n%s", err, output)
 	}
+	wantDirectory := filepath.Join(home, ".cache", "pwnflow", "cargo-tmp")
+	if recorded := readLoggedTMPDIR(t, tmpLog); recorded != wantDirectory {
+		t.Errorf("Cargo ran with TMPDIR=%q, want %q", recorded, wantDirectory)
+	}
 	for _, want := range []string{
+		"Cargo build directory: " + wantDirectory,
 		"Installing missing RustHound-CE with Cargo.",
 		"RustHound-CE installed and functional at " + filepath.Join(cargoHome, "bin", "rusthound-ce"),
 		"RustHound-CE: Installed",
@@ -193,30 +321,71 @@ esac`)
 			t.Errorf("output missing %q: %s", want, output)
 		}
 	}
+	if strings.Contains(output, "apt-should-not-run") {
+		t.Errorf("installer ran APT although every prerequisite was present: %s", output)
+	}
 }
 
-func TestInstallerRustHoundCargoFailureShowsStderrAndExitStatus(t *testing.T) {
+func TestInstallerRespectsExplicitTMPDIR(t *testing.T) {
 	bin := t.TempDir()
+	cargoHome := t.TempDir()
+	chosen := t.TempDir()
+	tmpLog := filepath.Join(t.TempDir(), "tmpdir.log")
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CARGO_HOME", t.TempDir())
+	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", chosen)
+	t.Setenv("CARGO_TMP_LOG", tmpLog)
 	writeExecutable(t, bin, "cargo", `case "$1" in
 --version) echo 'cargo 1.95.0';;
-install) echo 'error: libclang development files not found' >&2; exit 42;;
+install) printf '%s\n' "$TMPDIR" > "$CARGO_TMP_LOG"; /bin/mkdir -p "$CARGO_HOME/bin"; printf '%s\n' '#!/bin/sh' 'case "$1" in --help) exit 0;; esac' > "$CARGO_HOME/bin/rusthound-ce"; /bin/chmod 700 "$CARGO_HOME/bin/rusthound-ce";;
 esac`)
 	writeCargoPrerequisiteMocks(t, bin)
 
 	output, err := runInstaller(t, bin, "--with-rusthound-ce")
+	if err != nil {
+		t.Fatalf("RustHound mock installation failed: %v\n%s", err, output)
+	}
+	if recorded := readLoggedTMPDIR(t, tmpLog); recorded != chosen {
+		t.Errorf("operator TMPDIR was replaced: Cargo saw %q, want %q", recorded, chosen)
+	}
+	if !strings.Contains(output, "Cargo build directory: "+chosen) {
+		t.Errorf("output did not report the operator TMPDIR: %s", output)
+	}
+}
+
+func TestInstallerReportsInsufficientCargoBuildSpaceWithoutRunningCargo(t *testing.T) {
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "cargo-ran")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CARGO_HOME", t.TempDir())
+	t.Setenv("TMPDIR", "")
+	t.Setenv("CARGO_RAN_MARKER", marker)
+	writeExecutable(t, bin, "cargo", `case "$1" in
+--version) echo 'cargo 1.95.0';;
+install) : > "$CARGO_RAN_MARKER";;
+esac`)
+	for _, name := range []string{"cc", "clang", "pkg-config", "gcc"} {
+		writeExecutable(t, bin, name, `exit 0`)
+	}
+	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
+	writeExecutable(t, bin, "grep", `exec /usr/bin/grep "$@"`)
+	writeExecutable(t, bin, "mkdir", `exec /usr/bin/mkdir "$@"`)
+	writeAvailableSpaceMock(t, bin, insufficientFreeSpaceKB)
+
+	stdout, _, err := runInstallerSplit(t, bin, "--with-rusthound-ce")
 	if err == nil {
-		t.Fatalf("failed Cargo install unexpectedly succeeded: %s", output)
+		t.Fatalf("installer ran with an undersized build directory:\n%s", stdout)
 	}
 	for _, want := range []string{
-		"error: libclang development files not found",
-		"RustHound-CE Cargo installation failed (exit 42)",
-		"RustHound-CE: Failed",
+		"needs at least 2048 MiB",
+		"RustHound-CE: Failed (no usable Cargo build directory)",
 	} {
-		if !strings.Contains(output, want) {
-			t.Errorf("failure output missing %q: %s", want, output)
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout must explain the build directory problem; missing %q\n%s", want, stdout)
 		}
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("installer invoked cargo without a usable build directory")
 	}
 }
 
@@ -229,6 +398,7 @@ func TestInstallerRustHoundCargoFailureIsExplainedOnStdout(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CARGO_HOME", t.TempDir())
+	t.Setenv("TMPDIR", "")
 	writeExecutable(t, bin, "cargo", `case "$1" in
 --version) echo 'cargo 1.95.0';;
 install) echo 'error: No space left on device (os error 28)' >&2; exit 101;;
@@ -256,6 +426,32 @@ esac`)
 	}
 }
 
+func TestInstallerRustHoundCargoFailureShowsExitStatus(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CARGO_HOME", t.TempDir())
+	t.Setenv("TMPDIR", "")
+	writeExecutable(t, bin, "cargo", `case "$1" in
+--version) echo 'cargo 1.95.0';;
+install) echo 'error: libclang development files not found' >&2; exit 42;;
+esac`)
+	writeCargoPrerequisiteMocks(t, bin)
+
+	output, err := runInstaller(t, bin, "--with-rusthound-ce")
+	if err == nil {
+		t.Fatalf("failed Cargo install unexpectedly succeeded: %s", output)
+	}
+	for _, want := range []string{
+		"error: libclang development files not found",
+		"RustHound-CE Cargo installation failed (exit 42)",
+		"RustHound-CE: Failed",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("failure output missing %q: %s", want, output)
+		}
+	}
+}
+
 // The summary must let an operator tell a Cargo failure apart from a
 // post-install verification failure, and the explanation must be on stdout.
 func TestInstallerRustHoundVerificationFailureDiffersFromCargoFailure(t *testing.T) {
@@ -263,6 +459,7 @@ func TestInstallerRustHoundVerificationFailureDiffersFromCargoFailure(t *testing
 	cargoHome := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", "")
 	writeExecutable(t, bin, "cargo", `case "$1" in
 --version) echo 'cargo 1.95.0';;
 install) echo 'Installed rusthound-ce';;
@@ -288,6 +485,7 @@ func TestInstallerRustHoundAddsOnlyMissingDocumentedPrerequisites(t *testing.T) 
 	log := filepath.Join(t.TempDir(), "apt.log")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", "")
 	t.Setenv("PWNFlow_ASSUME_YES", "1")
 	writeExecutable(t, bin, "cargo", `case "$1" in
 --version) echo 'cargo 1.95.0';;
@@ -297,6 +495,8 @@ esac`)
 		writeExecutable(t, bin, name, `exit 0`)
 	}
 	writeExecutable(t, bin, "grep", `exec /usr/bin/grep "$@"`)
+	writeExecutable(t, bin, "mkdir", `exec /usr/bin/mkdir "$@"`)
+	writeAvailableSpaceMock(t, bin, ampleFreeSpaceKB)
 	writeExecutable(t, bin, "dpkg-query", `case "$3" in libclang-dev|libkrb5-dev) exit 1;; *) printf '%s\n' 'install ok installed';; esac`)
 	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
 	writeExecutable(t, bin, "apt-get", "printf '%s\\n' \"$*\" >> \""+log+"\"; exit 0")
@@ -317,5 +517,8 @@ esac`)
 	}
 	if strings.Contains(logText, "libssl-dev") || strings.Contains(logText, "libgssapi-krb5-2") || strings.Contains(logText, "libsasl2-modules-gssapi-mit") {
 		t.Errorf("already installed prerequisites were unnecessarily selected: %s", logText)
+	}
+	if strings.Contains(logText, "bloodhound") || strings.Contains(logText, "pipx") {
+		t.Errorf("BloodHound components must never be installed: %s", logText)
 	}
 }

@@ -28,9 +28,9 @@ make install PREFIX="$HOME/.local"
 make uninstall PREFIX="$HOME/.local"
 ```
 
-`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `scripts/install.sh` is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec, the BloodHound CE application package, the BloodHound CE Python ingestor, and RustHound-CE (including Cargo/build prerequisites when needed). Existing functional tools are skipped. Use `--with-netexec`, `--with-bloodhound-ce`, `--with-bloodhound-python`, `--with-bloodhound` (both BloodHound components), or `--with-rusthound-ce` for selective installation. Kali Linux is the only supported installation target.
+`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `scripts/install.sh` is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs the supported dependencies: NetExec and RustHound-CE (including Cargo/build prerequisites when needed). Existing functional tools are skipped. Use `--with-netexec` or `--with-rusthound-ce` for selective installation. Kali Linux is the only supported installation target.
 
-The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, pipx for Python CLI tools, and Cargo for RustHound-CE. It never starts BloodHound, Neo4j, or PostgreSQL. Re-run `./scripts/install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `cd /home/kali/PwnFlow && ./scripts/install.sh`.
+The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./scripts/install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `cd /home/kali/PwnFlow && ./scripts/install.sh`.
 
 Development and validation are restricted to the authorized lab target `10.1.10.40` and domain `sccm.lab`. PwnFlow rejects other target/domain combinations, and build/test/check targets do not connect to assessment infrastructure.
 
@@ -51,17 +51,19 @@ go vet ./...
 
 The LDAP preflight intentionally requires TCP/389 and a real NTLMSSP LDAP bind, matching NetExec's LDAP authentication behavior. It does not treat an open port as successful authentication or silently downgrade TLS/signing requirements. Simple-bind identities are normalized to the UPN form `username@domain` when that mechanism is used.
 
-### Optional BloodHound components
+### BloodHound CE and RustHound-CE
 
 PwnFlow registers NetExec BloodHound capability metadata separately from the
-BloodHound CE application and the `bloodhound-ce-python` ingestor. The standalone installer does not start services or install these optional components.
-To explicitly request the optional installer routines, run one component at a
-time (or use `--with-bloodhound` for both):
-
-```bash
-./scripts/install.sh --with-bloodhound-ce
-./scripts/install.sh --with-bloodhound-python
-```
+BloodHound CE application and from RustHound-CE. BloodHound CE is the separate
+graph application used to import and visualize collected directory data; the
+standalone installer does not install, start, or configure it, so install
+BloodHound CE with its official application procedure and keep it bound to a
+local interface. An existing BloodHound CE installation is still detected
+read-only (Debian package `bloodhound`) and keeps working for importing
+RustHound-CE output. The retired `--with-bloodhound-ce`,
+`--with-bloodhound-python`, and `--with-bloodhound` flags now stop with an
+explanation instead of running; the installer no longer manages these
+components in either direction.
 
 BloodHound collection remains disabled because unrestricted collection methods
 may contact hosts beyond the authorized DC. AS-REP Roasting and Kerberoasting
@@ -70,24 +72,25 @@ sensitive artifact workflows are disabled. No ticket material is written to
 ordinary enumeration logs, and PwnFlow does not crack or automatically reuse
 credentials. The NetExec `--bloodhound`/`--collection` capability is checked
 locally, but the collection module remains unavailable until a confined
-single-host workflow exists. The CE application, Python ingestor, and NetExec
-collection capability are separate dependencies; the installer never starts a
-BloodHound service or binds it to a network interface.
+single-host workflow exists. PwnFlow checks `bloodhound-ce-python` and the
+legacy `bloodhound-python` as exposed command names only for read-only
+detection; the installer does not install either collector.
 
-BloodHound CE Python installation is pipx-first. PwnFlow checks both
-`bloodhound-ce-python` and `bloodhound-python` as exposed command names, runs
-their help capability check, and refreshes the current process PATH after
-installation. `pipx ensurepath` configures future shells without PwnFlow
-editing bash, zsh, or fish startup files; the user-local pipx bin directory is
-also made available immediately. The CE application uses its official
-application method and is never installed through pipx.
-
-RustHound-CE is an independent BloodHound CE collector. Request it explicitly
+RustHound-CE is the supported BloodHound CE collector. Request it explicitly
 with `./scripts/install.sh --with-rusthound-ce`; the installer checks Cargo,
 the required local build dependencies, and operator consent before running
 `cargo install rusthound-ce`. Existing functional installations are preserved.
 RustHound-CE collection remains Scope Restricted until its secondary
 destination behavior can be confined to the authorized DC.
+
+Cargo performs every install build in a temporary directory under `TMPDIR`, and
+Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for
+RustHound-CE's optimized release build. The installer therefore builds in
+`$HOME/.cache/pwnflow/cargo-tmp`, reports that directory and its free space
+before compiling, and refuses to start a build when the filesystem has less
+than 2 GiB free. An explicitly configured `TMPDIR` is used when it is a writable
+directory with enough room and is never replaced silently; when it is unusable
+the installer stops and explains how to correct it.
 
 ## Emergency terminal recovery
 

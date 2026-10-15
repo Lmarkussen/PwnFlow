@@ -17,6 +17,29 @@ func TestMissingDependencyIsReportedWithoutNetwork(t *testing.T) {
 	}
 }
 
+// Detection is read-only: PwnFlow never installs, upgrades, or removes a
+// dependency on the operator's behalf. Trap the package managers so any attempt
+// to run one is recorded.
+func TestDependencyDetectionNeverInvokesAPackageManager(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "package-manager-ran")
+	for _, name := range []string{"sudo", "apt", "apt-get", "dpkg"} {
+		script := "#!/bin/sh\necho " + name + " >> " + marker + "\nexit 99\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	for _, status := range DefaultRegistry().Check(context.Background()) {
+		if status.ID == "" {
+			t.Fatalf("unexpected status: %#v", status)
+		}
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		t.Fatalf("dependency detection invoked a package manager: %s", string(data))
+	}
+}
+
 func TestDependencyRegistryDetectsExecutableAndVersion(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell test helper uses Unix permissions")
