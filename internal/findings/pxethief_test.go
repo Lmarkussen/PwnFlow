@@ -10,7 +10,7 @@ import (
 )
 
 func TestAnalyzePXEThiefExtractsCredentialBearingVariablesWithoutSecrets(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "artifacts", "20261015-103251", "10.1.10.41")
+	root := filepath.Join(t.TempDir(), "artifacts", "20261015-103251", "192.0.2.41")
 	if err := os.MkdirAll(root, 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestAnalyzePXEThiefExtractsCredentialBearingVariablesWithoutSecrets(t *test
 	if row.Severity != "high" || row.Confidence != "observed-recovered-value" {
 		t.Fatalf("severity/confidence=%s/%s", row.Severity, row.Confidence)
 	}
-	if row.AffectedObject != "10.1.10.41" || row.RelatedObject != `EXAMPLE\join-user` {
+	if row.AffectedObject != "192.0.2.41" || row.RelatedObject != `EXAMPLE\join-user` {
 		t.Fatalf("objects=%q/%q", row.AffectedObject, row.RelatedObject)
 	}
 	if strings.Contains(row.EvidenceJSON, secret) || strings.Contains(row.Title, secret) || strings.Contains(row.FindingKey, secret) {
