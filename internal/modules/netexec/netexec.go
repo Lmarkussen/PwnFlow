@@ -1,0 +1,149 @@
+package netexec
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/pwnflow/pwnflow/internal/config"
+	"github.com/pwnflow/pwnflow/internal/dependencies"
+	"github.com/pwnflow/pwnflow/internal/modules"
+)
+
+type Definition struct {
+	IDValue, NameValue, DescriptionValue, ToolValue string
+	ToolFamilyValue                                 modules.ToolFamily
+	CategoryValue                                   modules.Category
+	ProtocolValue                                   modules.Protocol
+	Arguments                                       []string
+	OutputValue                                     string
+	PrerequisiteValues                              []string
+	RequiredPrivilegeValues                         []string
+	SensitivityValue                                modules.Sensitivity
+	ReadOnlyValue                                   bool
+	SecondaryConnectionValues                       []string
+	Enabled                                         bool
+}
+
+type Module struct{ definition Definition }
+
+func (m Module) ID() string                     { return m.definition.IDValue }
+func (m Module) Name() string                   { return m.definition.NameValue }
+func (m Module) ToolFamily() modules.ToolFamily { return m.definition.ToolFamilyValue }
+func (m Module) Category() modules.Category     { return m.definition.CategoryValue }
+func (m Module) Tool() string                   { return m.definition.ToolValue }
+func (m Module) Protocol() modules.Protocol     { return m.definition.ProtocolValue }
+func (m Module) Description() string            { return m.definition.DescriptionValue }
+func (m Module) Prerequisites() []string {
+	return append([]string(nil), m.definition.PrerequisiteValues...)
+}
+func (m Module) RequiredPrivileges() []string {
+	return append([]string(nil), m.definition.RequiredPrivilegeValues...)
+}
+func (m Module) OutputFile() string {
+	return filepath.Join(categoryPath(m.Category()), "NetExec", m.definition.OutputValue)
+}
+func (m Module) Sensitivity() modules.Sensitivity { return m.definition.SensitivityValue }
+func (m Module) ReadOnly() bool                   { return m.definition.ReadOnlyValue }
+func (m Module) SecondaryConnections() []string {
+	return append([]string(nil), m.definition.SecondaryConnectionValues...)
+}
+
+func (m Module) ExecutionEnabled() bool { return m.definition.Enabled }
+
+func (m Module) AvailabilityReason() string {
+	if m.definition.IDValue == "bloodhound" {
+		return "scope restricted: collection methods may contact additional hosts; disabled for the authorized DC-only scope"
+	}
+	if !m.definition.Enabled {
+		return "not implemented: sensitive-artifact workflow is disabled"
+	}
+	return ""
+}
+
+func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
+	if runtime == nil || runtime.Target != config.AuthorizedTarget || runtime.Domain != config.AuthorizedDomain {
+		return fmt.Errorf("target is outside the authorized assessment scope")
+	}
+	dependency := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.NetExec)
+	if !dependency.Available {
+		return fmt.Errorf("%s: %s", dependency.DisplayName, dependency.Detail)
+	}
+	protocol := protocolCommand(m.Protocol())
+	help, err := exec.CommandContext(ctx, "nxc", protocol, "--help").CombinedOutput()
+	if len(help) == 0 && err != nil {
+		return fmt.Errorf("cannot inspect NetExec %s capabilities: %w", m.Protocol(), err)
+	}
+	if plugin := pluginArgument(m.definition.Arguments); plugin != "" {
+		listing, listingErr := exec.CommandContext(ctx, "nxc", protocol, "-L").CombinedOutput()
+		if listingErr == nil {
+			help = append(help, listing...)
+		}
+		if !bytes.Contains(help, []byte(plugin)) {
+			return fmt.Errorf("NetExec %s module %s is unsupported by the installed version", m.Protocol(), plugin)
+		}
+	}
+	for _, argument := range m.definition.Arguments {
+		if len(argument) > 2 && argument[:2] == "--" && !bytes.Contains(help, []byte(argument)) {
+			return fmt.Errorf("NetExec %s option %s is unsupported by the installed version", m.Protocol(), argument)
+		}
+	}
+	if reason := m.AvailabilityReason(); reason != "" {
+		return fmt.Errorf("%s", reason)
+	}
+	return nil
+}
+
+func pluginArgument(arguments []string) string {
+	for index := 0; index+1 < len(arguments); index++ {
+		if arguments[index] == "-M" {
+			return arguments[index+1]
+		}
+	}
+	return ""
+}
+
+func (m Module) CommandArgs(runtime *modules.Runtime) []string {
+	args := []string{protocolCommand(m.Protocol()), runtime.Target, "-u", runtime.Username, "-p", runtime.Password}
+	return append(args, m.definition.Arguments...)
+}
+
+func protocolCommand(protocol modules.Protocol) string { return strings.ToLower(string(protocol)) }
+
+func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
+	cmd := exec.CommandContext(ctx, "nxc", m.CommandArgs(runtime)...)
+	cmd.Stdout, cmd.Stderr = sink, sink
+	started := time.Now()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("netexec failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
+	}
+	return nil
+}
+
+func categoryPath(category modules.Category) string {
+	switch category {
+	case modules.CategoryCredentialAuditing:
+		return "CredentialAuditing"
+	case modules.CategoryCredentialDumping:
+		return "CredentialDumping"
+	case modules.CategoryPrivilegeEscalation:
+		return "PrivilegeEscalation"
+	case modules.CategoryReporting:
+		return "Reporting"
+	default:
+		return "Enumeration"
+	}
+}
+
+func definition(id, name string, category modules.Category, protocol modules.Protocol, args []string, output string) Definition {
+	return Definition{
+		IDValue: id, NameValue: name, ToolValue: "NetExec (nxc)", ToolFamilyValue: modules.ToolFamilyNetExec,
+		CategoryValue: category, ProtocolValue: protocol, DescriptionValue: name + " through NetExec " + string(protocol) + ".",
+		Arguments: args, OutputValue: output, PrerequisiteValues: []string{"nxc executable"},
+		SensitivityValue: modules.SensitivityStandard, ReadOnlyValue: true, Enabled: true,
+	}
+}

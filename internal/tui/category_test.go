@@ -1,0 +1,119 @@
+package tui
+
+import (
+	"context"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/pwnflow/pwnflow/internal/config"
+	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
+)
+
+type categoryTestModule struct {
+	category modules.Category
+	id       string
+	protocol modules.Protocol
+}
+
+func (m categoryTestModule) ID() string                     { return m.id }
+func (m categoryTestModule) Name() string                   { return m.id }
+func (m categoryTestModule) ToolFamily() modules.ToolFamily { return modules.ToolFamilyNetExec }
+func (m categoryTestModule) Category() modules.Category     { return m.category }
+func (m categoryTestModule) Description() string            { return "test" }
+func (m categoryTestModule) Tool() string                   { return "test" }
+func (m categoryTestModule) Protocol() modules.Protocol {
+	if m.protocol == "" {
+		return modules.ProtocolLDAP
+	}
+	return m.protocol
+}
+func (m categoryTestModule) Prerequisites() []string                       { return nil }
+func (m categoryTestModule) RequiredPrivileges() []string                  { return nil }
+func (m categoryTestModule) OutputFile() string                            { return m.id + ".txt" }
+func (m categoryTestModule) Sensitivity() modules.Sensitivity              { return modules.SensitivityStandard }
+func (m categoryTestModule) ReadOnly() bool                                { return true }
+func (m categoryTestModule) SecondaryConnections() []string                { return nil }
+func (m categoryTestModule) Check(context.Context, *modules.Runtime) error { return nil }
+func (m categoryTestModule) Run(context.Context, *modules.Runtime, modules.OutputSink) error {
+	return nil
+}
+
+func TestCategorySwitchingFiltersModulesAndPreservesSelection(t *testing.T) {
+	registered := []modules.Module{
+		categoryTestModule{category: modules.CategoryEnumeration, id: "enumeration"},
+		categoryTestModule{category: modules.CategoryCredentialAuditing, id: "credentials"},
+	}
+	model := newModel(context.Background(), config.Config{}, nil, registered, []int64{1, 2}, 1, "test")
+	model.selectedModules["enumeration"] = true
+	model.setCategory(1)
+	if len(model.modules) != 1 || model.modules[0].ID() != "credentials" {
+		t.Fatalf("unexpected filtered modules: %#v", model.modules)
+	}
+	model.setCategory(0)
+	if len(model.modules) != 1 || !model.selectedModules[model.modules[0].ID()] {
+		t.Fatal("enumeration selection was not preserved")
+	}
+}
+
+func TestInactiveCategoryCannotStartYolo(t *testing.T) {
+	model := newModel(context.Background(), config.Config{}, nil, []modules.Module{
+		categoryTestModule{category: modules.CategoryEnumeration, id: "enumeration"},
+		categoryTestModule{category: modules.CategoryCredentialAuditing, id: "credentials"},
+	}, []int64{1, 2}, 1, "test")
+	model.setCategory(1)
+	if command := model.executeAll(); command != nil {
+		t.Fatal("inactive category returned an execution command")
+	}
+	if model.status != "category is inactive; no modules executed" {
+		t.Fatalf("unexpected status: %q", model.status)
+	}
+}
+
+func TestProtocolSwitchFiltersModulesWithoutChangingCategory(t *testing.T) {
+	model := newModel(context.Background(), config.Config{}, nil, []modules.Module{
+		categoryTestModule{category: modules.CategoryEnumeration, id: "ldap", protocol: modules.ProtocolLDAP},
+		categoryTestModule{category: modules.CategoryEnumeration, id: "smb", protocol: modules.ProtocolSMB},
+	}, []int64{1, 2}, 1, "test")
+	if len(model.modules) != 1 || model.modules[0].ID() != "ldap" {
+		t.Fatalf("unexpected LDAP scope: %#v", model.modules)
+	}
+	model.setProtocol(1)
+	if len(model.modules) != 1 || model.modules[0].ID() != "smb" {
+		t.Fatalf("unexpected SMB scope: %#v", model.modules)
+	}
+}
+
+func TestNavigationChangesScopeWithoutExecuting(t *testing.T) {
+	m := newModel(context.Background(), config.Config{}, nil, []modules.Module{
+		categoryTestModule{category: modules.CategoryEnumeration, id: "ldap", protocol: modules.ProtocolLDAP},
+		categoryTestModule{category: modules.CategoryEnumeration, id: "smb", protocol: modules.ProtocolSMB},
+	}, []int64{1, 2}, 1, "test")
+	if m.focus != focusNavigation || len(m.modules) != 1 {
+		t.Fatal("model did not start in navigation with LDAP scope")
+	}
+	updated, command := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	if command != nil || updated.(*model).navigationRow != 1 {
+		t.Fatal("navigation row handling executed an action")
+	}
+	updated, command = updated.(*model).handleKey(tea.KeyMsg{Type: tea.KeyRight})
+	if command != nil || len(updated.(*model).modules) != 0 {
+		t.Fatal("navigation category change did not select an inactive scope")
+	}
+	updated, command = updated.(*model).handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if command != nil || updated.(*model).focus != focusModules {
+		t.Fatal("Tab did not move from navigation to modules")
+	}
+}
+
+func TestRustHoundIsActiveDirectoryScopedAndNeverYOLOEnabled(t *testing.T) {
+	model := newModel(context.Background(), config.Config{}, nil, []modules.Module{rusthound.Module{}}, []int64{1}, 1, "test")
+	model.setToolFamily(2)
+	if len(model.modules) != 1 || model.modules[0].ToolFamily() != modules.ToolFamilyActiveDirectory || model.modules[0].Protocol() != modules.ProtocolNA {
+		t.Fatalf("RustHound was not registered in Active Directory N/A scope: %#v", model.modules)
+	}
+	if command := model.executeAll(); command != nil || model.status != "category is inactive; no modules executed" {
+		t.Fatalf("RustHound unexpectedly entered YOLO execution: cmd=%v status=%q", command, model.status)
+	}
+}

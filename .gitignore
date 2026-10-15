@@ -1,0 +1,12 @@
+/bin/
+*.test
+*.out
+*.prof
+/results/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+*.secret
+*.credentials
