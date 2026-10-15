@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
@@ -268,5 +269,16 @@ func TestConfiguredModuleOptionsReachTheRuntime(t *testing.T) {
 	joined := strings.Join(warnings, "\n")
 	if !strings.Contains(joined, "NOT_REAL") || !strings.Contains(joined, "typo-module") {
 		t.Fatalf("misconfigured options were accepted silently: %v", warnings)
+	}
+}
+
+func TestModuleInformationDoesNotRepeatUnrelatedGlobalWarning(t *testing.T) {
+	ldap := netexec.LDAPEnumerationModules()[0]
+	m := newModel(context.Background(), config.Config{Target: "198.51.100.10", Domain: "example.test", Username: "audit"}, nil, []modules.Module{ldap}, []int64{1}, 1, "test")
+	m.status = "PXEThief requires raw-socket privileges; approve sudo to continue"
+	m.width, m.height = 120, 40
+	frame := m.infoView()
+	if strings.Contains(frame, "PXEThief requires raw-socket") {
+		t.Fatalf("unrelated global warning leaked into highlighted module information: %s", frame)
 	}
 }
