@@ -16,7 +16,7 @@ clean.
 
 | Condition | Collection source | Parser / evidence required | Detection state | Limits |
 |---|---|---|---|---|
-| Kerberoastable account | RustHound `users` or NetExec LDAP | Enabled user with `hasspn`/SPNs; disabled users excluded | Supported | SPN presence does not prove a ticket was requested or cracked |
+| Kerberoastable account | RustHound `users` | Enabled user with `hasspn`/SPNs; disabled users excluded | Supported | SPN presence does not prove a ticket was requested or cracked |
 | Kerberoast material collected | NetExec `LDAP_kerberoasting/kerberoast.txt` | `$krb5tgs$` material line | Supported | Material is counted and referenced; raw material stays in the restricted artifact |
 | AS-REP roastable account | RustHound `users` | `dontreqpreauth` or UAC `0x400000`, with enabled state | Supported | Unknown enabled state is informational; no material is inferred |
 | AS-REP material collected | NetExec `LDAP_asreproast/asreproast.txt` | `$krb5asrep$` material line | Supported | Empty output and status messages are not findings |

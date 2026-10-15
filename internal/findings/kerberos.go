@@ -17,11 +17,6 @@ const kerberosParserVersion = "netexec-kerberos-v1"
 
 const maxKerberosArtifactBytes = 64 << 20
 
-type kerberosMaterial struct {
-	principal string
-	line      int
-}
-
 // AnalyzeNetExecKerberos records only the fact that roast material was emitted.
 // It deliberately never stores or logs the ticket/hash line itself.
 func AnalyzeNetExecKerberos(ctx context.Context, artifactPath string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
