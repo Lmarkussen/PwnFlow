@@ -12,6 +12,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
+	"github.com/pwnflow/pwnflow/internal/modules/relayking"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -44,6 +45,9 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	// directory collection is registered before its scoped validation, because the
 	// collection is what an assessment starts with.
 	for _, module := range networkhound.EnumerationModules() {
+		registry.Register(module)
+	}
+	for _, module := range relayking.EnumerationModules() {
 		registry.Register(module)
 	}
 	registered := registry.All()

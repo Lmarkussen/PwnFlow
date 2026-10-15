@@ -124,7 +124,7 @@ func TestScopedValidationRequiresALiteralScope(t *testing.T) {
 	if !required || reason == "" {
 		t.Fatalf("a scope-dependent scan is not held for approval: %v %q", required, reason)
 	}
-	for _, bad := range []string{"example.com", "dc.corp.example", "198.51.100.0/33", "198.51.100.999", "10.0.0.0/8; rm -rf /"} {
+	for _, bad := range []string{"example.com", "dc.corp.example", "198.51.100.0/33", "198.51.100.999", "198.51.100.0/8; rm -rf /"} {
 		if err := entry.ValidateOptionValue("NETWORKS", bad); err == nil {
 			t.Fatalf("%q was accepted as a network scope", bad)
 		}

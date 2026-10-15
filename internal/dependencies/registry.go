@@ -75,6 +75,11 @@ type Definition struct {
 	// unrelated program that happens to share a command name from counting as
 	// installed.
 	ProbeMustContain []string
+	// ProbeAcceptsNonZeroExit marks a tool that prints its usage and then exits
+	// non-zero, which RelayKing does for every help invocation. Such a probe is
+	// judged by the output that identifies the tool - ProbeMustContain is then
+	// required - rather than by the exit status.
+	ProbeAcceptsNonZeroExit bool
 	// Layout is used when Detection is DetectToolLayout.
 	Layout *Layout
 }
@@ -118,7 +123,7 @@ func DefaultRegistry() Registry {
 		// revision: the installer and the runtime check that the installed checkout
 		// documents the options the registrations use.
 		{ID: NetworkHound, DisplayName: "NetworkHound", Install: "install.sh --with-networkhound", InstallHint: "./install.sh --with-networkhound", InstallMethod: InstallVenv, Package: "NetworkHound", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("NetworkHound"), Script: "NetworkHound.py", Interpreters: []string{".venv/bin/python3"}}},
-		{ID: RelayKing, DisplayName: "RelayKing", Install: "install.sh --with-relayking", InstallHint: "./install.sh --with-relayking", InstallMethod: InstallVenv, Package: "RelayKing", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, Layout: &Layout{Roots: ToolRoots("RelayKing"), Script: "relayking.py", Interpreters: []string{".venv/bin/python3"}}},
+		{ID: RelayKing, DisplayName: "RelayKing", Install: "install.sh --with-relayking", InstallHint: "./install.sh --with-relayking", InstallMethod: InstallVenv, Package: "RelayKing", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, ProbeMustContain: []string{"RelayKing"}, ProbeAcceptsNonZeroExit: true, Layout: &Layout{Roots: ToolRoots("RelayKing"), Script: "relayking.py", Interpreters: []string{".venv/bin/python3"}}},
 	}}
 }
 
@@ -288,13 +293,17 @@ func probeSucceeds(ctx context.Context, program string, arguments []string, stat
 	probe := exec.CommandContext(ctx, program, arguments...)
 	probe.Stdout, probe.Stderr = &stdout, &stderr
 	if err := probe.Run(); err != nil {
-		status.State = "broken"
-		if ctx.Err() != nil {
-			status.State = "check failed"
+		// A tool that prints its usage and exits non-zero is judged by the text
+		// below, not by the status: there is no invocation of it that exits zero.
+		if !status.ProbeAcceptsNonZeroExit || (stdout.Len() == 0 && stderr.Len() == 0) {
+			status.State = "broken"
+			if ctx.Err() != nil {
+				status.State = "check failed"
+			}
+			status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", status.DisplayName, strings.Join(append([]string{program}, arguments...), " "), diagnostic(stdout.String(), stderr.String(), err))
+			status.Available = false
+			return false
 		}
-		status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", status.DisplayName, strings.Join(append([]string{program}, arguments...), " "), diagnostic(stdout.String(), stderr.String(), err))
-		status.Available = false
-		return false
 	}
 	for _, required := range status.ProbeMustContain {
 		if !strings.Contains(stdout.String(), required) && !strings.Contains(stderr.String(), required) {

@@ -89,6 +89,23 @@ The scoped scan asks for its scope before the batch starts (`INPUT-REQ`, answere
 
 Each run writes into its own directory (`results/<domain>/Enumeration/NetworkHound/artifacts/<module>-<timestamp>/`), so no run overwrites another, and the files are tightened to owner-only after the tool writes them. Nothing is uploaded to a BloodHound server.
 
+### Network assessment: RelayKing
+
+RelayKing (<https://github.com/depthsecurity/RelayKing-Depth>, Depth Security) is installed the same way, as an upstream checkout with its own virtual environment under `~/.local/share/pwnflow/tools/RelayKing`. Its entry point prints its usage and then exits non-zero, which the installer and the dependency probe both accept, judging the tool by the options its help documents.
+
+Two registrations cover the two ways the tool is meant to be used, both under Network → Enumeration:
+
+| Module | Profile | Scope |
+|---|---|---|
+| **Relay Exposure Assessment (Targeted)** | `-vv --protocols smb,ldap,ldaps,mssql,http,https --threads 10 -o plaintext,json --proto-portscan --ntlmv1 --gen-relay-list <run>/relaytargets.txt`, with `--output-file <run>/relayking-scan` | The single host you configured, named at the end of the command. Reads the domain NTLMv1 policy through the domain controller; enumerates nothing else |
+| **Relay Exposure Audit (Full Domain)** | The same profile plus `--audit` | Enumerates the domain's computers with your low-privilege credentials and contacts each one. It is held for an explicit approval, so a global run never begins a domain-wide scan on its own |
+
+The detection profile is the one upstream recommends: signing and channel-binding checks for SMB, LDAP and LDAPS, HTTP/HTTPS authentication protection, MSSQL relay settings, the fast port pre-scan (`--proto-portscan`) and the domain NTLMv1 policy check (`--ntlmv1`). The protocols upstream still marks as work in progress - SMTP, IMAP, WINRM - are refused rather than presented as supported, and the protocol list is selectable per option (`--module-options relayking-target-assessment.PROTOCOLS=smb,ldaps`).
+
+**Not registered, on purpose:** `--coerce` and `--coerce-all` make the target authenticate to a listener you would have to run, and `--ntlmv1-all` reads each host's registry with administrative rights. Those are attack and administrative operations, not exposure assessment, and they are not exposed as PwnFlow registrations. CIDR, range and target-file modes are excluded too: a registration scans the host or the domain it was configured with, never a scope assembled at run time.
+
+Each run writes both reports and the relay target list into its own directory (`results/<domain>/Enumeration/RelayKing/artifacts/<module>-<timestamp>/`), owner-only after the tool writes them.
+
 When a module needs a value that has no sensible default - the object whose DACL to read, the text to search computers for - pressing `Enter` (or `I`, to configure it without running it) opens an input prompt that explains the field and validates the answer. A value entered this way is used for the rest of the assessment and by any batch that includes the module, including a global run, which collects every value it needs before it starts rather than interrupting itself halfway. `Esc` during a prompt skips that one module and the rest of the plan still runs; `Ctrl+C` abandons the plan. Values live in the running session only, so they cannot reach another assessment, and automation can keep supplying them up front with `--module-options`.
 
 PwnFlow is an enumeration and assessment framework, so the NetExec registry holds reads: directory, host, share, service, and configuration enumeration; the credential checks for each protocol; and the credential material a plain read exposes, which lives in `Credential Dumping` rather than `Enumeration`. AS-REP roasting and Kerberoasting are registered under LDAP in `Credential Auditing`: they use the directory protocol and your credentials, change nothing on the target, and write the crackable material into the assessment tree for you to audit offline - PwnFlow never cracks it, and it never runs them for you. Exploitation, coercion, relay execution, payload delivery, remote command execution, credential dumping that needs code execution, and anything that configures a listener are not registered at all, so an enumeration scope cannot reach them even by accident.

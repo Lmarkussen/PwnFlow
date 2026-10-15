@@ -427,13 +427,17 @@ anything, with the authorized lab's registry:
 YOLO plan: 97 module(s) across 4 families, 13 need approval, 2 need input
 ```
 
-97 registrations are eligible: 91 NetExec, 2 SCCM, 3 AD CS, and 1 Active
-Directory. The 13 that need a decision are the 12 credential-access
-registrations plus PXEThief, which had no stored endpoint and would therefore
-have run its DHCP broadcast mode; the 2 that need input are `daclread` and
-`find-computer`. Answering the two prompts moved the plan to the approval pane,
-which named each module with its category and reason, and cancelling at that
-point ran nothing.
+That is the plan as it stood with the NetExec, SCCM, AD CS, and Active Directory
+registrations: 91 NetExec, 2 SCCM, 3 AD CS, and 1 Active Directory. The 13 that
+needed a decision were the 12 credential-access registrations plus PXEThief, which
+had no stored endpoint and would therefore have run its DHCP broadcast mode; the 2
+that needed input were `daclread` and `find-computer`. Answering the two prompts
+moved the plan to the approval pane, which named each module with its category and
+reason, and cancelling at that point ran nothing.
+
+The number is derived, never pinned: the plan is built from the registry, so the
+NetworkHound and RelayKing registrations appear in it without any change to the
+plan logic, and the count grows with them.
 
 ## Declared module options audited against the installation
 
