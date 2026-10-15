@@ -100,52 +100,20 @@ output pane or the persisted log (the runner redacts by value, so both flag
 forms are covered), never stored in SQLite or the execution history, and never
 appended to an error message. No credential is committed to Git.
 
-RustHound-CE runs only behind a process-specific egress boundary, and PwnFlow
-verifies that boundary itself instead of assuming it. On startup, and again
-immediately before every collection, `internal/confinement` attempts a TCP
-connection to a loopback address nothing listens on:
+RustHound-CE starts with everything else: `./bin/pwnflow --target 10.1.10.40
+--domain sccm.lab --username USER` is the whole workflow, with no launcher
+wrapper, no root privileges, no network namespace, and no firewall configuration.
+The module shows `READY` once the collector is installed and the authorized scope
+is selected, and Enter runs it.
 
-- the connect stalls until the deadline, or fails with `EPERM` - a cgroup filter
-  dropped or rejected the packet, so a boundary is enforced, the module is
-  executable, and Enter runs it;
-- the connect is refused by the local stack (`ECONNREFUSED`), or a listener
-  answers - the local stack handled it, so no boundary exists: the module reports
-  `Execution: blocked - Scope Restricted`, names the missing mechanism, and Enter
-  declines instead of collecting.
-
-Loopback is used deliberately: it never leaves the host, so the check cannot
-contact another system, while `IPAddressDeny=any` denies it just like any other
-destination. An unfiltered loopback connect is answered in microseconds, so a
-stall is a reliable signature of a dropping filter; both signatures were observed
-on the assessment host and are covered by tests. Any outcome the check cannot
-classify fails closed. Because the probe runs in the collector's own cgroup, its
-verdict applies to the collector, not just to PwnFlow.
-
-### Confined launch
-
-Loading a cgroup BPF program needs privilege, so PwnFlow does not create the
-filter; it requires one. The unprivileged systemd user manager accepts
-`IPAddressAllow`/`IPAddressDeny` as unit properties but does not enforce them on
-this host (`kernel.unprivileged_bpf_disabled=2`), which is exactly why a property
-being accepted is not treated as proof. The boundary therefore has to come from
-the system manager, which does have the privilege:
-
-```bash
-sudo systemd-run --pty --collect \
-  --property=User=kali --property=WorkingDirectory=/home/kali/PwnFlow \
-  --property=IPAddressAllow=10.1.10.40 --property=IPAddressDeny=any \
-  /home/kali/PwnFlow/bin/pwnflow \
-  --target 10.1.10.40 --domain sccm.lab --username <operator>
-```
-
-That unit confines the process tree - so NetExec runs inside it too, which keeps
-every collection on the authorized DC - and it disappears when PwnFlow exits.
-Nothing global is configured: no firewall rule, no persistent unit, no service.
-DNS is denied along with every other destination, including Tailscale MagicDNS,
-so anything that needs name resolution fails visibly rather than leaving the
-boundary. Confirm the state the operator sees with `pwnflow`'s Module Information
-line: it reports `Execution: enabled - egress confined to 10.1.10.40` only when
-the probe passed.
+The pinned domain, the pinned DC address, and `-c LdapOnly` describe the
+authorized scope and narrow what the collector asks for; they are **not** a
+network boundary, and Module Information says so explicitly (`Network scope:
+pinned to sccm.lab / 10.1.10.40 with LdapOnly; not kernel-enforced`). In
+particular, name resolution follows the host resolver and LDAP referrals are
+RustHound's own behaviour, so nothing here claims that a collection cannot reach
+beyond the DC. Treat the module as an authorized-scope collector on a lab host,
+not as a confined one.
 
 Cargo performs every install build in a temporary directory under `TMPDIR`, and
 Kali mounts `/tmp` as a tmpfs sized at roughly half of RAM — too small for

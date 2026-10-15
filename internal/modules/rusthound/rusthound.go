@@ -5,9 +5,9 @@
 // collection method is fixed at LdapOnly - the CLI defaults to All, which adds
 // SMB/SYSVOL and member-machine contact - and the domain and DC address come
 // from the authorized configuration constants, so this module can neither
-// select the default collection nor be pointed at another host. Execution stays
-// blocked until LDAP credential transport and destination confinement are both
-// verified; see Module.AvailabilityReason.
+// select the default collection nor be pointed at another host. Those arguments
+// express the authorized scope; they are not a network boundary, and the module
+// does not claim one.
 package rusthound
 
 import (
@@ -18,11 +18,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pwnflow/pwnflow/internal/config"
-	"github.com/pwnflow/pwnflow/internal/confinement"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
@@ -63,27 +61,11 @@ var secretOptions = map[string]bool{
 // passed to the collector but is never displayed, logged, or recorded.
 const authNote = "native LDAP password (-p; accepted for this single-operator lab, redacted in previews and history)"
 
-// blockedNote and remedyNote are the short, actionable lines shown in Module
-// Information; the full launch command is in the README under "Confined launch".
-const (
-	blockedNote = "Blocked by: no enforced process-specific egress boundary"
-	remedyNote  = "Remedy: cgroup restricted to " + config.AuthorizedTarget + " (README: Confined launch)"
-)
-
-// egressEnforced answers once per process whether a kernel-enforced egress
-// boundary is in place. The TUI asks for it on every frame, so the verdict is
-// cached; it is a variable so tests can supply one without a confined kernel.
-var egressEnforced = sync.OnceValue(confinement.Probe)
-
-// egressProbe re-checks the boundary immediately before a collection instead of
-// trusting the cached verdict the interface was rendered with.
-var egressProbe = confinement.Probe
-
-// confinementBlocker explains why collection is refused while no boundary is
-// verified. Pinning the DC address and using LdapOnly is intent, not a boundary.
-func confinementBlocker(err error) string {
-	return "scope restricted: no enforced process-specific egress boundary (" + err.Error() + "); " + remedyNote
-}
+// scopeNote is the informational line shown in Module Information. The pinned
+// domain and DC plus LdapOnly describe the authorized scope and narrow what the
+// collector asks for, but nothing restricts where it may connect, so the module
+// states that plainly instead of implying confinement.
+const scopeNote = "Network scope: pinned to " + config.AuthorizedDomain + " / " + config.AuthorizedTarget + " with LdapOnly; not kernel-enforced"
 
 // Module describes RustHound-CE independently from the NetExec BloodHound
 // capability and from both Python collector variants.
@@ -96,23 +78,20 @@ func (Module) Category() modules.Category     { return modules.CategoryEnumerati
 func (Module) Tool() string                   { return "RustHound-CE" }
 func (Module) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (Module) Description() string {
-	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method, the authorized DC address, and native LDAP password authentication; it runs only while a process-specific egress boundary to that DC is enforced and verified."
+	return "BloodHound CE compatible LDAP collection through RustHound-CE with a fixed LdapOnly method, the authorized DC address, and native LDAP password authentication."
 }
 func (Module) Prerequisites() []string {
-	return []string{"rusthound-ce executable", "enforced DC-only egress boundary for this process"}
+	return []string{"rusthound-ce executable"}
 }
 func (Module) RequiredPrivileges() []string     { return nil }
 func (Module) OutputFile() string               { return logFile }
 func (Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySensitive }
 func (Module) ReadOnly() bool                   { return true }
 func (Module) SecondaryConnections() []string {
-	return []string{"LdapOnly contacts the authorized DC over LDAP; DNS and LDAP referral behaviour is not yet confined to that DC"}
+	return []string{"LdapOnly contacts the authorized DC over LDAP; DNS lookups and LDAP referrals are not restricted to that DC"}
 }
-func (Module) ExecutionEnabled() bool { return egressEnforced() == nil }
+func (Module) ExecutionEnabled() bool { return true }
 func (Module) AvailabilityReason() string {
-	if err := egressEnforced(); err != nil {
-		return confinementBlocker(err)
-	}
 	return ""
 }
 
@@ -121,21 +100,13 @@ func (Module) AvailabilityReason() string {
 // clips long content and the configuration and the blocking reason are what an
 // operator must be able to read.
 func (Module) DetailLines(runtime *modules.Runtime) []string {
-	lines := make([]string, 0, 6)
-	if err := egressEnforced(); err != nil {
-		lines = append(lines, "Execution: blocked - Scope Restricted")
-	} else {
-		lines = append(lines, "Execution: enabled - egress confined to "+config.AuthorizedTarget)
+	return []string{
+		"Execution: enabled",
+		"Authentication: " + authNote,
+		"Collection method: " + collectionMethod + " (LDAP only; no member-machine or SYSVOL contact)",
+		"Output directory: " + outputDirectory(runtime),
+		scopeNote,
 	}
-	lines = append(lines,
-		"Authentication: "+authNote,
-		"Collection method: "+collectionMethod+" (LDAP only; no member-machine or SYSVOL contact)",
-		"Output directory: "+outputDirectory(runtime),
-	)
-	if err := egressEnforced(); err != nil {
-		lines = append(lines, blockedNote, remedyNote)
-	}
-	return lines
 }
 
 // outputDirectory is the per-domain root for RustHound-CE logs and artifacts.
@@ -184,14 +155,11 @@ func (Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if !bytes.Contains(help, []byte(collectionMethod)) {
 		return fmt.Errorf("RustHound-CE collection method %s is unsupported by the installed version", collectionMethod)
 	}
-	if reason := (Module{}).AvailabilityReason(); reason != "" {
-		return fmt.Errorf("%s", reason)
-	}
 	return nil
 }
 
 // CommandArgs returns the fixed argument vector for the authorized collection.
-// The domain and DC address come from the confined configuration constants, so
+// The domain and DC address come from the authorized configuration constants, so
 // a caller cannot redirect the collector by supplying a different runtime. The
 // LDAP password is passed because the operator accepted RustHound's native -p
 // argument for this private single-operator lab; every preview, log, and
@@ -229,13 +197,10 @@ func (m Module) CommandPreview(runtime *modules.Runtime) string {
 	return strings.Join(append([]string{"rusthound-ce"}, redactArguments(m.CommandArgs(runtime))...), " ")
 }
 
-// Run is only reached when Check has passed; it keeps the pinned scope, writes
-// JSON artifacts into a per-run directory, and never passes credentials.
+// Run is only reached when Check has passed. It keeps the pinned scope and writes
+// JSON artifacts into a per-run directory; the accepted native credential travels
+// on the command line, which the runner redacts from every display and log.
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
-	// Fail closed: never start the collector without a freshly verified boundary.
-	if err := egressProbe(); err != nil {
-		return fmt.Errorf("refusing to run RustHound-CE without an enforced egress boundary: %w", err)
-	}
 	dependency := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.RustHoundCE)
 	if !dependency.Available {
 		return fmt.Errorf("%s: %s", dependency.DisplayName, dependency.Detail)

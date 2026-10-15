@@ -134,23 +134,25 @@ func TestRustHoundIsActiveDirectoryScopedAndNeverYOLOEnabled(t *testing.T) {
 	}
 }
 
-// Module Information must state the pinned configuration, the expected output
-// directory, and why the module stays blocked.
-func TestRustHoundModuleInformationShowsPinnedConfigurationAndBlockedStatus(t *testing.T) {
+// Module Information must state the enabled state, the pinned configuration, the
+// expected output directory, and that the pinned scope is not a boundary.
+func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 	cfg := config.Config{Target: config.AuthorizedTarget, Domain: config.AuthorizedDomain, Username: "audituser", Root: t.TempDir()}
 	model := newModel(context.Background(), cfg, nil, []modules.Module{rusthound.Module{}}, []int64{1}, 1, "test")
 	model.setToolFamily(2)
 	model.width, model.height = 150, 50
 	model.resizeOutput()
+	if state := model.moduleState(0); state != "READY" {
+		t.Fatalf("RustHound row is %q; it must be READY without a special launcher", state)
+	}
 	frame := ansi.Strip(model.View())
 	for _, want := range []string{
-		"Execution: blocked - Scope Restricted",
+		"Execution: enabled",
 		"Authentication: native LDAP password",
 		"Collection method: LdapOnly",
 		"Output directory: ",
-		"Blocked by: no enforced process-specific egress boundary",
-		"Remedy: cgroup restricted to " + config.AuthorizedTarget,
-		"UNAVAILABLE",
+		"Network scope: pinned to " + config.AuthorizedDomain + " / " + config.AuthorizedTarget,
+		"READY",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("Module Information is missing %q:\n%s", want, frame)
