@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +24,15 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	for _, module := range netexec.CredentialAuditingModules() {
 		registry.Register(module)
 	}
+	// Credential access and escalation registrations are listed so their
+	// requirements are visible, and they stay outside the Enumeration scope so a
+	// category-wide run can never include them.
+	for _, module := range netexec.CredentialDumpingModules() {
+		registry.Register(module)
+	}
+	for _, module := range netexec.PrivilegeEscalationModules() {
+		registry.Register(module)
+	}
 	registry.Register(rusthound.Module{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)
@@ -32,6 +43,9 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	registry.Register(sccm.SCCMHunter{Resolver: sccm.SystemResolver{}})
 	registry.Register(sccm.PXEThief{})
 	registered := registry.All()
+	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
+		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
+	}
 	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
 	if err != nil {
 		return err

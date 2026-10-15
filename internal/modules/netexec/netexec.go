@@ -1,3 +1,23 @@
+// Package netexec integrates the NetExec (nxc) executable.
+//
+// The package is deliberately table driven. Every registration names what
+// NetExec actually executes - a native protocol command or a `-M` module the
+// installed build advertises - so the registry can be audited against
+// `nxc <protocol> --help` and `nxc <protocol> -L` instead of against
+// documentation of some other version.
+//
+// Three facts about a registration matter to the operator and are kept apart:
+//
+//   - Transport: every protocol has its own command shape. LDAP runs over
+//     LDAPS on port 636, SSH/FTP/VNC/NFS take no domain, VNC authenticates with
+//     a password only. Those differences live in protocolSpec, never in a
+//     builder that assumes one protocol's flags work everywhere.
+//   - Target-side privilege: a module that needs local administrator rights on
+//     the target, or a domain administrator, says so and is labelled
+//     ADMIN-REQ. The label never blocks execution.
+//   - Availability: a module the installed build does not advertise, or that
+//     needs a value the operator has not supplied, reports UNAVAILABLE with the
+//     reason, and is refused at execution time as well.
 package netexec
 
 import (
@@ -6,6 +26,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,54 +34,162 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
+// Definition describes one NetExec invocation.
 type Definition struct {
 	IDValue, NameValue, DescriptionValue, ToolValue string
 	ToolFamilyValue                                 modules.ToolFamily
 	CategoryValue                                   modules.Category
 	ProtocolValue                                   modules.Protocol
-	Arguments                                       []string
-	OutputValue                                     string
-	PrerequisiteValues                              []string
-	RequiredPrivilegeValues                         []string
-	SensitivityValue                                modules.Sensitivity
-	ReadOnlyValue                                   bool
-	SecondaryConnectionValues                       []string
-	Enabled                                         bool
+	// Arguments are the protocol flags that select the behaviour, such as
+	// "--shares" or "--users". They are passed as a structured list, never as a
+	// shell string.
+	Arguments []string
+	// ModuleName is the value passed to `-M`; it is empty for a native command.
+	ModuleName string
+	// OptionKeys are the `-o KEY=VALUE` option names the installed module
+	// advertises, in the order they are appended. When ModuleName is set the
+	// keys are verified against the module's own `--options` output before they
+	// are accepted from the operator.
+	OptionKeys []string
+	// RequiredOptions are option keys without which the module cannot do anything
+	// meaningful. A module with an unsatisfied required option reports
+	// UNAVAILABLE and refuses to run, rather than being registered with a
+	// placeholder argument.
+	RequiredOptions []string
+	OutputValue     string
+	// PrerequisiteValues and RequiredPrivilegeValues describe the environment.
+	PrerequisiteValues      []string
+	RequiredPrivilegeValues []string
+	// AdminRequired marks a module that needs elevated rights on the target.
+	// AdminReason names the right, so the Module Information pane can
+	// distinguish a local administrator from a domain administrator.
+	AdminRequiredValue bool
+	AdminReasonValue   string
+	// GatedReason marks a registration whose execution is deliberately withheld:
+	// state-changing, remote-execution, credential-dumping or coercing modules
+	// that must not be swept into a category-wide batch. The reason names what
+	// has to happen before the module may run.
+	GatedReasonValue string
+	SensitivityValue modules.Sensitivity
+	ReadOnlyValue    bool
 }
 
 type Module struct{ definition Definition }
 
-func (m Module) ID() string                     { return m.definition.IDValue }
-func (m Module) Name() string                   { return m.definition.NameValue }
-func (m Module) ToolFamily() modules.ToolFamily { return m.definition.ToolFamilyValue }
-func (m Module) Category() modules.Category     { return m.definition.CategoryValue }
-func (m Module) Tool() string                   { return m.definition.ToolValue }
-func (m Module) Protocol() modules.Protocol     { return m.definition.ProtocolValue }
-func (m Module) Description() string            { return m.definition.DescriptionValue }
+func (m Module) ID() string                       { return m.definition.IDValue }
+func (m Module) Name() string                     { return m.definition.NameValue }
+func (m Module) ToolFamily() modules.ToolFamily   { return m.definition.ToolFamilyValue }
+func (m Module) Category() modules.Category       { return m.definition.CategoryValue }
+func (m Module) Tool() string                     { return m.definition.ToolValue }
+func (m Module) Protocol() modules.Protocol       { return m.definition.ProtocolValue }
+func (m Module) Description() string              { return m.definition.DescriptionValue }
+func (m Module) Sensitivity() modules.Sensitivity { return m.definition.SensitivityValue }
+func (m Module) ReadOnly() bool                   { return m.definition.ReadOnlyValue }
+
 func (m Module) Prerequisites() []string {
 	return append([]string(nil), m.definition.PrerequisiteValues...)
 }
+
 func (m Module) RequiredPrivileges() []string {
 	return append([]string(nil), m.definition.RequiredPrivilegeValues...)
 }
+
 func (m Module) OutputFile() string {
 	return filepath.Join(categoryPath(m.Category()), "NetExec", m.definition.OutputValue)
 }
-func (m Module) Sensitivity() modules.Sensitivity { return m.definition.SensitivityValue }
-func (m Module) ReadOnly() bool                   { return m.definition.ReadOnlyValue }
-func (m Module) SecondaryConnections() []string {
-	return append([]string(nil), m.definition.SecondaryConnectionValues...)
+
+func (m Module) SecondaryConnections() []string { return nil }
+
+// OptionKeys implements modules.OptionDeclarer: the option keys the installed
+// module advertises, which is what the startup check compares the operator's
+// configuration against.
+func (m Module) OptionKeys() []string {
+	return append([]string(nil), m.definition.OptionKeys...)
 }
 
-func (m Module) ExecutionEnabled() bool { return m.definition.Enabled }
+// ModuleName is the `-M` value, exposed so the inventory tooling and the tests
+// can compare the registry against `nxc <protocol> -L`.
+func (m Module) ModuleName() string { return m.definition.ModuleName }
 
-func (m Module) AvailabilityReason() string {
-	if !m.definition.Enabled {
-		return "not implemented: sensitive-artifact workflow is disabled"
+// ExecutionEnabled implements modules.ExecutionPolicy. A gated registration is
+// listed with its requirement and is refused by Check, so it can never be swept
+// into a batch that happens to include its category.
+func (m Module) ExecutionEnabled() bool { return m.definition.GatedReasonValue == "" }
+
+func (m Module) AvailabilityReason() string { return m.definition.GatedReasonValue }
+
+// AdminRequired reports whether the module needs elevated rights on the target
+// and what those rights are. It is informational only.
+func (m Module) AdminRequired() (bool, string) {
+	if !m.definition.AdminRequiredValue {
+		return false, ""
+	}
+	reason := m.definition.AdminReasonValue
+	if reason == "" {
+		reason = "target-side administrator rights"
+	}
+	return true, reason
+}
+
+// Status implements modules.StatusProvider. It reads only the cached capability
+// snapshot, because the TUI asks for it while a frame is rendered.
+func (m Module) Status(runtime *modules.Runtime) modules.Status {
+	if !m.ExecutionEnabled() {
+		return modules.StatusUnavailable
+	}
+	if reason := m.missingOptionReason(runtime); reason != "" {
+		return modules.StatusUnavailable
+	}
+	if !m.capabilitySupported() {
+		return modules.StatusUnavailable
+	}
+	if admin, _ := m.AdminRequired(); admin {
+		return modules.StatusAdminRequired
+	}
+	return modules.StatusAvailable
+}
+
+// StatusReason explains a StatusUnavailable result. For an ADMIN-REQ row it
+// returns the elevated right the module needs, so Module Information can name it.
+func (m Module) StatusReason(runtime *modules.Runtime) string {
+	if !m.ExecutionEnabled() {
+		return m.definition.GatedReasonValue
+	}
+	if reason := m.missingOptionReason(runtime); reason != "" {
+		return reason
+	}
+	if reason := m.capabilityReason(); reason != "" {
+		return reason
+	}
+	if _, reason := m.AdminRequired(); reason != "" {
+		return reason
 	}
 	return ""
 }
 
+func (m Module) missingOptionReason(runtime *modules.Runtime) string {
+	missing := make([]string, 0, len(m.definition.RequiredOptions))
+	for _, key := range m.definition.RequiredOptions {
+		if _, ok := runtime.ModuleOption(m.ID(), key); !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("requires the operator-supplied module option %s; set it with --module-options %s=%s=VALUE",
+		strings.Join(missing, ", "), m.ID(), strings.Join(missing, ","))
+}
+
+func (m Module) capabilityReason() string {
+	return Capabilities().reason(m.Protocol(), m.definition.ModuleName, m.definition.Arguments)
+}
+
+func (m Module) capabilitySupported() bool { return m.capabilityReason() == "" }
+
+// Check validates the registration against the installed executable before
+// anything runs. Capability problems are reported before the policy gate, so a
+// module that is gated and also unsupported says so accurately.
 func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if runtime == nil || strings.TrimSpace(runtime.Target) == "" || strings.TrimSpace(runtime.Domain) == "" {
 		return fmt.Errorf("runtime target and domain are required")
@@ -69,59 +198,180 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if !dependency.Available {
 		return fmt.Errorf("%s: %s", dependency.DisplayName, dependency.Detail)
 	}
-	protocol := protocolCommand(m.Protocol())
-	help, err := exec.CommandContext(ctx, "nxc", protocol, "--help").CombinedOutput()
-	if len(help) == 0 && err != nil {
-		return fmt.Errorf("cannot inspect NetExec %s capabilities: %w", m.Protocol(), err)
+	if err := m.checkCapabilities(ctx); err != nil {
+		return err
 	}
-	if plugin := pluginArgument(m.definition.Arguments); plugin != "" {
-		listing, listingErr := exec.CommandContext(ctx, "nxc", protocol, "-L").CombinedOutput()
-		if listingErr == nil {
-			help = append(help, listing...)
-		}
-		if !bytes.Contains(help, []byte(plugin)) {
-			return fmt.Errorf("NetExec %s module %s is unsupported by the installed version", m.Protocol(), plugin)
-		}
+	if reason := m.missingOptionReason(runtime); reason != "" {
+		return fmt.Errorf("%s", reason)
 	}
-	for _, argument := range m.definition.Arguments {
-		if len(argument) > 2 && argument[:2] == "--" && !bytes.Contains(help, []byte(argument)) {
-			return fmt.Errorf("NetExec %s option %s is unsupported by the installed version", m.Protocol(), argument)
-		}
-	}
-	if m.Protocol() == modules.ProtocolLDAP && !bytes.Contains(help, []byte("--port")) {
-		return fmt.Errorf("NetExec LDAP option --port is unsupported by the installed version")
-	}
-	if reason := m.AvailabilityReason(); reason != "" {
+	if reason := m.definition.GatedReasonValue; reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
 	return nil
 }
 
-func pluginArgument(arguments []string) string {
-	for index := 0; index+1 < len(arguments); index++ {
-		if arguments[index] == "-M" {
-			return arguments[index+1]
+// checkCapabilities performs the live probe. It reuses the cached snapshot when
+// one exists and otherwise runs the executable, so both the render path and the
+// execution path agree on what the installed build supports.
+func (m Module) checkCapabilities(ctx context.Context) error {
+	if capability, ok := Capabilities().lookup(ctx, m.Protocol()); !ok || !capability.probed {
+		return fmt.Errorf("cannot inspect NetExec %s capabilities", m.Protocol())
+	}
+	if reason := Capabilities().reason(m.Protocol(), m.definition.ModuleName, m.definition.Arguments); reason != "" {
+		return fmt.Errorf("%s", reason)
+	}
+	return nil
+}
+
+// RefreshDetails implements modules.DetailRefresher. The capability probe runs
+// here - off the render path, throttled by the snapshot's own age - so pressing
+// an arrow key never waits for `nxc`.
+func (m Module) RefreshDetails(ctx context.Context, runtime *modules.Runtime) {
+	_, _ = Capabilities().lookup(ctx, m.Protocol())
+}
+
+// CommandPreview implements modules.CommandPreviewProvider. It exists because
+// the Module Information pane must show the exact protocol, target, and flags
+// while never printing the operator's runtime password.
+func (m Module) CommandPreview(runtime *modules.Runtime) string {
+	args := m.CommandArgs(runtime)
+	for index, argument := range args {
+		if argument == runtime.Password && argument != "" {
+			args[index] = "[REDACTED]"
 		}
 	}
-	return ""
+	return strings.Join(args, " ")
+}
+
+// DetailLines implements modules.DetailProvider: the fixed configuration of the
+// registration, cheap enough to compute while drawing, and free of secrets.
+func (m Module) DetailLines(runtime *modules.Runtime) []string {
+	transport := spec(m.Protocol()).description
+	lines := []string{fmt.Sprintf("Transport: %s (%s)", transport, protocolCommand(m.Protocol()))}
+	if m.definition.ModuleName != "" {
+		lines = append(lines, fmt.Sprintf("NetExec module: -M %s", m.definition.ModuleName))
+	} else {
+		lines = append(lines, "NetExec command: native protocol flag, no -M module")
+	}
+	if len(m.definition.OptionKeys) > 0 {
+		lines = append(lines, "Module options: "+strings.Join(m.definition.OptionKeys, ", "))
+	}
+	if len(m.definition.RequiredOptions) > 0 {
+		configured := make([]string, 0, len(m.definition.RequiredOptions))
+		for _, key := range m.definition.RequiredOptions {
+			if value, ok := runtime.ModuleOption(m.ID(), key); ok {
+				configured = append(configured, key+"="+value)
+			}
+		}
+		if len(configured) == 0 {
+			lines = append(lines, "Required options not configured: "+strings.Join(m.definition.RequiredOptions, ", "))
+		} else {
+			lines = append(lines, "Configured options: "+strings.Join(configured, ", "))
+		}
+	}
+	if admin, reason := m.AdminRequired(); admin {
+		lines = append(lines, "Target privilege: ADMIN-REQ ("+reason+")")
+	} else {
+		lines = append(lines, "Target privilege: none beyond valid credentials")
+	}
+	if !m.ExecutionEnabled() {
+		lines = append(lines, "Execution: gated - "+m.definition.GatedReasonValue)
+	}
+	return lines
+}
+
+// protocolSpec is the transport-specific command shape. A flag only appears
+// here when the installed build advertises it for that protocol.
+type protocolSpec struct {
+	command     string
+	description string
+	localAuth   bool
+	domain      bool
+	username    bool
+	password    bool
+	trailing    []string
+	// requiredHelpFlags are transport flags the installed build has to
+	// advertise for the protocol's registrations to be usable at all. They are
+	// checked against `nxc <protocol> --help`, so a build that changed the flag
+	// reports the protocol as unavailable instead of issuing a bad command.
+	requiredHelpFlags []string
 }
 
 // ldapSecurePort is the port NetExec's LDAP protocol treats as LDAPS: the
 // installed version builds ldaps://<target> whenever the port is 636, and
-// NetExec exposes no separate --ldaps switch. SMB modules keep their own
-// defaults.
+// NetExec exposes no separate --ldaps switch.
 const ldapSecurePort = "636"
 
-func (m Module) CommandArgs(runtime *modules.Runtime) []string {
-	args := []string{protocolCommand(m.Protocol()), runtime.Target, "-u", runtime.Username, "-p", runtime.Password}
-	args = append(args, m.definition.Arguments...)
-	if m.Protocol() == modules.ProtocolLDAP {
-		args = append(args, "--port", ldapSecurePort)
+func spec(protocol modules.Protocol) protocolSpec {
+	switch protocol {
+	case modules.ProtocolLDAP:
+		return protocolSpec{command: "ldap", description: "LDAP over LDAPS (port " + ldapSecurePort + ")", domain: true, username: true, password: true, trailing: []string{"--port", ldapSecurePort}, requiredHelpFlags: []string{"--port"}}
+	case modules.ProtocolSMB:
+		return protocolSpec{command: "smb", description: "SMB (port 445)", domain: true, username: true, password: true}
+	case modules.ProtocolWinRM:
+		return protocolSpec{command: "winrm", description: "WinRM over HTTP/HTTPS", domain: true, username: true, password: true}
+	case modules.ProtocolWMI:
+		return protocolSpec{command: "wmi", description: "WMI over DCOM/RPC (port 135)", domain: true, username: true, password: true}
+	case modules.ProtocolMSSQL:
+		return protocolSpec{command: "mssql", description: "MSSQL (port 1433)", domain: true, username: true, password: true}
+	case modules.ProtocolSSH:
+		return protocolSpec{command: "ssh", description: "SSH (port 22)", username: true, password: true}
+	case modules.ProtocolFTP:
+		return protocolSpec{command: "ftp", description: "FTP (port 21)", username: true, password: true}
+	case modules.ProtocolRDP:
+		return protocolSpec{command: "rdp", description: "RDP (port 3389)", domain: true, username: true, password: true}
+	case modules.ProtocolVNC:
+		// VNC authenticates with a password only; the assessment username is not
+		// a VNC credential and is deliberately not passed.
+		return protocolSpec{command: "vnc", description: "VNC (port 5900)", password: true}
+	case modules.ProtocolNFS:
+		// NFS exports are enumerated without credentials.
+		return protocolSpec{command: "nfs", description: "NFS (portmapper, port 111)"}
+	default:
+		return protocolSpec{command: protocolCommand(protocol), description: string(protocol)}
 	}
-	return args
 }
 
 func protocolCommand(protocol modules.Protocol) string { return strings.ToLower(string(protocol)) }
+
+// CommandArgs builds the argument vector for one run. The order is fixed so a
+// preview, an execution, and a test all agree.
+func (m Module) CommandArgs(runtime *modules.Runtime) []string {
+	protocol := spec(m.Protocol())
+	args := []string{protocol.command, runtime.Target}
+	if protocol.username {
+		args = append(args, "-u", runtime.Username)
+	}
+	if protocol.password {
+		args = append(args, "-p", runtime.Password)
+	}
+	if protocol.domain && strings.TrimSpace(runtime.Domain) != "" {
+		args = append(args, "-d", runtime.Domain)
+	}
+	args = append(args, m.definition.Arguments...)
+	if m.definition.ModuleName != "" {
+		args = append(args, "-M", m.definition.ModuleName)
+	}
+	args = append(args, m.optionArgs(runtime)...)
+	args = append(args, protocol.trailing...)
+	return args
+}
+
+// optionArgs renders the operator-supplied module options in the order the
+// registration declares, so a run is reproducible. Options the module does not
+// declare are never passed: an unknown `-o` key would silently do nothing.
+func (m Module) optionArgs(runtime *modules.Runtime) []string {
+	values := make([]string, 0, len(m.definition.OptionKeys))
+	for _, key := range m.definition.OptionKeys {
+		if value, ok := runtime.ModuleOption(m.ID(), key); ok {
+			values = append(values, key+"="+value)
+		}
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string{"-o"}, values...)
+}
 
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
 	cmd := exec.CommandContext(ctx, "nxc", m.CommandArgs(runtime)...)
@@ -146,16 +396,52 @@ func categoryPath(category modules.Category) string {
 	}
 }
 
-func definition(id, name string, category modules.Category, protocol modules.Protocol, args []string, output string) Definition {
-	// The LDAP protocol is run over LDAPS; SMB keeps its own defaults.
-	transport := string(protocol)
-	if protocol == modules.ProtocolLDAP {
-		transport = "LDAP over LDAPS (port " + ldapSecurePort + ")"
+// helpSource is the part of the executable's output a capability question is
+// answered from.
+type helpSource struct {
+	help    []byte
+	modules []byte
+	probed  bool
+}
+
+func (h helpSource) supports(argument string) bool {
+	if len(argument) < 2 || !strings.HasPrefix(argument, "--") {
+		return true
 	}
-	return Definition{
-		IDValue: id, NameValue: name, ToolValue: "NetExec (nxc)", ToolFamilyValue: modules.ToolFamilyNetExec,
-		CategoryValue: category, ProtocolValue: protocol, DescriptionValue: name + " through NetExec " + transport + ".",
-		Arguments: args, OutputValue: output, PrerequisiteValues: []string{"nxc executable"},
-		SensitivityValue: modules.SensitivityStandard, ReadOnlyValue: true, Enabled: true,
+	return bytes.Contains(h.help, []byte(argument))
+}
+
+// RegisteredModules returns every module the registry builds, across protocols
+// and categories. It exists for the coverage tests and the inventory tooling.
+func RegisteredModules() []modules.Module {
+	builders := []func() []modules.Module{
+		LDAPEnumerationModules, SMBEnumerationModules, WinRMEnumerationModules,
+		WMIEnumerationModules, MSSQLEnumerationModules, SSHEnumerationModules,
+		FTPEnumerationModules, RDPEnumerationModules, VNCEnumerationModules,
+		NFSEnumerationModules,
+		CredentialAuditingModules, CredentialDumpingModules, PrivilegeEscalationModules,
 	}
+	result := make([]modules.Module, 0)
+	for _, builder := range builders {
+		result = append(result, builder()...)
+	}
+	return result
+}
+
+func buildModules(definitions []Definition) []modules.Module {
+	result := make([]modules.Module, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, Module{definition: definition})
+	}
+	return result
+}
+
+// sortedIDs is a test helper that keeps failure messages deterministic.
+func sortedIDs(entries []modules.Module) []string {
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.ID())
+	}
+	sort.Strings(ids)
+	return ids
 }

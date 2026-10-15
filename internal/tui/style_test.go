@@ -64,10 +64,10 @@ func TestWarningStyleIsOnlyForAPendingConfirmation(t *testing.T) {
 	if got := m.statusHeaderStyle().GetForeground(); got != green {
 		t.Fatalf("an ordinary status is %v, want the title colour", got)
 	}
-	if rendered := m.statusText("READY"); rendered != "running" {
+	if rendered := m.statusText("idle"); rendered != "running" {
 		t.Fatalf("an ordinary status was styled: %q", rendered)
 	}
-	if rendered := m.statusText("READY"); strings.Contains(rendered, "\x1b") {
+	if rendered := m.statusText("idle"); strings.Contains(rendered, "\x1b") {
 		t.Fatalf("an ordinary status carries an escape sequence: %q", rendered)
 	}
 }

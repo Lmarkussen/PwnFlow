@@ -198,8 +198,10 @@ appended to an error message. No credential is committed to Git.
 RustHound-CE starts with everything else: `./bin/pwnflow --target <target>
 --domain <domain> --username <user>` is the whole workflow, with no launcher
 wrapper, no root privileges, no network namespace, and no firewall configuration.
-The module shows `READY` once the collector is installed, and Enter runs it
-against the target and domain you supplied.
+Once the collector is installed the row carries no status suffix, and Enter runs
+it against the target and domain you supplied. Rows only carry a suffix when
+there is something to say: `ADMIN-REQ` when the module needs elevated rights on
+the *target*, and `UNAVAILABLE` when it cannot run at all.
 
 `-c LdapOnly` plus your chosen target and domain narrow what the collector asks
 for; they are **not** a network boundary, and Module Information says so

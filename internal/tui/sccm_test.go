@@ -133,8 +133,8 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 		t.Fatalf("unexpected category: %v", m.categories)
 	}
 	for index := range m.modules {
-		if state := m.moduleState(index); state != "READY" {
-			t.Fatalf("installed SCCM tooling must be READY, got %q for %s", state, m.modules[index].ID())
+		if state := m.moduleState(index); state != "" {
+			t.Fatalf("installed SCCM tooling must carry no status suffix, got %q for %s", state, m.modules[index].ID())
 		}
 		if reason := m.moduleAvailability(m.modules[index]); reason != "" {
 			t.Fatalf("%s is unavailable although it is installed: %q", m.modules[index].ID(), reason)

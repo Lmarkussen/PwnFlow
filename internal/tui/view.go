@@ -33,7 +33,10 @@ func (m *model) View() string {
 			mark = "> " + mark
 		}
 		state := m.moduleState(i)
-		left.WriteString(fmt.Sprintf("%s %-22s %s\n", mark, module.Name(), state))
+		// An available module carries no suffix: a label that says "fine" on
+		// every row is noise, and the two labels that do appear - ADMIN-REQ and
+		// UNAVAILABLE - have to stand out from the names beside them.
+		left.WriteString(strings.TrimRight(fmt.Sprintf("%s %-30s %s", mark, module.Name(), state), " ") + "\n")
 	}
 	left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
 	left.WriteString(dim.Render(wrapFooter(helpText, max(20, widthForFooter(m.width)))))
@@ -100,22 +103,48 @@ func navigationValue[T ~string](values []T, index int) string {
 }
 
 func (m *model) moduleState(index int) string {
-	if reason := m.moduleAvailability(m.modules[index]); reason != "" {
-		return "UNAVAILABLE"
-	}
+	module := m.modules[index]
+	// A row that is running, or has just run, shows that instead: the live state
+	// is the more specific answer while a batch is in flight.
 	if m.batch != nil {
 		global, ok := m.globalIndex(index)
-		if !ok {
-			return "READY"
-		}
-		states, _, _, _ := m.batch.Snapshot()
-		for _, state := range states {
-			if state.Index == global {
-				return strings.ToUpper(state.Status)
+		if ok {
+			states, _, _, _ := m.batch.Snapshot()
+			for _, state := range states {
+				if state.Index == global {
+					return strings.ToUpper(state.Status)
+				}
 			}
 		}
 	}
-	return "READY"
+	switch status, _ := m.moduleStatus(module); status {
+	case "UNAVAILABLE":
+		return "UNAVAILABLE"
+	case "ADMIN-REQ":
+		return "ADMIN-REQ"
+	}
+	return ""
+}
+
+// moduleStatus answers two questions about one module with data that is already
+// in memory: whether it can run at all, and whether the target has to grant it
+// elevated rights. It never probes: the TUI asks while a frame is drawn.
+func (m *model) moduleStatus(module modules.Module) (status string, reason string) {
+	if reason := m.moduleAvailability(module); reason != "" {
+		return "UNAVAILABLE", reason
+	}
+	provider, ok := module.(modules.StatusProvider)
+	if !ok {
+		return "AVAILABLE", ""
+	}
+	runtime := m.moduleRuntime()
+	switch provider.Status(runtime) {
+	case modules.StatusUnavailable:
+		return "UNAVAILABLE", provider.StatusReason(runtime)
+	case modules.StatusAdminRequired:
+		return "ADMIN-REQ", provider.StatusReason(runtime)
+	}
+	return "AVAILABLE", ""
 }
 
 func (m *model) infoView() string {
@@ -123,10 +152,16 @@ func (m *model) infoView() string {
 		return title.Render("MODULE INFORMATION") + "\n\nCategory inactive; no modules are available."
 	}
 	module := m.modules[m.cursor]
-	availability := "READY"
-	if reason := m.moduleAvailability(module); reason != "" {
-		availability = "UNAVAILABLE: " + reason
-	} else if m.batch != nil {
+	status, statusReason := m.moduleStatus(module)
+	availability := "AVAILABLE"
+	privilege := "none beyond valid credentials"
+	switch status {
+	case "UNAVAILABLE":
+		availability = "UNAVAILABLE: " + statusReason
+	case "ADMIN-REQ":
+		privilege = "ADMIN-REQ (" + statusReason + ")"
+	}
+	if m.batch != nil {
 		states, _, _, _ := m.batch.Snapshot()
 		for _, state := range states {
 			if state.Index == m.cursor && state.Status == "unavailable" && state.Result.Err != nil {
@@ -151,7 +186,10 @@ func (m *model) infoView() string {
 			details += "\n"
 		}
 	}
-	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\n%s%s\n\nCommand: %s\n\nAvailability: %s\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), details, module.Description(), command, availability, m.statusText(""), module.OutputFile())
+	// Availability and the target-side privilege come before the free text: an
+	// operator has to be able to read what a module needs without scrolling past
+	// a description that may be longer than the pane.
+	return title.Render("MODULE INFORMATION") + "\n\n" + fmt.Sprintf("Name: %s\nFamily: %s\nCategory: %s\nTool: %s\nProtocol: %s\nSensitivity: %s\nRead-only: %t\n\nAvailability: %s\nTarget privilege: %s\n\n%s%s\n\nCommand: %s\n\nStatus: %s\nOutput: %s\n", module.Name(), module.ToolFamily(), module.Category(), module.Tool(), module.Protocol(), module.Sensitivity(), module.ReadOnly(), availability, privilege, details, module.Description(), command, m.statusText(""), module.OutputFile())
 }
 
 func (m *model) moduleAvailability(module modules.Module) string {

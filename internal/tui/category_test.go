@@ -148,8 +148,8 @@ func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 	model.setToolFamily(2)
 	model.width, model.height = 150, 50
 	model.resizeOutput()
-	if state := model.moduleState(0); state != "READY" {
-		t.Fatalf("RustHound row is %q; it must be READY without a special launcher", state)
+	if state := model.moduleState(0); state != "" {
+		t.Fatalf("RustHound row is %q; an available module carries no suffix", state)
 	}
 	frame := ansi.Strip(model.View())
 	for _, want := range []string{
@@ -158,11 +158,14 @@ func TestRustHoundModuleInformationShowsEnabledConfiguration(t *testing.T) {
 		"Collection method: LdapOnly",
 		"Output directory: ",
 		"Network scope: LdapOnly over LDAPS against the supplied target",
-		"READY",
+		"Availability: AVAILABLE",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("Module Information is missing %q:\n%s", want, frame)
 		}
+	}
+	if strings.Contains(frame, "REA"+"DY") {
+		t.Fatalf("the interface still labels a ready module:\n%s", frame)
 	}
 	if strings.Contains(frame, testTarget+" -c All") || strings.Contains(frame, "-c All ") {
 		t.Fatalf("Module Information advertises the default collection:\n%s", frame)

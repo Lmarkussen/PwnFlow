@@ -25,12 +25,24 @@ import (
 
 var version = "0.1.0"
 
+// multiFlag collects a repeatable string flag in order.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+
+func (m *multiFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
 func main() {
 	target := flag.String("target", "", "target address or hostname")
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
+	var moduleOptionsFlag multiFlag
+	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
 	if *target == "" || *domain == "" || *username == "" {
 		fmt.Fprintln(os.Stderr, "usage: pwnflow --target ADDRESS --domain DOMAIN --username USER")
@@ -74,6 +86,10 @@ func main() {
 	if passwordValue == "" {
 		fail(errors.New("password cannot be empty"))
 	}
+	moduleOptions, err := config.ParseModuleOptions(moduleOptionsFlag)
+	if err != nil {
+		fail(err)
+	}
 
 	root, err := config.ProjectRoot()
 	if err != nil {
@@ -84,6 +100,7 @@ func main() {
 		fail(err)
 	}
 	cfg.InsecureSkipVerify = *insecureSkipVerify
+	cfg.ModuleOptions = moduleOptions
 	trustIn, trustOut := trustTerminal()
 	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg, trustIn, trustOut))
 	if err != nil {

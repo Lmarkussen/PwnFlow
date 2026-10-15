@@ -34,7 +34,8 @@ func certipyModel(t *testing.T, availability ...map[string]string) *model {
 }
 
 // The Certipy modules appear in the existing navigation taxonomy, in the LDAP
-// scope of AD CS enumeration, and are READY without any special setup.
+// scope of AD CS enumeration, and carry no status suffix without any special
+// setup.
 func TestCertipyModulesAppearUnderADCSEnumeration(t *testing.T) {
 	m := certipyModel(t)
 	if len(m.modules) != 3 {
@@ -46,8 +47,8 @@ func TestCertipyModulesAppearUnderADCSEnumeration(t *testing.T) {
 		}
 	}
 	for index := range m.modules {
-		if state := m.moduleState(index); state != "READY" {
-			t.Fatalf("row %d is %q; an installed dependency must show READY", index, state)
+		if state := m.moduleState(index); state != "" {
+			t.Fatalf("row %d is %q; an available module carries no suffix", index, state)
 		}
 	}
 }
@@ -85,7 +86,7 @@ func TestCertipyModuleInformationShowsConfiguration(t *testing.T) {
 		"Collection scope: -dc-only",
 		"Transport: LDAPS (explicit -ldap-scheme ldaps -ldap-port 636",
 		"Output directory: ",
-		"READY",
+		"Availability: AVAILABLE",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("Module Information is missing %q:\n%s", want, frame)

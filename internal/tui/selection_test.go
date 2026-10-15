@@ -137,6 +137,10 @@ func press(t *testing.T, m *model, key string) {
 		m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 	case "right":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+	case "down":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	case "left":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
 	default:
 		// Any other single character goes through as itself, so a prompt can be
 		// answered in a test exactly as the operator answers it.

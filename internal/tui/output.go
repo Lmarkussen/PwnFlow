@@ -111,7 +111,7 @@ func (m *model) outputView() string {
 	module := m.modules[m.cursor]
 	state := m.status
 	if state == "" {
-		state = "READY"
+		state = "idle"
 	}
 	follow := "SCROLL"
 	if m.outputFollow {

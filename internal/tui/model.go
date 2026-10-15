@@ -96,6 +96,9 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 // target, domain, and credentials, and the assessment's discovery store.
 func (m *model) moduleRuntime() *modules.Runtime {
 	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
+	if len(m.cfg.ModuleOptions) > 0 {
+		runtime.ModuleOptions = m.cfg.ModuleOptions
+	}
 	if m.endpoints != nil {
 		runtime.Endpoints = m.endpoints
 	}
