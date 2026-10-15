@@ -78,7 +78,9 @@ const minOutputPaneHeight = 5
 func (m *model) layoutHeights() (navigation, modulePane, outputPane int) {
 	navigation = lipgloss.Height(m.navigationView())
 	remaining := max(3, m.height-navigation)
-	outputPane = remaining * outputPaneHeightPercent / 100
+	// The share is taken from the terminal height, as it always was, so the pane
+	// proportions an operator is used to do not change.
+	outputPane = m.height * outputPaneHeightPercent / 100
 	if outputPane < minOutputPaneHeight {
 		outputPane = minOutputPaneHeight
 	}

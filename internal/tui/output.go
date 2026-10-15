@@ -35,8 +35,8 @@ func (m *model) resizeOutput() {
 		width = 1
 	}
 	// The output pane contains a header, a separating newline, and a two-row
-	// border in addition to the viewport itself, and the module pane's minimum
-	// takes precedence over the share on a short terminal.
+	// border in addition to the viewport itself. Its height comes from the same
+	// layout the module pane uses, so the two always add up to the terminal.
 	_, _, paneHeight := m.layoutHeights()
 	height := paneHeight - 4
 	if height < 1 {
