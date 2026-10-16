@@ -330,6 +330,22 @@ func (m *model) findingsViewRender() string {
 		}
 		content.WriteString(fmt.Sprintf("Source: %s  Execution: %d\n", finding.SourceTool, finding.SourceExecution))
 		content.WriteString(fmt.Sprintf("Evidence: %s %s\n", finding.ArtifactPath, finding.ArtifactRef))
+		if m.inlineEvidenceLoading {
+			content.WriteString("\n" + dim.Render("Loading recovered evidence…") + "\n")
+		} else if m.inlineEvidence.section != "" {
+			content.WriteString("\n" + lipgloss.NewStyle().Bold(true).Render(m.inlineEvidence.section) + "\n")
+			content.WriteString(dim.Render("────────────────────────────────────────────") + "\n")
+			if m.inlineEvidence.error != "" {
+				content.WriteString(warn.Render(m.inlineEvidence.error) + "\n")
+			} else {
+				page := max(1, m.findingPageSize()-10)
+				endEvidence := min(len(m.inlineEvidence.lines), m.inlineEvidenceTop+page)
+				for index := m.inlineEvidenceTop; index < endEvidence; index++ {
+					content.WriteString(m.inlineEvidence.lines[index] + "\n")
+				}
+				content.WriteString(dim.Render(fmt.Sprintf("Evidence lines %d-%d of %d\n", min(m.inlineEvidenceTop+1, len(m.inlineEvidence.lines)), endEvidence, len(m.inlineEvidence.lines))))
+			}
+		}
 		content.WriteString(fmt.Sprintf("\nCondition: %s\n\nImpact: %s\n\nRemediation: %s\n\nConfidence/limitations: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(findingImpact(finding), width-4), wrapPaneText(findingRemediation(finding), width-4), wrapPaneText(finding.Confidence, width-4)))
 		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())

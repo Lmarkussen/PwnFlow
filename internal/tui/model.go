@@ -36,6 +36,9 @@ type model struct {
 	findingSubcategories   []findingSubcategory
 	findingCategories      []findingCategory
 	findingAllRows         []storage.Finding
+	inlineEvidence         inlineEvidence
+	inlineEvidenceTop      int
+	inlineEvidenceLoading  bool
 	evidenceView           bool
 	evidenceLines          []string
 	evidenceTop            int
@@ -142,6 +145,10 @@ type model struct {
 type tickMsg time.Time
 type findingsCompleteMsg struct{ err error }
 type findingsReanalysisMsg struct{ err error }
+type inlineEvidenceLoadedMsg struct {
+	findingID int64
+	evidence  inlineEvidence
+}
 
 // newTextInput builds the field the interactive prompt uses. It is a single-line
 // field with a plain prompt, deliberately without suggestions or history: the

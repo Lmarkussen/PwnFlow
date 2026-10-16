@@ -135,6 +135,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Certipy historical reanalysis queued"
 		}
 		return m, nil
+	case inlineEvidenceLoadedMsg:
+		if m.findingDetail && len(m.findingRows) > 0 && (msg.findingID == 0 || m.findingRows[m.findingCursor].ID == msg.findingID) {
+			m.inlineEvidence = msg.evidence
+			m.inlineEvidenceTop = 0
+			m.inlineEvidenceLoading = false
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case sudoAuthorisedMsg:
@@ -613,7 +620,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				m.findingDetail = len(m.findingRows) > 0
 				m.findingCursor = 0
 				m.findingTop = 0
-				return m, nil
+				return m, m.beginFindingInlineEvidence()
 			}
 			if len(m.findingCategories) > 0 {
 				m.findingCategory = m.findingCategories[m.findingCursor].Key
@@ -647,12 +654,25 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			if len(m.findingRows) > 0 {
 				m.openFindingEvidence(m.findingRows[m.findingCursor])
 			}
+			return m, nil
 		case "esc", "enter":
 			m.findingDetail = false
+			m.inlineEvidence = inlineEvidence{}
+			m.inlineEvidenceTop = 0
+			m.inlineEvidenceLoading = false
+			return m, nil
 		case "up", "k":
 			m.findingCursor--
 		case "down", "j":
 			m.findingCursor++
+		case "pgup":
+			m.inlineEvidenceTop -= max(1, m.findingPageSize()-10)
+			m.inlineEvidenceTop = max(0, m.inlineEvidenceTop)
+			return m, nil
+		case "pgdown":
+			m.inlineEvidenceTop += max(1, m.findingPageSize()-10)
+			m.inlineEvidenceTop = min(m.inlineEvidenceTop, max(0, len(m.inlineEvidence.lines)-max(1, m.findingPageSize()-10)))
+			return m, nil
 		}
 		if m.findingCursor < 0 {
 			m.findingCursor = 0
@@ -660,7 +680,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		if m.findingCursor >= len(m.findingRows) {
 			m.findingCursor = max(0, len(m.findingRows)-1)
 		}
-		return m, nil
+		return m, m.beginFindingInlineEvidence()
 	}
 	switch key {
 	case "ctrl+w":
@@ -716,6 +736,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.findingRows) > 0 {
 			m.findingDetail = true
+			return m, m.beginFindingInlineEvidence()
 		}
 	case "/":
 		m.findingSearchMode = true
@@ -739,6 +760,20 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	m.keepFindingVisible()
 	m.refreshFindings()
 	return m, nil
+}
+
+func (m *model) beginFindingInlineEvidence() tea.Cmd {
+	m.inlineEvidence = inlineEvidence{}
+	m.inlineEvidenceTop = 0
+	m.inlineEvidenceLoading = false
+	if len(m.findingRows) == 0 {
+		return nil
+	}
+	command := m.findingInlineEvidence(m.findingRows[m.findingCursor])
+	if command != nil {
+		m.inlineEvidenceLoading = true
+	}
+	return command
 }
 
 func (m *model) reanalyzePXEThief() tea.Cmd {

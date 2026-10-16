@@ -250,3 +250,54 @@ func TestFindingCategoryUsesStableDetectorIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineEvidenceLoadsPXEValuesForReferencedTaskSequence(t *testing.T) {
+	root := t.TempDir()
+	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(artifactDir, "pxethief.log")
+	content := "Task sequence ONE\nOSDJoinAccount=LAB\\one\nOSDJoinPassword=p@ss\\one\nOSDLocalAdminPassword=local-one\nTask sequence TWO\nOSDJoinAccount=LAB\\two\nOSDJoinPassword=p@ss\\two\n"
+	if err := os.WriteFile(artifact, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		SourceTool: "PXEThief", FindingType: "sccm_task_sequence_credentials_exposed", ArtifactPath: "artifacts/pxethief.log", ArtifactRef: "line:2",
+		EvidenceJSON: `{"credential_variables":["OSDJoinAccount","OSDJoinPassword","OSDLocalAdminPassword"],"task_sequence_context":"task-sequence-line:1","artifact_records":["line:2","line:3","line:4"]}`,
+	}}
+	loaded := loadInlineEvidence(config.Config{Root: root, Domain: "example.test"}, finding)
+	if loaded.error != "" {
+		t.Fatal(loaded.error)
+	}
+	joined := strings.Join(loaded.lines, "\n")
+	for _, want := range []string{"LAB\\one", "p@ss\\one", "local-one"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("inline PXE evidence omitted %q: %q", want, joined)
+		}
+	}
+	if strings.Contains(joined, "two") {
+		t.Fatalf("inline PXE evidence mixed task sequences: %q", joined)
+	}
+}
+
+func TestInlineEvidenceLoadsCompleteKerberosRecord(t *testing.T) {
+	root := t.TempDir()
+	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := "$krb5tgs$23$*svc$EXAMPLE.TEST$MSSQL/foo*$abcdef0123456789/full-record"
+	artifact := filepath.Join(artifactDir, "kerberoast.txt")
+	if err := os.WriteFile(artifact, []byte(record+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		SourceTool: "NetExec", FindingType: "kerberos_ticket_material_collected", ArtifactPath: "artifacts/kerberoast.txt",
+		EvidenceJSON: `{"material_collected":true,"principal":"svc","record_line_numbers":[1]}`,
+	}}
+	loaded := loadInlineEvidence(config.Config{Root: root, Domain: "example.test"}, finding)
+	if loaded.error != "" || len(loaded.lines) != 1 || loaded.lines[0] != record {
+		t.Fatalf("full Kerberos record was not preserved: %#v error=%q", loaded.lines, loaded.error)
+	}
+}
