@@ -11,9 +11,9 @@ import (
 
 func TestAnalyzeNetExecAuthenticationSuccessAndPwned(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nxc.txt")
-	body := "SMB 10.1.10.40 445 DC [+] SCCM\\svc-example:synthetic-password\n" +
-		"\x1b[32mWINRM 10.1.10.43 5985 CLIENT [+] SCCM\\svc-example:synthetic-password (Pwn3d!)\x1b[0m\n" +
-		"SMB 10.1.10.40 445 DC [-] SCCM\\svc-example:STATUS_LOGON_FAILURE\n" +
+	body := "SMB 198.51.100.40 445 DC [+] SCCM\\svc-example:synthetic-password\n" +
+		"\x1b[32mWINRM 198.51.100.43 5985 CLIENT [+] SCCM\\svc-example:synthetic-password (Pwn3d!)\x1b[0m\n" +
+		"SMB 198.51.100.40 445 DC [-] SCCM\\svc-example:STATUS_LOGON_FAILURE\n" +
 		"banner Pwn3d! without an authentication record\n"
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestAnalyzeNetExecAuthenticationSuccessAndPwned(t *testing.T) {
 	for _, input := range inputs {
 		if input.FindingType == "netexec_privileged_access" {
 			privileged = true
-			if input.AffectedObject != "10.1.10.43" || input.RelatedObject != "SCCM\\svc-example" {
+			if input.AffectedObject != "198.51.100.43" || input.RelatedObject != "SCCM\\svc-example" {
 				t.Fatalf("incorrect privileged association: %#v", input)
 			}
 		}

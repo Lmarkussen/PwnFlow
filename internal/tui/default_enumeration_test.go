@@ -8,22 +8,35 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 39 {
-		t.Fatalf("Default Enumeration has %d entries, want 39", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 38 {
+		t.Fatalf("Default Enumeration has %d entries, want 38", len(defaultEnumerationModuleIDs))
 	}
 	base := defaultEnumerationModuleIDs[:32]
 	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
 		t.Fatal("the original 32-entry profile was not preserved as the prefix")
 	}
-	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check", "mssql-auth-check"}
+	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check"}
 	for index, id := range wantAuth {
 		if defaultEnumerationModuleIDs[32+index] != id {
 			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[32+index], id)
 		}
 	}
 	for _, id := range defaultEnumerationModuleIDs {
-		if id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" {
+		if id == "mssql-auth-check" || id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" {
 			t.Fatalf("excluded module %q entered Default Enumeration", id)
+		}
+	}
+}
+
+func TestDefaultEnumerationExcludesAllMSSQLModules(t *testing.T) {
+	excluded := map[string]bool{
+		"mssql-auth-check":     true,
+		"mssqlrelay-check":     true,
+		"mssqlpwner-enumerate": true,
+	}
+	for _, id := range defaultEnumerationModuleIDs {
+		if excluded[id] {
+			t.Fatalf("MSSQL module %q entered Default Enumeration", id)
 		}
 	}
 }

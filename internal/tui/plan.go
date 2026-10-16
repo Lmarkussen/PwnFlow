@@ -62,7 +62,7 @@ var defaultEnumerationModuleIDs = []string{
 	// Authentication checks are deliberately additive to the fixed profile. The
 	// SMB server check and LDAP whoami check above already perform their
 	// protocol authentication and must not be duplicated here.
-	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check", "mssql-auth-check",
+	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for A. Missing
