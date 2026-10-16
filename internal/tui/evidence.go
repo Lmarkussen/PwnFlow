@@ -2,7 +2,9 @@ package tui
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
@@ -82,6 +84,9 @@ func extractPXEInline(lines []string, metadata map[string]any, finding storage.F
 	if len(variables) == 0 {
 		return nil
 	}
+	if result := extractPXEXMLInline(lines, variables); len(result) > 0 {
+		return result
+	}
 	targetContext, _ := metadata["task_sequence_context"].(string)
 	refs := stringSlice(metadata["artifact_records"])
 	anchor := refLine(refs)
@@ -120,6 +125,52 @@ func extractPXEInline(lines []string, metadata map[string]any, finding storage.F
 	result := make([]string, 0, len(variables))
 	for _, variable := range variables {
 		if value, ok := values[strings.ToLower(variable)]; ok {
+			result = append(result, fmt.Sprintf("%-22s = %s", variable, value))
+		}
+	}
+	return result
+}
+
+func extractPXEXMLInline(lines, variables []string) []string {
+	data := []byte(strings.Join(lines, "\n"))
+	if !bytes.Contains(bytes.ToLower(data), []byte("<var")) {
+		return nil
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	values := make(map[string]string)
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok || !strings.EqualFold(start.Name.Local, "var") {
+			continue
+		}
+		name := ""
+		for _, attribute := range start.Attr {
+			if strings.EqualFold(attribute.Name.Local, "name") {
+				name = canonicalInlinePXEName(attribute.Value)
+			}
+		}
+		if !containsFold(variables, name) || values[strings.ToLower(name)] != "" {
+			continue
+		}
+		var value string
+		if err := decoder.DecodeElement(&value, &start); err != nil {
+			return nil
+		}
+		value = strings.TrimSpace(value)
+		if value != "" && !strings.EqualFold(value, "none") && !strings.EqualFold(value, "null") {
+			values[strings.ToLower(name)] = value
+		}
+	}
+	result := make([]string, 0, len(variables))
+	for _, variable := range variables {
+		if value := values[strings.ToLower(variable)]; value != "" {
 			result = append(result, fmt.Sprintf("%-22s = %s", variable, value))
 		}
 	}
