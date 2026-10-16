@@ -506,3 +506,73 @@ func TestFindingsHierarchyOpensObservationOnlyGroup(t *testing.T) {
 		t.Fatal("finding detail did not open from populated child group")
 	}
 }
+
+func TestFindingDetailUsesSecurityHierarchyWithoutRemediation(t *testing.T) {
+	cases := []struct {
+		name     string
+		finding  storage.Finding
+		want     []string
+		unwanted []string
+	}{
+		{
+			name: "privileged access",
+			finding: storage.Finding{FindingInput: storage.FindingInput{
+				FindingType: "netexec_privileged_access", Title: "Privileged access reported — SMB", Severity: "high", Confidence: "explicit-pwn3d-marker",
+				AffectedObject: "DC", RelatedObject: "EXAMPLE\\operator", SourceTool: "NetExec (nxc)", SourceExecution: 16,
+				EvidenceJSON: `{"protocol":"SMB","target":"198.51.100.40","port":"445","host":"DC","privileged":true}`, ArtifactPath: "smb-auth.txt", ArtifactRef: "line:2",
+			}},
+			want:     []string{"PRIVILEGED ACCESS REPORTED", "Pwn3d!", "SMB", "EXAMPLE\\operator", "SECURITY IMPACT", "LIMITATIONS"},
+			unwanted: []string{"Remediation:", "Domain Administrator"},
+		},
+		{
+			name: "certificate condition",
+			finding: storage.Finding{FindingInput: storage.FindingInput{
+				FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — Template", Severity: "high", Confidence: "tool-reported-esc",
+				AffectedObject: "Template", SourceTool: "Certipy", EvidenceJSON: `{"object_type":"template","object_name":"Template"}`, ArtifactPath: "certipy.json", ArtifactRef: "/templates/0",
+			}},
+			want:     []string{"ESC1", "OBJECT", "Template", "EVIDENCE"},
+			unwanted: []string{"Remediation:"},
+		},
+		{
+			name: "generic condition",
+			finding: storage.Finding{FindingInput: storage.FindingInput{
+				FindingType: "synthetic_observation", Title: "Synthetic security observation", Severity: "informational", Confidence: "observed",
+				AffectedObject: "host", Description: "A synthetic condition was observed.", SourceTool: "Synthetic", ArtifactPath: "evidence.log", ArtifactRef: "line:1",
+			}},
+			want:     []string{"SYNTHETIC SECURITY OBSERVATION", "A synthetic condition was observed.", "Synthetic · Execution 0"},
+			unwanted: []string{"Remediation:"},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			model := &model{findingsView: true, findingDetail: true, findingRows: []storage.Finding{test.finding}, width: 120, height: 40}
+			frame := ansi.Strip(model.View())
+			for _, want := range test.want {
+				if !strings.Contains(frame, want) {
+					t.Fatalf("detail missing %q:\n%s", want, frame)
+				}
+			}
+			for _, unwanted := range test.unwanted {
+				if strings.Contains(frame, unwanted) {
+					t.Fatalf("detail contains unwanted %q:\n%s", unwanted, frame)
+				}
+			}
+		})
+	}
+}
+
+func TestFindingDetailFitsResponsiveWidths(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "netexec_privileged_access", Title: "Privileged access reported — WinRM", Severity: "high", Confidence: "explicit-pwn3d-marker",
+		AffectedObject: "CLIENT-WITH-A-LONG-NAME", RelatedObject: "EXAMPLE\\service-account-with-a-long-name", SourceTool: "NetExec (nxc)", SourceExecution: 3,
+		EvidenceJSON: `{"protocol":"WINRM","target":"198.51.100.43","port":"5985","host":"CLIENT"}`, ArtifactPath: "a/very/long/artifact/path/that/must/remain/traceable.txt", ArtifactRef: "line:22",
+	}}
+	for _, width := range []int{80, 100, 120, 160} {
+		model := &model{findingsView: true, findingDetail: true, findingRows: []storage.Finding{finding}, width: width, height: 45}
+		for _, line := range strings.Split(ansi.Strip(model.View()), "\n") {
+			if ansi.StringWidthWc(line) > width {
+				t.Fatalf("width %d overflowed with %d columns: %q", width, ansi.StringWidthWc(line), line)
+			}
+		}
+	}
+}

@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
@@ -370,14 +372,9 @@ func (m *model) findingsViewRender() string {
 	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
 	if m.findingDetail && len(m.findingRows) > 0 {
 		finding := m.findingRows[m.findingCursor]
-		content.WriteString(lipgloss.NewStyle().Bold(true).Render(finding.Title) + "\n\n")
-		content.WriteString(fmt.Sprintf("Severity: %s    Confidence: %s\n", strings.ToUpper(finding.Severity), finding.Confidence))
-		content.WriteString(fmt.Sprintf("Affected: %s\n", displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)))
-		if finding.RelatedObject != "" || finding.RelatedObjectID != "" {
-			content.WriteString(fmt.Sprintf("Principal/related: %s\n", displayFindingObject(finding.RelatedObject, finding.RelatedObjectID)))
-		}
-		content.WriteString(fmt.Sprintf("Source: %s  Execution: %d\n", finding.SourceTool, finding.SourceExecution))
-		content.WriteString(fmt.Sprintf("Evidence: %s %s\n", finding.ArtifactPath, finding.ArtifactRef))
+		content.WriteString(findingDetailHeader(finding, width-4) + "\n\n")
+		content.WriteString(wrapPaneText(findingCondition(finding), width-4) + "\n\n")
+		content.WriteString(findingAttributes(finding, width-4))
 		if m.inlineEvidenceLoading {
 			content.WriteString("\n" + dim.Render("Loading recovered evidence…") + "\n")
 		} else if m.inlineEvidence.section != "" {
@@ -394,7 +391,9 @@ func (m *model) findingsViewRender() string {
 				content.WriteString(dim.Render(fmt.Sprintf("Evidence lines %d-%d of %d\n", min(m.inlineEvidenceTop+1, len(m.inlineEvidence.lines)), endEvidence, len(m.inlineEvidence.lines))))
 			}
 		}
-		content.WriteString(fmt.Sprintf("\nCondition: %s\n\nImpact: %s\n\nRemediation: %s\n\nConfidence/limitations: %s\n", wrapPaneText(finding.Description, width-4), wrapPaneText(findingImpact(finding), width-4), wrapPaneText(findingRemediation(finding), width-4), wrapPaneText(finding.Confidence, width-4)))
+		content.WriteString("\n" + findingSection("SECURITY IMPACT", findingImpact(finding), width-4))
+		content.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
+		content.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
 		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
@@ -418,6 +417,171 @@ func (m *model) findingsViewRender() string {
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
 	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back"))
 	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func findingDetailHeader(finding storage.Finding, width int) string {
+	titleText := strings.ToUpper(finding.Title)
+	severity := strings.ToUpper(finding.Severity)
+	severityStyle := lipgloss.NewStyle().Bold(true)
+	switch strings.ToLower(finding.Severity) {
+	case "critical", "high":
+		severityStyle = severityStyle.Foreground(amber)
+	case "medium":
+		severityStyle = severityStyle.Foreground(lipgloss.Color("#FFD54F"))
+	case "low":
+		severityStyle = severityStyle.Foreground(lipgloss.Color("#D8C36A"))
+	default:
+		severityStyle = severityStyle.Foreground(focusBlue)
+	}
+	if width < 1 {
+		width = 1
+	}
+	line := titleText + "  " + severityStyle.Render(severity)
+	if ansi.StringWidthWc(line) <= width {
+		return lipgloss.NewStyle().Bold(true).Render(titleText) + "  " + severityStyle.Render(severity)
+	}
+	return lipgloss.NewStyle().Bold(true).Render(wrapPaneText(titleText, width)) + "\n" + severityStyle.Render(severity)
+}
+
+func findingCondition(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	metadata := findingMetadata(finding)
+	protocol := metadataString(metadata, "protocol")
+	if protocol == "" {
+		protocol = protocolFromFindingTitle(finding.Title)
+	}
+	switch {
+	case strings.HasPrefix(typ, "netexec_privileged_"):
+		return "NetExec reported privileged access through " + fallbackText(protocol, "the reported protocol") + "."
+	case strings.HasPrefix(typ, "netexec_auth_"):
+		return "NetExec reported successful authentication through " + fallbackText(protocol, "the reported protocol") + "."
+	case typ == "smb_signing_not_required":
+		return "The SMB service does not require message signing."
+	case typ == "ad_account_passwd_notreqd":
+		return "This account has the PASSWD_NOTREQD flag set."
+	case typ == "ad_account_dont_expire_password":
+		return "This account has the DONT_EXPIRE_PASSWORD flag set."
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return "Certipy reported an explicit certificate-services vulnerability condition."
+	case strings.Contains(typ, "credential") || strings.Contains(typ, "secret") || strings.Contains(typ, "material"):
+		return "Security-sensitive authentication material or credential exposure was identified."
+	default:
+		return finding.Description
+	}
+}
+
+func findingAttributes(finding storage.Finding, width int) string {
+	metadata := findingMetadata(finding)
+	var lines []string
+	add := func(label, value string) {
+		if strings.TrimSpace(value) != "" {
+			lines = append(lines, fmt.Sprintf("  %-12s %s", label, value))
+		}
+	}
+	if target := metadataString(metadata, "target"); target != "" {
+		if port := metadataString(metadata, "port"); port != "" {
+			target += ":" + port
+		}
+		add("TARGET", target)
+	} else if finding.AffectedObject != "" || finding.AffectedObjectID != "" {
+		add("AFFECTED", displayFindingObject(finding.AffectedObject, finding.AffectedObjectID))
+	}
+	if finding.RelatedObject != "" || finding.RelatedObjectID != "" {
+		add("ACCOUNT", displayFindingObject(finding.RelatedObject, finding.RelatedObjectID))
+	}
+	add("PROTOCOL", metadataString(metadata, "protocol"))
+	add("HOST", metadataString(metadata, "host"))
+	add("INDICATOR", findingIndicator(finding))
+	add("OBJECT", metadataString(metadata, "object_name"))
+	add("CONDITION", explicitCondition(finding))
+	if uac := metadataString(metadata, "user_account_control"); uac != "" {
+		add("UAC FLAG", metadataString(metadata, "flag")+" ("+uac+")")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	var content strings.Builder
+	content.WriteString(lipgloss.NewStyle().Bold(true).Render("AFFECTED ASSETS") + "\n")
+	content.WriteString(wrapPaneText(strings.Join(lines, "\n"), width) + "\n")
+	return content.String()
+}
+
+func findingSection(name, value string, width int) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return "\n" + lipgloss.NewStyle().Bold(true).Render(name) + "\n" + wrapPaneText(value, width) + "\n"
+}
+
+func findingEvidenceSummary(finding storage.Finding) string {
+	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
+}
+
+func findingLimitations(finding storage.Finding) string {
+	if strings.TrimSpace(finding.Confidence) == "" {
+		return "Source limitations were not recorded."
+	}
+	return finding.Confidence
+}
+
+func findingIndicator(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	if strings.HasPrefix(typ, "netexec_privileged_") || strings.Contains(strings.ToLower(finding.Title), "pwn3d!") {
+		return warn.Render("Pwn3d!")
+	}
+	if strings.HasPrefix(typ, "adcs_esc_") {
+		if esc := explicitCertipyESC.FindString(finding.Title + " " + finding.Description); esc != "" {
+			return warn.Render(strings.ToUpper(esc))
+		}
+	}
+	return ""
+}
+
+func explicitCondition(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	switch {
+	case typ == "ad_account_passwd_notreqd":
+		return "PASSWD_NOTREQD"
+	case typ == "ad_account_dont_expire_password":
+		return "DONT_EXPIRE_PASSWORD"
+	case typ == "smb_signing_not_required":
+		return "signing:False"
+	default:
+		return ""
+	}
+}
+
+func findingMetadata(finding storage.Finding) map[string]any {
+	metadata := make(map[string]any)
+	if finding.EvidenceJSON != "" {
+		_ = json.Unmarshal([]byte(finding.EvidenceJSON), &metadata)
+	}
+	return metadata
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	value, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	text, _ := value.(string)
+	return text
+}
+
+func fallbackText(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func protocolFromFindingTitle(title string) string {
+	for _, protocol := range []string{"SMB", "LDAP", "WINRM", "RDP", "SSH", "WMI", "FTP", "VNC", "MSSQL", "NFS"} {
+		if strings.Contains(strings.ToUpper(title), protocol) {
+			return protocol
+		}
+	}
+	return ""
 }
 
 func (m *model) evidenceViewRender(width int) string {
