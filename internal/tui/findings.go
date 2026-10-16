@@ -534,7 +534,24 @@ func findingIndicator(finding storage.Finding) string {
 			return warn.Render(strings.ToUpper(esc))
 		}
 	}
+	if sensitiveFindingType(typ) {
+		return warn.Render("SENSITIVE EVIDENCE")
+	}
 	return ""
+}
+
+// sensitiveFindingType identifies detector-backed records whose existing detail
+// presentation describes authentication material. It is deliberately based on
+// stable finding types, not secret-looking text, so styling cannot expose or
+// classify arbitrary metadata as a credential.
+func sensitiveFindingType(findingType string) bool {
+	typ := strings.ToLower(strings.TrimSpace(findingType))
+	for _, marker := range []string{"credential", "secret", "material", "private_key", "token", "hash", "ticket"} {
+		if strings.Contains(typ, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func explicitCondition(finding storage.Finding) string {

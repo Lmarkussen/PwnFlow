@@ -10,7 +10,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -574,5 +576,33 @@ func TestFindingDetailFitsResponsiveWidths(t *testing.T) {
 				t.Fatalf("width %d overflowed with %d columns: %q", width, ansi.StringWidthWc(line), line)
 			}
 		}
+	}
+}
+
+func TestFindingDetailMarksSensitiveEvidenceWithoutDisplayingSecretValues(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType:    "kerberos_ticket_material_collected",
+		Title:          "Kerberoast material collected: svc-account",
+		Description:    "The original restricted artifact contains the authentication material.",
+		Severity:       "medium",
+		Confidence:     "observed-material",
+		AffectedObject: "svc-account",
+		EvidenceJSON:   `{"material_type":"kerberoast","material_collected":true,"secret":"synthetic-not-displayed"}`,
+	}}
+	model := &model{findingsView: true, findingDetail: true, findingRows: []storage.Finding{finding}, width: 120, height: 40}
+	raw := model.View()
+	plain := ansi.Strip(raw)
+	if !strings.Contains(plain, "SENSITIVE EVIDENCE") {
+		t.Fatalf("sensitive evidence indicator missing:\n%s", plain)
+	}
+	if !strings.Contains(raw, "\x1b[") {
+		t.Fatal("sensitive evidence indicator is not styled")
+	}
+	if strings.Contains(plain, "synthetic-not-displayed") {
+		t.Fatal("detail unexpectedly exposed a sensitive value")
 	}
 }
