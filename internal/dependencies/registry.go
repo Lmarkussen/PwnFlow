@@ -44,6 +44,11 @@ const (
 	PXEThief     ID = "pxethief"
 	NetworkHound ID = "networkhound"
 	RelayKing    ID = "relayking"
+	SCCMSecrets  ID = "sccmsecrets"
+	MSSQLRelay   ID = "mssqlrelay"
+	MSSqlPwner   ID = "mssqlpwner"
+	GPOParser    ID = "gpoparser"
+	GhostSPN     ID = "ghostspn"
 )
 
 // Layout locates a tool that is a source checkout with its own interpreter.
@@ -124,6 +129,11 @@ func DefaultRegistry() Registry {
 		// documents the options the registrations use.
 		{ID: NetworkHound, DisplayName: "NetworkHound", Install: "install.sh --with-networkhound", InstallHint: "./install.sh --with-networkhound", InstallMethod: InstallVenv, Package: "NetworkHound", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("NetworkHound"), Script: "NetworkHound.py", Interpreters: []string{".venv/bin/python3"}}},
 		{ID: RelayKing, DisplayName: "RelayKing", Install: "install.sh --with-relayking", InstallHint: "./install.sh --with-relayking", InstallMethod: InstallVenv, Package: "RelayKing", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"-h"}, ProbeMustContain: []string{"RelayKing"}, ProbeAcceptsNonZeroExit: true, Layout: &Layout{Roots: ToolRoots("RelayKing"), Script: "relayking.py", Interpreters: []string{".venv/bin/python3"}}},
+		{ID: SCCMSecrets, DisplayName: "SCCMSecrets", Install: "install.sh --with-sccmsecrets", InstallHint: "./install.sh --with-sccmsecrets", InstallMethod: InstallVenv, Package: "SCCMSecrets", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("SCCMSecrets"), Script: "SCCMSecrets.py", Interpreters: []string{".venv/bin/python3"}}},
+		{ID: MSSQLRelay, DisplayName: "mssqlrelay", Install: "install.sh --with-mssqlrelay", InstallHint: "./install.sh --with-mssqlrelay", InstallMethod: InstallPipx, Package: "mssqlrelay", Required: false, Executable: "mssqlrelay", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"Microsoft SQL Relaying Tool"}},
+		{ID: MSSqlPwner, DisplayName: "MSSqlPwner", Install: "install.sh --with-mssqlpwner", InstallHint: "./install.sh --with-mssqlpwner", InstallMethod: InstallPipx, Package: "MSSqlPwner", Required: false, Executable: "mssqlpwner", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"MSSQL"}},
+		{ID: GPOParser, DisplayName: "gpoParser", Install: "install.sh --with-gpoparser", InstallHint: "./install.sh --with-gpoparser", InstallMethod: InstallPipx, Package: "gpoParser", Required: false, Executable: "gpoParser", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"GPO Analysis Tool"}},
+		{ID: GhostSPN, DisplayName: "ghostSPN", Install: "install.sh --with-ghostspn", InstallHint: "./install.sh --with-ghostspn", InstallMethod: InstallPipx, Package: "ghostSPN", Required: false, Executable: "ghostspn", ExecutableCandidates: []string{"ghostspn", "ghostSPN.py"}, ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"ghost"}},
 	}}
 }
 

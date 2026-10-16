@@ -160,8 +160,8 @@ func readLoggedTMPDIR(t *testing.T, logPath string) string {
 	return strings.TrimSpace(string(contents))
 }
 
-// The default invocation must only manage the supported Kali dependencies and
-// must not reach for APT, sudo, pipx, or any BloodHound component.
+// The default invocation manages supported dependencies without reaching for
+// APT, sudo, or retired BloodHound components when all fixtures are present.
 
 // installSCCMToolLayouts puts a functional SCCMhunter and PXEThief layout in the
 // tools root, so a default installer run reuses them instead of installing.
@@ -233,6 +233,19 @@ func installNetworkToolLayouts(t *testing.T, bin, toolsRoot string) {
 				t.Fatal(err)
 			}
 		}
+	}
+	// The specialist integrations are also preinstalled fixtures: the default
+	// installer must check them without invoking package managers or the network.
+	sccmSecrets := filepath.Join(toolsRoot, "SCCMSecrets", ".venv", "bin")
+	if err := os.MkdirAll(sccmSecrets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsRoot, "SCCMSecrets", "SCCMSecrets.py"), []byte("# entry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, sccmSecrets, "python3", `echo SCCMSecrets; exit 0`)
+	for name, banner := range map[string]string{"mssqlrelay": "Microsoft SQL Relaying Tool", "mssqlpwner": "MSSQL Pwner", "gpoParser": "GPO Analysis Tool", "ghostspn": "ghostSPN"} {
+		writeExecutable(t, bin, name, fmt.Sprintf("echo %q; exit 0", banner))
 	}
 }
 

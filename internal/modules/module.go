@@ -59,7 +59,7 @@ const (
 )
 
 func Categories() []Category {
-	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation}
+	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation, CategoryConfigurationAuditing, CategoryPermissionsAuditing, CategorySecurityAuditing}
 }
 
 type Protocol string
@@ -101,11 +101,11 @@ func CategoriesForFamily(family ToolFamily) []Category {
 	case ToolFamilyADCS:
 		return []Category{CategoryEnumeration, CategoryConfigurationAuditing, CategoryPrivilegeEscalation}
 	case ToolFamilyActiveDirectory:
-		return []Category{CategoryEnumeration, CategoryPermissionsAuditing, CategoryPrivilegeEscalation}
+		return []Category{CategoryEnumeration, CategoryConfigurationAuditing, CategoryPermissionsAuditing, CategoryPrivilegeEscalation, CategorySecurityAuditing}
 	case ToolFamilySCCM:
-		return []Category{CategoryEnumeration}
+		return []Category{CategoryEnumeration, CategoryConfigurationAuditing}
 	case ToolFamilyNetwork:
-		return []Category{CategoryHostDiscovery, CategoryServiceEnumeration, CategorySecurityAuditing}
+		return []Category{CategoryHostDiscovery, CategoryServiceEnumeration, CategoryPermissionsAuditing, CategorySecurityAuditing}
 	default:
 		return nil
 	}

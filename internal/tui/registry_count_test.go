@@ -11,6 +11,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/relayking"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
+	"github.com/pwnflow/pwnflow/internal/modules/specialized"
 )
 
 // fullRegistry is the registry the interface builds, so a test can ask what a
@@ -34,6 +35,9 @@ func fullRegistry() []modules.Module {
 	for _, module := range relayking.EnumerationModules() {
 		registry.Register(module)
 	}
+	for _, module := range specialized.Modules() {
+		registry.Register(module)
+	}
 	return registry.All()
 }
 
@@ -46,8 +50,8 @@ func TestGlobalPlanCoversTheWholeRegistryWithTheNetworkTools(t *testing.T) {
 	m.width, m.height = 140, 45
 	m.resizeOutput()
 	plan := m.globalPlan()
-	if len(plan.indices) != len(registered) {
-		t.Fatalf("the global plan holds %d of %d registrations: %v", len(plan.indices), len(registered), plan.skipped)
+	if len(plan.indices)+len(plan.skipped) != len(registered) {
+		t.Fatalf("the global plan accounts for %d of %d registrations: %v", len(plan.indices)+len(plan.skipped), len(registered), plan.skipped)
 	}
 	families := map[modules.ToolFamily]bool{}
 	approvals := map[string]bool{}

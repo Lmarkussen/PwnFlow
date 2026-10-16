@@ -194,6 +194,8 @@ func (m *Manager) analyze(queued queuedJob) {
 			_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no supported NetExec artifact extractor")
 			return
 		}
+	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
+		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -236,6 +238,8 @@ func ParserVersionFor(tool string) string {
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
 		return kerberosParserVersion
+	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
+		return specializedParserVersion
 	default:
 		return ""
 	}
@@ -252,6 +256,12 @@ func jobKey(job Job) string {
 func DiscoverArtifact(tool, outputPath string) string {
 	if outputPath == "" {
 		return ""
+	}
+	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true}
+	if specializedTool[strings.ToLower(tool)] {
+		if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
+			return outputPath
+		}
 	}
 	if strings.EqualFold(tool, "pxethief") {
 		if info, err := os.Stat(outputPath); err == nil {

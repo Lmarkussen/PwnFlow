@@ -90,7 +90,7 @@ func TestNetworkFamilyShowsItsRegistrations(t *testing.T) {
 	if m.navigationRows() != 1 {
 		t.Fatalf("Network still exposes nested navigation rows: %d", m.navigationRows())
 	}
-	if len(m.modules) != 4 {
+	if len(m.modules) != 6 {
 		t.Fatalf("Network did not show all modules directly: %v", moduleIDs(m.modules))
 	}
 	visible := make(map[string]bool)
@@ -103,6 +103,8 @@ func TestNetworkFamilyShowsItsRegistrations(t *testing.T) {
 		"networkhound-scope-validation",
 		"relayking-target-assessment",
 		"relayking-domain-audit",
+		"mssqlrelay-check",
+		"mssqlpwner-enumerate",
 	}
 	for _, id := range want {
 		if !visible[id] {
@@ -148,10 +150,10 @@ func TestNonNetExecFamiliesUseDirectModuleNavigation(t *testing.T) {
 	m.width, m.height = 140, 45
 	m.resizeOutput()
 	want := map[modules.ToolFamily]int{
-		modules.ToolFamilyNetwork:         4,
-		modules.ToolFamilySCCM:            2,
+		modules.ToolFamilyNetwork:         6,
+		modules.ToolFamilySCCM:            3,
 		modules.ToolFamilyADCS:            3,
-		modules.ToolFamilyActiveDirectory: 1,
+		modules.ToolFamilyActiveDirectory: 4,
 	}
 	for family, count := range want {
 		familyIndex := -1

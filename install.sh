@@ -8,6 +8,11 @@ install_sccmhunter=0
 install_pxethief=0
 install_networkhound=0
 install_relayking=0
+install_sccmsecrets=0
+install_mssqlrelay=0
+install_mssqlpwner=0
+install_gpoparser=0
+install_ghostspn=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
 certipy_status="Skipped"
@@ -15,6 +20,11 @@ sccmhunter_status="Skipped"
 pxethief_status="Skipped"
 networkhound_status="Skipped"
 relayking_status="Skipped"
+sccmsecrets_status="Skipped"
+mssqlrelay_status="Skipped"
+mssqlpwner_status="Skipped"
+gpoparser_status="Skipped"
+ghostspn_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
@@ -26,6 +36,11 @@ for argument in "$@"; do
     --with-pxethief) install_pxethief=1 ;;
     --with-networkhound) install_networkhound=1 ;;
     --with-relayking) install_relayking=1 ;;
+    --with-sccmsecrets) install_sccmsecrets=1 ;;
+    --with-mssqlrelay) install_mssqlrelay=1 ;;
+    --with-mssqlpwner) install_mssqlpwner=1 ;;
+    --with-gpoparser) install_gpoparser=1 ;;
+    --with-ghostspn) install_ghostspn=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -33,7 +48,7 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn]"
       echo ""
       echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
@@ -57,6 +72,11 @@ if [[ $# -eq 0 ]]; then
   install_pxethief=1
   install_networkhound=1
   install_relayking=1
+  install_sccmsecrets=1
+  install_mssqlrelay=1
+  install_mssqlpwner=1
+  install_gpoparser=1
+  install_ghostspn=1
 fi
 
 ensure_sudo_authenticated() {
@@ -478,6 +498,43 @@ sccmhunter_root() { printf '%s/sccmhunter\n' "$(pwnflow_tools_root)"; }
 pxethief_root() { printf '%s/PXEThief\n' "$(pwnflow_tools_root)"; }
 networkhound_root() { printf '%s/NetworkHound\n' "$(pwnflow_tools_root)"; }
 relayking_root() { printf '%s/RelayKing\n' "$(pwnflow_tools_root)"; }
+sccmsecrets_root() { printf '%s/SCCMSecrets\n' "$(pwnflow_tools_root)"; }
+
+install_pipx_source() {
+  local package="$1" url="$2" executable="$3" status_name="$4" current
+  if command -v "${executable}" >/dev/null 2>&1 && "${executable}" --help >/dev/null 2>&1; then
+    printf -v "${status_name}" '%s' "Already installed"
+    return 0
+  fi
+  if ! command -v pipx >/dev/null 2>&1; then
+    echo "pipx is required for ${package}; install pipx and re-run." >&2
+    printf -v "${status_name}" '%s' "Failed (pipx unavailable)"
+    return 1
+  fi
+  echo "Installing ${package} in an isolated pipx environment."
+  if ! pipx install "${url}"; then
+    printf -v "${status_name}" '%s' "Failed (pipx install failed)"
+    return 1
+  fi
+  current="$(${executable} --help 2>&1 | head -n 1 || true)"
+  echo "${package} installed: ${current}"
+  printf -v "${status_name}" '%s' "Installed"
+}
+
+install_sccmsecrets() {
+  local root="$(sccmsecrets_root)"
+  if [[ -x "${root}/.venv/bin/python3" && -f "${root}/SCCMSecrets.py" ]]; then
+    sccmsecrets_status="Already installed"
+    echo "SCCMSecrets checkout already present at ${root} (live workflows remain disabled)."
+    return 0
+  fi
+  command -v git >/dev/null 2>&1 || { sccmsecrets_status="Failed (git unavailable)"; return 1; }
+  mkdir -p "$(dirname "${root}")"
+  git clone --branch master https://github.com/synacktiv/SCCMSecrets.git "${root}"
+  ensure_checkout_environment "${root}"
+  "${root}/.venv/bin/python3" "${root}/SCCMSecrets.py" --help >/dev/null
+  sccmsecrets_status="Installed"
+}
 
 # checkout_interpreter reports the interpreter to use for a checkout, or nothing.
 checkout_interpreter() {
@@ -821,6 +878,11 @@ print_summary() {
   echo "  PXEThief: ${pxethief_status}"
   echo "  NetworkHound: ${networkhound_status}"
   echo "  RelayKing: ${relayking_status}"
+  echo "  SCCMSecrets: ${sccmsecrets_status}"
+  echo "  mssqlrelay: ${mssqlrelay_status}"
+  echo "  MSSqlPwner: ${mssqlpwner_status}"
+  echo "  gpoParser: ${gpoparser_status}"
+  echo "  ghostSPN: ${ghostspn_status}"
 }
 
 if [[ ${install_netexec_requested} -eq 1 ]]; then
@@ -886,4 +948,9 @@ if [[ ${install_relayking} -eq 1 ]]; then
     exit 1
   fi
 fi
+if [[ ${install_sccmsecrets} -eq 1 ]]; then install_sccmsecrets || { print_summary; exit 1; }; fi
+if [[ ${install_mssqlrelay} -eq 1 ]]; then install_pipx_source mssqlrelay https://github.com/CompassSecurity/mssqlrelay.git mssqlrelay mssqlrelay_status || { print_summary; exit 1; }; fi
+if [[ ${install_mssqlpwner} -eq 1 ]]; then install_pipx_source MSSqlPwner 'git+https://github.com/ScorpionesLabs/MSSqlPwner.git' mssqlpwner mssqlpwner_status || { print_summary; exit 1; }; fi
+if [[ ${install_gpoparser} -eq 1 ]]; then install_pipx_source gpoParser 'git+https://github.com/synacktiv/gpoParser.git' gpoParser gpoparser_status || { print_summary; exit 1; }; fi
+if [[ ${install_ghostspn} -eq 1 ]]; then install_pipx_source ghostSPN 'git+https://github.com/mverschu/ghostSPN.git' ghostspn ghostspn_status || { print_summary; exit 1; }; fi
 print_summary
