@@ -49,10 +49,13 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"network": {
 		{"smb", "SMB Signing", "SMB signing conditions"},
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
-		{"authentication", "Authentication Checks", "Successful NetExec authentication and explicit privileged-access indicators"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
 		{"port_discovery", "Port Discovery", "Masscan open-port observations"},
+	},
+	"authentication": {
+		{"successful_authentication", "Successful Authentication", "Verified successful protocol authentications"},
+		{"privileged_access", "Privileged Access", "Explicit NetExec elevated-access indicators"},
 	},
 }
 
@@ -65,6 +68,7 @@ var findingCategoryOrder = []struct {
 	{"acl", "Active Directory ACLs", "Direct control relationships and object permissions"},
 	{"adcs", "AD CS", "Certificate template and CA security conditions"},
 	{"delegation", "Delegation", "Delegation configuration and related exposure"},
+	{"authentication", "Authentication & Privileged Access", "Verified authentication and protocol-specific elevated access"},
 	{"network", "Network & Protocols", "SMB, LDAP and relay security conditions"},
 	{"other", "Other / Unclassified", "Security records without a safer category"},
 }
@@ -95,7 +99,7 @@ func findingCategoryKey(finding storage.Finding) string {
 	case strings.HasPrefix(typ, "masscan_") || strings.EqualFold(source, "masscan"):
 		return "network"
 	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"):
-		return "network"
+		return "authentication"
 	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
 		return "network"
 	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
@@ -126,6 +130,10 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "kerberoastable"
 	case strings.Contains(typ, "kerberos") || strings.Contains(typ, "krb5"):
 		return "kerberos_material"
+	case strings.HasPrefix(typ, "netexec_auth_"):
+		return "successful_authentication"
+	case strings.HasPrefix(typ, "netexec_privileged_"):
+		return "privileged_access"
 	case strings.Contains(typ, "smb"):
 		return "smb"
 	case strings.Contains(typ, "ldap") || strings.Contains(typ, "channel"):
@@ -140,8 +148,6 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "spn"
 	case strings.Contains(typ, "mssql"):
 		return "mssql"
-	case strings.Contains(typ, "netexec_auth_") || strings.Contains(typ, "netexec_privileged_"):
-		return "authentication"
 	case strings.Contains(typ, "masscan") || strings.Contains(typ, "port"):
 		return "port_discovery"
 	default:

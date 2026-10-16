@@ -99,20 +99,54 @@ func TestFindingCategoriesClassifyAndCountRecords(t *testing.T) {
 		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — WebEnrollment", Severity: "high", SourceTool: "Certipy"}},
 		{FindingInput: storage.FindingInput{FindingType: "relay_exposure", Title: "Potential NTLM relay exposure", Severity: "medium", SourceTool: "RelayKing"}},
 		{FindingInput: storage.FindingInput{FindingType: "netexec_auth_success", Title: "Authentication successful — SMB", Severity: "informational", SourceTool: "NetExec (nxc)"}},
+		{FindingInput: storage.FindingInput{FindingType: "netexec_privileged_access", Title: "Privileged access reported — SMB", Severity: "high", SourceTool: "NetExec (nxc)"}},
+		{FindingInput: storage.FindingInput{FindingType: "smb_signing_not_required", Title: "SMB Signing Not Required", Severity: "medium", SourceTool: "NetExec (nxc)"}},
 	}
 	categories := buildFindingCategories(rows)
 	counts := map[string]findingCategory{}
 	for _, category := range categories {
 		counts[category.Key] = category
 	}
-	if counts["credentials"].Findings != 1 || counts["kerberos"].Findings != 1 || counts["adcs"].Findings != 1 || counts["network"].Findings != 1 || counts["network"].Observations != 1 {
+	if counts["credentials"].Findings != 1 || counts["kerberos"].Findings != 1 || counts["adcs"].Findings != 1 || counts["network"].Findings != 2 || counts["authentication"].Observations != 1 || counts["authentication"].Findings != 1 {
 		t.Fatalf("unexpected category counts: %#v", counts)
+	}
+	if counts["network"].Findings != 2 || counts["network"].Observations != 0 {
+		t.Fatalf("SMB signing was moved out of Network & Protocols: %#v", counts["network"])
 	}
 	if counts["acl"].Observations != 1 || counts["acl"].Findings != 0 {
 		t.Fatalf("ACL observation was not separated: %#v", counts["acl"])
 	}
 	if counts["credentials"].Highest != "HIGH" || counts["acl"].Highest != "INFORMATIONAL" {
 		t.Fatalf("unexpected highest severities: credentials=%s acl=%s", counts["credentials"].Highest, counts["acl"].Highest)
+	}
+}
+
+func TestAuthenticationFindingsUseDedicatedSubcategories(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "netexec_auth_success", Title: "Authentication successful — SMB", Severity: "informational", SourceTool: "NetExec (nxc)"}},
+		{FindingInput: storage.FindingInput{FindingType: "netexec_privileged_access", Title: "Privileged access reported — WinRM", Severity: "high", SourceTool: "NetExec (nxc)"}},
+		{FindingInput: storage.FindingInput{FindingType: "smb_signing_not_required", Title: "SMB Signing Not Required", Severity: "medium", SourceTool: "NetExec (nxc)"}},
+	}
+	category := buildFindingCategories(rows)
+	var authentication findingCategory
+	for _, item := range category {
+		if item.Key == "authentication" {
+			authentication = item
+		}
+	}
+	if authentication.Findings != 1 || authentication.Observations != 1 {
+		t.Fatalf("unexpected authentication totals: %#v", authentication)
+	}
+	subcategories := buildFindingSubcategories("authentication", rows)
+	counts := map[string]int{}
+	for _, item := range subcategories {
+		counts[item.Key] = item.Findings + item.Observations
+	}
+	if counts["successful_authentication"] != 1 || counts["privileged_access"] != 1 {
+		t.Fatalf("unexpected authentication subcategories: %#v", counts)
+	}
+	if findingCategoryKey(rows[2]) != "network" || findingSubcategoryKey(rows[2]) != "smb" {
+		t.Fatalf("SMB signing no longer routes to Network & Protocols/SMB: %q/%q", findingCategoryKey(rows[2]), findingSubcategoryKey(rows[2]))
 	}
 }
 
@@ -211,7 +245,7 @@ func TestFindingsRootNavigationUsesAllCategories(t *testing.T) {
 	}
 	m := &model{ctx: ctx, db: db, targetID: assessmentID, findingsView: true, findingCategoryView: true, findingViewMode: "all", width: 120, height: 40}
 	m.refreshFindings()
-	want := []string{"credentials", "kerberos", "active_directory", "acl", "adcs", "delegation", "network", "other"}
+	want := []string{"credentials", "kerberos", "active_directory", "acl", "adcs", "delegation", "authentication", "network", "other"}
 	if len(m.findingCategories) != len(want) {
 		t.Fatalf("category count=%d, want %d", len(m.findingCategories), len(want))
 	}
