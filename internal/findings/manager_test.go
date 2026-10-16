@@ -162,3 +162,17 @@ func TestManagerRecoversPendingJobFromExecutionOutputPath(t *testing.T) {
 		t.Fatalf("pending job was not recovered: %+v", rows)
 	}
 }
+
+func TestNetExecArtifactRequiresMatchingModuleAndOutput(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "LDAP_get_users_info.txt")
+	if err := os.WriteFile(path, []byte("synthetic output\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := netExecArtifactForExecution("Enumerate Delegation Relationships", path); got != "" {
+		t.Fatalf("unrelated NetExec execution borrowed artifact: %q", got)
+	}
+	if got := netExecArtifactForExecution("Get AD-User Info", path); got != path {
+		t.Fatalf("matching NetExec execution did not resolve artifact: %q", got)
+	}
+}

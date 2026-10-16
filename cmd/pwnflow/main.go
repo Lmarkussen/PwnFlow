@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
+	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 	"github.com/pwnflow/pwnflow/internal/password"
 	"github.com/pwnflow/pwnflow/internal/preflight"
@@ -43,6 +45,7 @@ func main() {
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
 	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
+	reanalyzeLatest := flag.Bool("reanalyze-latest", false, "offline-analyze the latest supported saved artifacts; never starts modules")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
@@ -134,6 +137,34 @@ func main() {
 	}
 	cfg.InsecureSkipVerify = *insecureSkipVerify
 	cfg.ModuleOptions = moduleOptions
+	if *reanalyzeLatest {
+		db, err := storage.Open(filepath.Join(cfg.ResultsRoot(), "enumeration.db"))
+		if err != nil {
+			fail(err)
+		}
+		defer db.Close()
+		if err := db.UpsertTarget(ctx, cfg.Domain, cfg.Target); err != nil {
+			fail(err)
+		}
+		assessmentID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
+		if err != nil {
+			fail(err)
+		}
+		manager := findingengine.NewManager(ctx, db)
+		if err := manager.ReanalyzeLatestSupported(ctx, assessmentID); err != nil {
+			manager.Close()
+			fail(err)
+		}
+		wait, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err = manager.Wait(wait)
+		cancel()
+		manager.Close()
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("Latest supported saved artifacts analyzed for %s.\n", cfg.Domain)
+		return
+	}
 	trustIn, trustOut := trustTerminal()
 	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg, trustIn, trustOut))
 	if err != nil {

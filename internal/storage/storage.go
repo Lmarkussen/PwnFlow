@@ -19,6 +19,7 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	d := &DB{db}
 	if err := d.migrate(); err != nil {
 		db.Close()

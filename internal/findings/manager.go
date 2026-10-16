@@ -3,7 +3,9 @@ package findings
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +52,12 @@ func (m *Manager) ReanalyzeLatest(ctx context.Context, assessmentID int64, sourc
 		return err
 	}
 	artifact := DiscoverArtifact(sourceTool, output)
+	if artifact == "" {
+		if err := m.db.MarkAnalysisUnsupportedForExecution(ctx, assessmentID, executionID, sourceTool, "no supported finalized artifact for the latest execution"); err != nil {
+			return err
+		}
+		return sql.ErrNoRows
+	}
 	return m.Submit(Job{AssessmentID: assessmentID, ExecutionID: executionID, SourceTool: sourceTool, ArtifactPath: artifact, ObservedAt: time.Now().UTC(), Force: true})
 }
 
@@ -57,15 +65,54 @@ func (m *Manager) ReanalyzeLatest(ctx context.Context, assessmentID int64, sourc
 // supported source. It is deliberately bounded to avoid reimporting the
 // historical assessment tree after a findings reset.
 func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int64) error {
-	for _, source := range []string{"NetExec (nxc)", "RustHound-CE", "Certipy", "RelayKing", "PXEThief"} {
+	if err := m.reanalyzeLatestNetExec(ctx, assessmentID); err != nil {
+		return err
+	}
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief"} {
 		if err := m.ReanalyzeLatest(ctx, assessmentID, source); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "no execution") {
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+func (m *Manager) reanalyzeLatestNetExec(ctx context.Context, assessmentID int64) error {
+	executions, err := m.db.ExecutionsForTool(ctx, assessmentID, "NetExec (nxc)")
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	for _, execution := range executions {
+		artifact := netExecArtifactForExecution(execution.ModuleName, execution.OutputPath)
+		if artifact == "" || seen[artifact] {
+			continue
+		}
+		seen[artifact] = true
+		if err := m.Submit(Job{AssessmentID: assessmentID, ExecutionID: execution.ID, SourceTool: execution.Tool, ArtifactPath: artifact, ObservedAt: time.Now().UTC(), Force: true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func netExecArtifactForExecution(moduleName, outputPath string) string {
+	name := strings.ToLower(moduleName)
+	path := strings.ToLower(filepath.Clean(outputPath))
+	switch {
+	case strings.Contains(name, "as-rep") && strings.Contains(path, "ldap_asreproast"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "kerberoast") && strings.Contains(path, "ldap_kerberoasting"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "user description") && strings.HasSuffix(path, "ldap_get_users_description.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "user info") && strings.HasSuffix(path, "ldap_get_users_info.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	default:
+		return ""
+	}
 }
 
 type queuedJob struct {
@@ -314,11 +361,6 @@ func DiscoverArtifact(tool, outputPath string) string {
 		if baseName == "kerberoast.txt" || baseName == "asreproast.txt" || baseName == "ldap_get_users_info.txt" || baseName == "ldap_get_users_description.txt" {
 			if _, err := os.Stat(outputPath); err == nil {
 				return outputPath
-			}
-		}
-		for _, name := range []string{"kerberoast.txt", "asreproast.txt", "LDAP_get_users_info.txt", "LDAP_get_users_description.txt"} {
-			if path := newestMatching(filepath.Dir(outputPath), name); path != "" {
-				return path
 			}
 		}
 	}

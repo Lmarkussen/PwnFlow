@@ -21,6 +21,13 @@ type AnalysisJob struct {
 	CreatedAt, UpdatedAt                time.Time
 }
 
+type ExecutionArtifact struct {
+	ID         int64
+	ModuleName string
+	Tool       string
+	OutputPath string
+}
+
 func (d *DB) QueueAnalysis(ctx context.Context, jobKey string, assessmentID, executionID int64, sourceTool, artifactPath string) (bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := d.ExecContext(ctx, `INSERT INTO analysis_jobs(job_key,assessment_id,execution_id,source_tool,artifact_path,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(job_key) DO NOTHING`, jobKey, assessmentID, executionID, sourceTool, artifactPath, AnalysisPending, now, now)
@@ -33,6 +40,11 @@ func (d *DB) QueueAnalysis(ctx context.Context, jobKey string, assessmentID, exe
 
 func (d *DB) SetAnalysisStatus(ctx context.Context, jobKey, status, parserVersion, summary string) error {
 	_, err := d.ExecContext(ctx, `UPDATE analysis_jobs SET status=?,parser_version=?,error_summary=?,updated_at=? WHERE job_key=?`, status, parserVersion, summary, time.Now().UTC().Format(time.RFC3339Nano), jobKey)
+	return err
+}
+
+func (d *DB) MarkAnalysisUnsupportedForExecution(ctx context.Context, assessmentID, executionID int64, sourceTool, summary string) error {
+	_, err := d.ExecContext(ctx, `UPDATE analysis_jobs SET status=?,parser_version='',error_summary=?,updated_at=? WHERE assessment_id=? AND execution_id=? AND lower(source_tool)=lower(?) AND status IN (?,?)`, AnalysisNotSupport, summary, time.Now().UTC().Format(time.RFC3339Nano), assessmentID, executionID, sourceTool, AnalysisPending, AnalysisAnalyzing)
 	return err
 }
 
@@ -98,4 +110,21 @@ func (d *DB) LatestExecutionForTool(ctx context.Context, assessmentID int64, too
 	var id int64
 	err := d.QueryRowContext(ctx, `SELECT e.id FROM executions e JOIN modules m ON m.id=e.module_id WHERE e.target_id=? AND lower(m.tool)=lower(?) ORDER BY e.id DESC LIMIT 1`, assessmentID, tool).Scan(&id)
 	return id, err
+}
+
+func (d *DB) ExecutionsForTool(ctx context.Context, assessmentID int64, tool string) ([]ExecutionArtifact, error) {
+	rows, err := d.QueryContext(ctx, `SELECT e.id,m.name,m.tool,e.output_path FROM executions e JOIN modules m ON m.id=e.module_id WHERE e.target_id=? AND lower(m.tool)=lower(?) AND e.status='completed' ORDER BY e.id DESC`, assessmentID, tool)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var executions []ExecutionArtifact
+	for rows.Next() {
+		var execution ExecutionArtifact
+		if err := rows.Scan(&execution.ID, &execution.ModuleName, &execution.Tool, &execution.OutputPath); err != nil {
+			return nil, err
+		}
+		executions = append(executions, execution)
+	}
+	return executions, rows.Err()
 }
