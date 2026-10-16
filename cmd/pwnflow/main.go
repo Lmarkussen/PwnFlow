@@ -45,10 +45,6 @@ func main() {
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
-	var defaultAuthorizedModules multiFlag
-	flag.Var(&defaultAuthorizedModules, "authorize-default-module", "authorize one sensitive Default Enumeration module for this run; repeat as needed")
-	var defaultAuthorizedCategories multiFlag
-	flag.Var(&defaultAuthorizedCategories, "authorize-default-category", "authorize a Default Enumeration sensitivity category for this run")
 	flag.Parse()
 	if *target == "" || *domain == "" || *username == "" {
 		fmt.Fprintln(os.Stderr, "usage: pwnflow --target ADDRESS --domain DOMAIN --username USER")
@@ -138,8 +134,6 @@ func main() {
 	}
 	cfg.InsecureSkipVerify = *insecureSkipVerify
 	cfg.ModuleOptions = moduleOptions
-	cfg.DefaultAuthorizedModules = append([]string(nil), defaultAuthorizedModules...)
-	cfg.DefaultAuthorizedCategories = append([]string(nil), defaultAuthorizedCategories...)
 	trustIn, trustOut := trustTerminal()
 	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg, trustIn, trustOut))
 	if err != nil {

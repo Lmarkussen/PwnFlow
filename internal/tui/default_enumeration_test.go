@@ -36,9 +36,9 @@ func TestDefaultEnumerationDoesNotOpenGroupedApprovalPrompt(t *testing.T) {
 		t.Fatal("Default Enumeration opened the grouped approval prompt")
 	}
 	if !m.running {
-		t.Fatalf("Default Enumeration did not start after filtering unauthorized work: %q", m.status)
+		t.Fatalf("Default Enumeration did not start: %q", m.status)
 	}
-	if len(m.batchItems) != 1 || m.batchItems[0].Module.ID() != registered[1].ID() {
+	if len(m.batchItems) != 2 {
 		t.Fatalf("unexpected Default Enumeration queue: %v", batchIDs(m))
 	}
 	m.cancelBatch()

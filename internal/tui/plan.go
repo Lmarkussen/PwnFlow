@@ -353,17 +353,9 @@ func (m *model) continuePlan() tea.Cmd {
 	}
 	if len(p.approvals) > 0 {
 		if p.name == "Default Enumeration" {
-			unauthorized := make([]int, 0, len(p.approvals))
-			for _, item := range p.approvals {
-				if m.defaultAuthorizationGranted(item.index) {
-					continue
-				}
-				unauthorized = append(unauthorized, item.index)
-				if item.index >= 0 && item.index < len(m.allModules) {
-					p.skipped = append(p.skipped, m.allModules[item.index].Name()+" (authorization not granted)")
-				}
-			}
-			p = p.withoutIndices(unauthorized)
+			// Default Enumeration is the operator's explicit configured profile.
+			// Sensitivity metadata remains available for reporting, but must never
+			// silently turn the configured profile into a smaller run.
 			p.approvals = nil
 			m.pending = p
 			return m.continuePlan()
@@ -404,22 +396,4 @@ func (m *model) continuePlan() tea.Cmd {
 		m.status = m.planLine + " | running"
 	}
 	return command
-}
-
-func (m *model) defaultAuthorizationGranted(index int) bool {
-	if index < 0 || index >= len(m.allModules) {
-		return false
-	}
-	module := m.allModules[index]
-	for _, authorized := range m.cfg.DefaultAuthorizedModules {
-		if authorized == module.ID() {
-			return true
-		}
-	}
-	for _, category := range m.cfg.DefaultAuthorizedCategories {
-		if category == string(module.Category()) {
-			return true
-		}
-	}
-	return false
 }

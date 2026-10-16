@@ -18,11 +18,6 @@ type Config struct {
 	// looks for. They are keyed by module ID and option key, and a module that
 	// needs one reports UNAVAILABLE until it is present.
 	ModuleOptions map[string]map[string]string
-	// DefaultAuthorizedModules and DefaultAuthorizedCategories are explicit,
-	// run-scoped permissions for sensitive entries in Default Enumeration. They
-	// are never inferred from credentials or carried to another assessment.
-	DefaultAuthorizedModules    []string
-	DefaultAuthorizedCategories []string
 }
 
 // New validates operator-supplied assessment configuration. PwnFlow is a
