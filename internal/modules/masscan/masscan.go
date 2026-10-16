@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,7 +59,7 @@ func (Module) Status(runtime *modules.Runtime) modules.Status {
 	if runtime == nil || strings.TrimSpace(optionValue(runtime, optionTarget)) == "" || strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
 		return modules.StatusInputRequired
 	}
-	return modules.StatusAdminRequired
+	return modules.StatusSudoRequired
 }
 
 func (Module) StatusReason(runtime *modules.Runtime) string {
@@ -104,7 +103,7 @@ func (Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
 }
 
 func (Module) IncludeInGlobalPlan() (bool, string) {
-	return false, "manual active scan only; excluded from global YOLO"
+	return false, "manual active scan only; excluded from Default Enumeration"
 }
 
 func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
@@ -147,9 +146,10 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if runtime.Elevation == nil || !runtime.Elevation.ElevationApproved(moduleID) {
 		return fmt.Errorf("Masscan requires local sudo approval for raw-packet access")
 	}
-	if err := exec.CommandContext(ctx, "sudo", "-n", "-v").Run(); err != nil {
-		return fmt.Errorf("sudo did not authorise Masscan; authenticate through PwnFlow before starting")
-	}
+	// The TUI performs the shared sudo preflight before this module enters the
+	// runner. The actual sudo -n process below remains the authoritative launch;
+	// if its timestamp is gone, the runner records a failed execution rather than
+	// misclassifying it as an unavailable dependency.
 	return nil
 }
 

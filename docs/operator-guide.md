@@ -68,7 +68,7 @@ Where a module has an obvious starting point PwnFlow supplies it - `groupmembers
 Some tools need privileges the PwnFlow process does not have - PXEThief cannot craft its DHCP packets without `CAP_NET_RAW`. PwnFlow asks before the batch starts, in the amber confirmation, naming the modules that need it:
 
 ```
-YOLO includes tools requiring local sudo privileges (pxethief): PXEThief discovery requires
+Default Enumeration includes tools requiring local sudo privileges (pxethief): PXEThief discovery requires
 Linux raw-socket privileges (CAP_NET_RAW), which this process does not have.
 Authenticate with sudo before starting? [y/N]
 ```
@@ -78,6 +78,21 @@ Only `y` approves. Approval releases the terminal through Bubble Tea's external-
 What the handoff leaves behind is sudo's own cached authorization, which has a lifetime (15 minutes by default) and, on a default sudo (`timestamp_type=tty`), is keyed to the terminal. PwnFlow therefore does not assume it lasts: before every privileged invocation it asks sudo, noninteractively (`sudo -n -v`), whether the cache is still valid. A valid cache is reused, so a batch with several privileged invocations prompts once. An expired one pauses the batch *before* that invocation and asks you to authenticate again; declining skips the privileged work - PwnFlow never retries a privileged tool unprivileged - and the rest of the batch continues. Sudo is never allowed to prompt from the background worker.
 
 Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the remote target or domain**. Approving sudo authorizes local elevation for the batch that asked; it does not authorize credential access, coercion, or any other operation, each of which keeps its own approval.
+
+### Default Enumeration
+
+Uppercase `A` runs the fixed **Default Enumeration** profile, not the whole
+registry. It includes the selected NetExec LDAP checks (password-not-required,
+delegation, DNS, obsolete operating systems, SCCM, authenticated-user info,
+AS-REP and Kerberos material) and the selected SMB checks (server/session and
+logged-on-user observations, NTLM reflection, GPP/AWS/user attributes, LAPS
+and gMSA), all registered Certipy AD CS enumeration, RustHound-CE, SCCMhunter,
+PXEThief, and the eligible Network assessments. Remote-admin, credential
+material, local-sudo, missing-input and wider-scope operations remain explicitly
+gated; declined items are recorded and the eligible remainder continues.
+
+Masscan is deliberately excluded from this profile. Run it manually with
+`Enter` or `R` after entering and approving its target and port inputs.
 
 ### Network assessment: NetworkHound
 
@@ -417,7 +432,7 @@ Neo4j enrichment remain outside automatic execution.
 ### Network assessment: Masscan
 
 Masscan is registered directly under **Network** and is manual-only: global `A`
-(YOLO) skips it because it is an active raw-packet scan. Press `Enter` on
+(Default Enumeration) skips it because it is an active raw-packet scan. Press `Enter` on
 Masscan to open the normal orange input flow. Enter the required IPv4 target,
 CIDR, or explicit IPv4 range, then accept or edit the prefilled TCP ports:
 

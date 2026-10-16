@@ -18,7 +18,7 @@ func TestTargetValidationAndAuthorization(t *testing.T) {
 			t.Errorf("parseTarget(%q): %v", value, err)
 		}
 	}
-	for _, value := range []string{"", "-x", "198.51.100.1/33", "198.51.100.20-198.51.100.10", "127.0.0.1", "224.0.0.1", "198.51.100.1;echo"} {
+	for _, value := range []string{"", "-x", "198.51.100.1/33", "198.51.100.20-198.51.100.10", "127.0.0.1", "0.0.0.0", "198.51.100.1;echo"} {
 		if _, err := parseTarget(value); err == nil {
 			t.Errorf("parseTarget(%q) unexpectedly succeeded", value)
 		}
@@ -47,8 +47,8 @@ func TestPortValidationPreservesOperatorSelection(t *testing.T) {
 func TestMasscanInputsAndPreview(t *testing.T) {
 	module := Module{}
 	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: {optionTarget: "198.51.100.0/24", optionPorts: defaultPorts, optionScope: "198.51.100.0/24"}}}
-	if got := module.Status(runtime); got != modules.StatusAdminRequired {
-		t.Fatalf("status = %v, want ADMIN-REQ", got)
+	if got := module.Status(runtime); got != modules.StatusSudoRequired {
+		t.Fatalf("status = %v, want SUDO-REQ", got)
 	}
 	preview := module.CommandPreview(runtime)
 	if !strings.Contains(preview, "sudo masscan --rate 4000 198.51.100.0/24 -p "+defaultPorts) || !strings.Contains(preview, "<per-run-artifact>/masscan.log") {

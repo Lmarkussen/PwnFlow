@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pwnflow/pwnflow/internal/modules"
@@ -44,42 +45,36 @@ func fullRegistry() []modules.Module {
 // A global plan is built from the registry, not from a count written down
 // anywhere: it covers every family, including the network assessment tools, and
 // holds the operations that need a decision.
-func TestGlobalPlanCoversTheWholeRegistryWithTheNetworkTools(t *testing.T) {
+func TestGlobalPlanUsesTheCuratedProfileWithTheNetworkTools(t *testing.T) {
 	registered := fullRegistry()
 	m := newModel(context.Background(), testConfig(t), nil, registered, make([]int64, len(registered)), 1, "test")
 	m.width, m.height = 140, 45
 	m.resizeOutput()
 	plan := m.globalPlan()
-	if len(plan.indices)+len(plan.skipped) != len(registered) {
-		t.Fatalf("the global plan accounts for %d of %d registrations: %v", len(plan.indices)+len(plan.skipped), len(registered), plan.skipped)
-	}
-	families := map[modules.ToolFamily]bool{}
-	approvals := map[string]bool{}
+	selected := map[string]bool{}
 	for _, index := range plan.indices {
-		families[registered[index].ToolFamily()] = true
+		selected[registered[index].ID()] = true
 	}
-	for _, item := range plan.approvals {
-		approvals[registered[item.index].ID()] = true
-	}
-	for _, family := range modules.ToolFamilies() {
-		if !families[family] {
-			t.Fatalf("the global plan covers no module of %s", family)
+	for _, id := range defaultEnumerationModuleIDs {
+		if !selected[id] && !containsID(registered, plan.indices, id) {
+			found := false
+			for _, skipped := range plan.skipped {
+				if strings.HasPrefix(skipped, id+" ") {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("profile entry %s was neither selected nor reported skipped", id)
+			}
 		}
 	}
-	// The two network tools are in the plan, and the domain-wide audit is held for
-	// a decision rather than launched by it.
-	for _, id := range []string{"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit"} {
-		if !approvals[id] && !containsID(registered, plan.indices, id) {
-			t.Fatalf("%s is missing from the global plan", id)
-		}
+	if selected["masscan"] {
+		t.Fatal("Masscan entered Default Enumeration")
 	}
-	if !approvals["relayking-domain-audit"] {
-		t.Fatal("the domain-wide relay audit is not held for approval in a global plan")
+	if len(plan.indices) >= len(registered) {
+		t.Fatalf("curated plan unexpectedly covers the whole registry: %d/%d", len(plan.indices), len(registered))
 	}
-	if approvals["networkhound-topology"] {
-		t.Fatal("the directory collection needs no approval")
-	}
-	t.Logf("global plan: %s", m.planSummary(plan))
 }
 
 func containsID(registered []modules.Module, indices []int, id string) bool {

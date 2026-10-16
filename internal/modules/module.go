@@ -162,6 +162,10 @@ const (
 	StatusAdminRequired
 	StatusUnavailable
 	StatusInputRequired
+	// StatusSudoRequired means the local operator must authorize sudo before
+	// the module can open its privileged process. It is distinct from a
+	// target-side administrator requirement.
+	StatusSudoRequired
 )
 
 // StatusProvider lets a module report its display status and, when it is not

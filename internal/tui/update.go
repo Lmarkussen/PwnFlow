@@ -891,11 +891,10 @@ func (m *model) moveWatcherSelection(delta int) {
 	m.setWatcherSelection(m.watcherListCursor+delta, true)
 }
 
-// executeAll is the YOLO key. It builds its plan from the entire registry - every
-// tool family, category, and protocol - so nothing about the visible scope, the
-// focus, the scroll offset, or the selection can change what it considers. Values
-// the plan needs are collected first, and modules that are not plain enumeration
-// are approved by the operator, in the plan, before anything runs.
+// executeAll is the Default Enumeration key. It builds the explicit curated plan
+// independently of the visible scope, focus, scroll offset, or selection. Values
+// the plan needs are collected first, and sensitive modules are approved before
+// anything runs.
 func (m *model) executeAll() tea.Cmd {
 	return m.startPlan(m.globalPlan())
 }

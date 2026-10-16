@@ -69,7 +69,7 @@ tests, vet, race-focused package tests, installer checks, and `git diff --check`
 are required before release. Kali validation uses harmless `--help` and
 offline fixtures first. Live LDAP/GPO/MSSQL tests are intentionally omitted
 unless the upstream implementation and target scope can be independently
-verified without side effects; no global YOLO run is part of this checkpoint.
+verified without side effects; no Default Enumeration run is part of this checkpoint.
 
 Original assessment results and the SQLite database are outside source sync
 and are preserved during Kali deployment.

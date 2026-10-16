@@ -144,6 +144,11 @@ func (m *model) declinePlan() tea.Cmd {
 // inputPromptView renders the interactive question in the output pane, so the
 // module list and Module Information stay visible while the operator types.
 func (m *model) inputPromptView() string {
+	// bubbles' text input scrolls horizontally when Width is bounded. Without
+	// setting it here the default width lets long Masscan port lists escape the
+	// bordered output pane and lose the cursor on narrow terminals.
+	inputWidth := max(8, m.outputViewport.Width-4)
+	m.textInput.Width = inputWidth
 	header := paneHeader(fmt.Sprintf("INPUT // %s // %s", m.inputRequest.module.Name(), m.inputField.Key), m.focus == focusOutput, m.outputViewport.Width)
 	var body strings.Builder
 	if m.planLine != "" {

@@ -88,7 +88,7 @@ func (m *model) scheduledOutputMessage(global int) string {
 			}
 			switch state.Status {
 			case "queued":
-				return "Queued in YOLO — awaiting execution."
+				return "Queued in Default Enumeration — awaiting execution."
 			case "running":
 				return "Execution started; waiting for output."
 			case "completed":

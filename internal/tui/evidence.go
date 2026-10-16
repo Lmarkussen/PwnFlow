@@ -44,7 +44,8 @@ func findingHasInlineEvidence(finding storage.Finding) bool {
 		return strings.Contains(strings.ToLower(finding.FindingType), "credential")
 	}
 	if strings.EqualFold(finding.SourceTool, "NetExec") {
-		return strings.Contains(strings.ToLower(finding.FindingType), "material_collected")
+		typeName := strings.ToLower(finding.FindingType)
+		return strings.Contains(typeName, "material_collected") || strings.HasPrefix(typeName, "ad_user_description_")
 	}
 	return false
 }
@@ -66,6 +67,17 @@ func loadInlineEvidence(cfg config.Config, finding storage.Finding) inlineEviden
 	if strings.EqualFold(finding.SourceTool, "PXEThief") {
 		result.section = "RECOVERED CREDENTIALS"
 		result.lines = extractPXEInline(lines, metadata, finding)
+		if len(result.lines) == 0 {
+			result.error = "Recovered credential evidence could not be loaded from the referenced artifact."
+		}
+		return result
+	}
+	if strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_user_description_") {
+		result.section = "RECOVERED CREDENTIAL EXPOSURE"
+		lineNumber := refLine([]string{finding.ArtifactRef})
+		if lineNumber > 0 && lineNumber <= len(lines) {
+			result.lines = []string{lines[lineNumber-1]}
+		}
 		if len(result.lines) == 0 {
 			result.error = "Recovered credential evidence could not be loaded from the referenced artifact."
 		}

@@ -190,6 +190,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		lowerPath := strings.ToLower(job.ArtifactPath)
 		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			inputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
+			inputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else {
 			_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no supported NetExec artifact extractor")
 			return
@@ -239,7 +241,7 @@ func ParserVersionFor(tool string) string {
 	case "pxethief":
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
-		return kerberosParserVersion
+		return netExecCredentialParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		return specializedParserVersion
 	case "masscan":
@@ -281,12 +283,12 @@ func DiscoverArtifact(tool, outputPath string) string {
 	}
 	if strings.EqualFold(tool, "netexec") || strings.EqualFold(tool, "netexec (nxc)") {
 		baseName := strings.ToLower(filepath.Base(outputPath))
-		if baseName == "kerberoast.txt" || baseName == "asreproast.txt" {
+		if baseName == "kerberoast.txt" || baseName == "asreproast.txt" || baseName == "ldap_get_users_info.txt" || baseName == "ldap_get_users_description.txt" {
 			if _, err := os.Stat(outputPath); err == nil {
 				return outputPath
 			}
 		}
-		for _, name := range []string{"kerberoast.txt", "asreproast.txt"} {
+		for _, name := range []string{"kerberoast.txt", "asreproast.txt", "LDAP_get_users_info.txt", "LDAP_get_users_description.txt"} {
 			if path := newestMatching(filepath.Dir(outputPath), name); path != "" {
 				return path
 			}
@@ -323,6 +325,12 @@ func DiscoverArtifact(tool, outputPath string) string {
 				return path
 			}
 			if path := newestMatching(dir, "asreproast.txt"); path != "" {
+				return path
+			}
+			if path := newestMatching(dir, "LDAP_get_users_info.txt"); path != "" {
+				return path
+			}
+			if path := newestMatching(dir, "LDAP_get_users_description.txt"); path != "" {
 				return path
 			}
 		}
