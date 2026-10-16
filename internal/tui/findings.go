@@ -470,6 +470,9 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		}
 		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
+	if len(m.findingSubcategories) == 0 || (m.findingSubcategories[m.findingCursor].Findings == 0 && m.findingSubcategories[m.findingCursor].Observations == 0) {
+		content.WriteString(warn.Render("No records in this category. Analysis status: NOT ASSESSED.") + "\n")
+	}
 	content.WriteString(dim.Render("\nEnter Open Group   Esc Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }

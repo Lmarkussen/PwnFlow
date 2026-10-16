@@ -132,7 +132,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = "historical reanalysis failed: " + msg.err.Error()
 		} else {
-			m.status = "Certipy historical reanalysis queued"
+			m.status = "latest supported artifact reanalysis queued"
 		}
 		return m, nil
 	case inlineEvidenceLoadedMsg:
@@ -804,9 +804,9 @@ func (m *model) reanalyzeEvidence() tea.Cmd {
 		m.status = "historical reanalysis requires the assessment database"
 		return nil
 	}
-	m.status = "Certipy historical reanalysis queued"
+	m.status = "latest supported artifact reanalysis queued"
 	return func() tea.Msg {
-		if err := m.findings.ReanalyzeLatest(context.Background(), m.targetID, "Certipy"); err != nil {
+		if err := m.findings.ReanalyzeLatestSupported(context.Background(), m.targetID); err != nil {
 			return findingsReanalysisMsg{err: err}
 		}
 		return findingsReanalysisMsg{err: nil}

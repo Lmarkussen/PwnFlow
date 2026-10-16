@@ -53,6 +53,21 @@ func (m *Manager) ReanalyzeLatest(ctx context.Context, assessmentID int64, sourc
 	return m.Submit(Job{AssessmentID: assessmentID, ExecutionID: executionID, SourceTool: sourceTool, ArtifactPath: artifact, ObservedAt: time.Now().UTC(), Force: true})
 }
 
+// ReanalyzeLatestSupported queues one latest finalized execution for each
+// supported source. It is deliberately bounded to avoid reimporting the
+// historical assessment tree after a findings reset.
+func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int64) error {
+	for _, source := range []string{"NetExec (nxc)", "RustHound-CE", "Certipy", "RelayKing", "PXEThief"} {
+		if err := m.ReanalyzeLatest(ctx, assessmentID, source); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "no execution") {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 type queuedJob struct {
 	job Job
 	key string
@@ -283,6 +298,19 @@ func DiscoverArtifact(tool, outputPath string) string {
 	}
 	if strings.EqualFold(tool, "netexec") || strings.EqualFold(tool, "netexec (nxc)") {
 		baseName := strings.ToLower(filepath.Base(outputPath))
+		lowerPath := strings.ToLower(filepath.Clean(outputPath))
+		if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() &&
+			(strings.Contains(lowerPath, string(filepath.Separator)+"ldap_asreproast"+string(filepath.Separator)) ||
+				strings.Contains(lowerPath, string(filepath.Separator)+"ldap_kerberoasting"+string(filepath.Separator))) {
+			name := "kerberoast.txt"
+			if strings.Contains(lowerPath, string(filepath.Separator)+"ldap_asreproast"+string(filepath.Separator)) {
+				name = "asreproast.txt"
+			}
+			if material := filepath.Join(filepath.Dir(outputPath), name); fileExists(material) {
+				return material
+			}
+			return outputPath
+		}
 		if baseName == "kerberoast.txt" || baseName == "asreproast.txt" || baseName == "ldap_get_users_info.txt" || baseName == "ldap_get_users_description.txt" {
 			if _, err := os.Stat(outputPath); err == nil {
 				return outputPath
@@ -336,6 +364,11 @@ func DiscoverArtifact(tool, outputPath string) string {
 		}
 	}
 	return ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func newestPXEArtifact(dir string) string {

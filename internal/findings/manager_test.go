@@ -101,6 +101,16 @@ func TestDiscoverArtifactUsesFinalizedPXEAndKerberosOutputs(t *testing.T) {
 	if got := DiscoverArtifact("NetExec (nxc)", kerb); got != kerb {
 		t.Fatalf("NetExec Kerberos output was not selected: %q", got)
 	}
+	transcript := filepath.Join(root, "CredentialAuditing", "NetExec", "LDAP_asreproast", "transcript.txt")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte("ASREPRoast synthetic output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverArtifact("NetExec (nxc)", transcript); got != transcript {
+		t.Fatalf("NetExec AS-REP transcript was not selected: %q", got)
+	}
 }
 
 func TestManagerRecoversPendingJobFromExecutionOutputPath(t *testing.T) {

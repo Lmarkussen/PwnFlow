@@ -56,6 +56,18 @@ func TestWatcherRetainsAndNavigatesFullBatchHistory(t *testing.T) {
 	}
 }
 
+func TestWatcherHeaderOmitsUnavailableAndCancelledCounters(t *testing.T) {
+	module := viewTestModule{}
+	item := runner.BatchItem{Index: 0, Module: module, Buffer: runner.NewBuffer(128)}
+	m := newModel(context.Background(), config.Config{Domain: "example.test"}, nil, []modules.Module{module}, []int64{1}, 1, "test")
+	m.batch = runner.NewBatchRun([]runner.BatchItem{item})
+	m.batchName = "Default Enumeration"
+	header := m.batchSummary()
+	if strings.Contains(header, "Unavailable:") || strings.Contains(header, "Cancelled:") {
+		t.Fatalf("watcher header still exposes removed counters: %q", header)
+	}
+}
+
 func TestWrapWatcherOutputHandlesANSIUnicodeAndNarrowWidths(t *testing.T) {
 	input := "\x1b[32m界界界界界界\x1b[0m café café\n第二行"
 	wrapped := wrapWatcherOutput(input, 2)
