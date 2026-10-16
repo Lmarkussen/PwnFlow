@@ -58,7 +58,7 @@ var defaultEnumerationModuleIDs = []string{
 	"smb-server-info", "smb-sessions", "logged-on-users", "smb-ntlm-reflection", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
 	"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates",
 	"rusthound-ce", "sccmhunter", "pxethief",
-	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "mssqlrelay-check", "mssqlpwner-enumerate",
+	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for A. Missing
@@ -352,6 +352,22 @@ func (m *model) continuePlan() tea.Cmd {
 		return m.advanceInput()
 	}
 	if len(p.approvals) > 0 {
+		if p.name == "Default Enumeration" {
+			unauthorized := make([]int, 0, len(p.approvals))
+			for _, item := range p.approvals {
+				if m.defaultAuthorizationGranted(item.index) {
+					continue
+				}
+				unauthorized = append(unauthorized, item.index)
+				if item.index >= 0 && item.index < len(m.allModules) {
+					p.skipped = append(p.skipped, m.allModules[item.index].Name()+" (authorization not granted)")
+				}
+			}
+			p = p.withoutIndices(unauthorized)
+			p.approvals = nil
+			m.pending = p
+			return m.continuePlan()
+		}
 		m.pending = p
 		m.approvalPrompt = true
 		m.approvalIndices = p.approvalIndices()
@@ -372,13 +388,15 @@ func (m *model) continuePlan() tea.Cmd {
 		m.planLine = ""
 		return nil
 	}
+	// Preserve the requested-versus-skipped ledger even when authorization or
+	// prerequisites leave no executable entries for this run.
+	m.batchRequested = p.requested
+	m.batchSkipped = append([]string(nil), p.skipped...)
 	if len(p.indices) == 0 {
 		m.status = "nothing eligible to run"
 		m.planLine = ""
 		return nil
 	}
-	m.batchRequested = p.requested
-	m.batchSkipped = append([]string(nil), p.skipped...)
 	command := m.startBatch(p.indices, p.name)
 	// The batch reports "running"; the plan line stays with it, so the operator
 	// can still see what the run covers. An elevation prompt keeps its own text.
@@ -386,4 +404,22 @@ func (m *model) continuePlan() tea.Cmd {
 		m.status = m.planLine + " | running"
 	}
 	return command
+}
+
+func (m *model) defaultAuthorizationGranted(index int) bool {
+	if index < 0 || index >= len(m.allModules) {
+		return false
+	}
+	module := m.allModules[index]
+	for _, authorized := range m.cfg.DefaultAuthorizedModules {
+		if authorized == module.ID() {
+			return true
+		}
+	}
+	for _, category := range m.cfg.DefaultAuthorizedCategories {
+		if category == string(module.Category()) {
+			return true
+		}
+	}
+	return false
 }

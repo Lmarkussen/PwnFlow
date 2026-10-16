@@ -144,8 +144,8 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 	// operation while waiting for the grouped authorization decision.
 	m.focus = focusModules
 	press(t, m, "a")
-	if !m.approvalPrompt || len(m.pending.indices) != 2 || len(m.pending.approvals) != 1 {
-		t.Fatalf("Default Enumeration dropped a requested SCCM operation: prompt=%v indices=%v approvals=%v", m.approvalPrompt, m.pending.indices, m.pending.approvals)
+	if m.approvalPrompt || strings.Contains(strings.ToUpper(m.status), "APPROVAL") {
+		t.Fatalf("Default Enumeration opened an approval prompt: prompt=%v status=%q", m.approvalPrompt, m.status)
 	}
 }
 
