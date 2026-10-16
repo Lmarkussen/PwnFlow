@@ -31,14 +31,20 @@ func TestMainViewFocusIndicatorFollowsTab(t *testing.T) {
 	m.resizeOutput()
 
 	initial := ansi.Strip(m.View())
-	if strings.Count(initial, focusText) != 1 || !strings.Contains(initial, "ENUMERATION MODULES") {
-		t.Fatalf("module pane is not initially focused: %q", initial)
+	if strings.Contains(initial, focusText) {
+		t.Fatalf("navigation focus rendered a pane indicator: %q", initial)
 	}
 
 	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	modulesView := ansi.Strip(updated.(*model).View())
+	if strings.Count(modulesView, focusText) != 1 {
+		t.Fatalf("module pane did not receive focus indicator: %q", modulesView)
+	}
+
+	updated, _ = updated.(*model).handleKey(tea.KeyMsg{Type: tea.KeyTab})
 	output := ansi.Strip(updated.(*model).View())
 	if strings.Count(output, focusText) != 1 || !strings.Contains(output, "OUTPUT // View Module") {
-		t.Fatalf("output pane did not receive focus: %q", output)
+		t.Fatalf("output pane did not receive focus indicator: %q", output)
 	}
 }
 

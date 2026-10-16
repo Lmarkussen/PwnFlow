@@ -32,9 +32,9 @@ func (m *model) View() string {
 	}
 	compact := m.modulePaneCompact()
 	if !compact {
-		left.WriteString(title.Render(fmt.Sprintf("PwnFlow v%s", m.version)) + "\n")
+		left.WriteString(paneHeaderWith(title, fmt.Sprintf("PwnFlow v%s", m.version), m.focus == focusModules, width-4) + "\n")
 	}
-	left.WriteString(paneHeader(modulesHeader, m.focus == focusModules, width) + "\n")
+	left.WriteString(paneHeader(modulesHeader, false, width-4) + "\n")
 	if compact {
 		// Too short for the full identity block: keep the values, spend the lines
 		// on module rows instead.
@@ -91,7 +91,7 @@ func wrapFooter(text string, width int) string {
 func (m *model) navigationView() string {
 	width := max(20, m.width-4)
 	var content strings.Builder
-	content.WriteString(paneHeader("NAVIGATION", m.focus == focusNavigation, width-4) + "\n")
+	content.WriteString(paneHeader("NAVIGATION", false, width-4) + "\n")
 	rows := []struct {
 		label string
 		value string

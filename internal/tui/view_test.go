@@ -84,11 +84,33 @@ func TestNavigationPaneIsFullyRenderedAtSmallestSupportedSize(t *testing.T) {
 	m.width, m.height = 60, 20
 	m.resizeOutput()
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"╭", "NAVIGATION", "[FOCUS]", "TOOL FAMILY", "CATEGORY", "PROTOCOL"} {
+	for _, want := range []string{"╭", "NAVIGATION", "TOOL FAMILY", "CATEGORY", "PROTOCOL"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("navigation pane missing %q: %q", want, view)
 		}
 	}
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "NAVIGATION") && strings.Contains(line, "[FOCUS]") {
+			t.Fatalf("navigation pane still renders focus indicator: %q", line)
+		}
+	}
+}
+
+func TestModuleHeaderPlacesFocusIndicatorOnVersionRow(t *testing.T) {
+	m := newModel(context.Background(), config.Config{}, nil, []modules.Module{viewTestModule{}}, []int64{1}, 1, "test")
+	m.focus = focusModules
+	m.width, m.height = 100, 30
+	m.resizeOutput()
+	view := ansi.Strip(m.View())
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "PwnFlow vtest") {
+			if !strings.Contains(line, "[FOCUS]") {
+				t.Fatalf("module version row missing focus indicator: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("module version row not rendered: %q", view)
 }
 
 func TestMainViewInitialRenderContainsAllPanes(t *testing.T) {
