@@ -31,8 +31,8 @@ func TestMainViewFocusIndicatorFollowsTab(t *testing.T) {
 	m.resizeOutput()
 
 	initial := ansi.Strip(m.View())
-	if strings.Contains(initial, focusText) {
-		t.Fatalf("navigation focus rendered a pane indicator: %q", initial)
+	if strings.Count(initial, focusText) != 1 || !strings.Contains(initial, "NAVIGATION") {
+		t.Fatalf("navigation pane is not initially focused: %q", initial)
 	}
 
 	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})

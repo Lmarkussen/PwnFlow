@@ -91,7 +91,7 @@ func wrapFooter(text string, width int) string {
 func (m *model) navigationView() string {
 	width := max(20, m.width-4)
 	var content strings.Builder
-	content.WriteString(paneHeader("NAVIGATION", false, width-4) + "\n")
+	content.WriteString(paneHeader("NAVIGATION", m.focus == focusNavigation, width-4) + "\n")
 	rows := []struct {
 		label string
 		value string

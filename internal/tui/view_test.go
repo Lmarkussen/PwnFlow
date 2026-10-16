@@ -84,14 +84,9 @@ func TestNavigationPaneIsFullyRenderedAtSmallestSupportedSize(t *testing.T) {
 	m.width, m.height = 60, 20
 	m.resizeOutput()
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"╭", "NAVIGATION", "TOOL FAMILY", "CATEGORY", "PROTOCOL"} {
+	for _, want := range []string{"╭", "NAVIGATION", "[FOCUS]", "TOOL FAMILY", "CATEGORY", "PROTOCOL"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("navigation pane missing %q: %q", want, view)
-		}
-	}
-	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, "NAVIGATION") && strings.Contains(line, "[FOCUS]") {
-			t.Fatalf("navigation pane still renders focus indicator: %q", line)
 		}
 	}
 }
