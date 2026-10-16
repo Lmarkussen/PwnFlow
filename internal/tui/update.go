@@ -324,7 +324,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resizeWatcher()
 		m.refreshWatcher()
 		return m, nil
-	case "f":
+	case "ctrl+f", "f", "F":
 		if m.watcher {
 			m.findingsFromWatcher = true
 			m.watcher = false
@@ -477,7 +477,15 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.running {
 			return m, m.executeSelected()
 		}
+	case "ctrl+r":
+		if !m.running {
+			return m, m.executeSelected()
+		}
 	case "a":
+		if !m.running {
+			return m, m.executeAll()
+		}
+	case "ctrl+a":
 		if !m.running {
 			return m, m.executeAll()
 		}
@@ -487,7 +495,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?":
 		m.status = helpText
-	case "f":
+	case "ctrl+f", "f", "F":
 		m.findingsView = true
 		m.findingsFromWatcher = false
 		m.findingDetail = false
