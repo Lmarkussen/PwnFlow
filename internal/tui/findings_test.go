@@ -324,6 +324,64 @@ func TestFindingCategoryUsesStableDetectorIdentity(t *testing.T) {
 	}
 }
 
+func TestADCSSubcategoriesReconcilePersistedObjectTypes(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc7", SourceTool: "Certipy", Severity: "high", EvidenceJSON: `{"object_type":"ca","object_name":"CA"}`}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc8", SourceTool: "Certipy", Severity: "high", EvidenceJSON: `{"object_type":"ca","object_name":"CA"}`}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", SourceTool: "Certipy", Severity: "high", EvidenceJSON: `{"object_type":"template","object_name":"Template"}`}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc4", SourceTool: "Certipy", Severity: "high", EvidenceJSON: `{"object_type":"template","object_name":"Template"}`}},
+		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc4", SourceTool: "Certipy", Severity: "high", EvidenceJSON: `{}`}},
+	}
+	subcategories := buildFindingSubcategories("adcs", rows)
+	counts := map[string]int{}
+	for _, subcategory := range subcategories {
+		counts[subcategory.Key] = subcategory.Findings + subcategory.Observations
+	}
+	if counts["adcs_ca"] != 2 || counts["adcs_template"] != 2 || counts["adcs_other"] != 1 {
+		t.Fatalf("unexpected AD CS child counts: %#v", counts)
+	}
+}
+
+func TestADCSNavigationReadsPersistedChildRecords(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.UpsertTarget(ctx, "example.test", "192.0.2.20"); err != nil {
+		t.Fatal(err)
+	}
+	assessmentID, err := db.TargetID(ctx, "example.test", "192.0.2.20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := []storage.FindingInput{
+		{FindingKey: "ca-esc7", AssessmentID: assessmentID, SourceTool: "Certipy", FindingType: "adcs_esc_esc7", Title: "Certipy reported ESC7 — CA", Severity: "high", Confidence: "tool-reported-esc", EvidenceJSON: `{"object_type":"ca"}`, ArtifactPath: "certipy.json", ArtifactRef: "/ca", ParserVersion: "test", Status: "open", ObservedAt: time.Now().UTC()},
+		{FindingKey: "ca-esc8", AssessmentID: assessmentID, SourceTool: "Certipy", FindingType: "adcs_esc_esc8", Title: "Certipy reported ESC8 — CA", Severity: "high", Confidence: "tool-reported-esc", EvidenceJSON: `{"object_type":"ca"}`, ArtifactPath: "certipy.json", ArtifactRef: "/ca", ParserVersion: "test", Status: "open", ObservedAt: time.Now().UTC()},
+		{FindingKey: "template-esc1", AssessmentID: assessmentID, SourceTool: "Certipy", FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — Template", Severity: "high", Confidence: "tool-reported-esc", EvidenceJSON: `{"object_type":"template"}`, ArtifactPath: "certipy.json", ArtifactRef: "/template", ParserVersion: "test", Status: "open", ObservedAt: time.Now().UTC()},
+	}
+	if err := db.IngestFindings(ctx, inputs); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{ctx: ctx, db: db, targetID: assessmentID, findingsView: true, findingCategoryView: true, findingViewMode: "all", width: 120, height: 40}
+	m.refreshFindings()
+	for range 4 {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if m.findingCategories[m.findingCursor].Key != "adcs" {
+		t.Fatalf("root cursor selected %q instead of AD CS", m.findingCategories[m.findingCursor].Key)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	counts := map[string]int{}
+	for _, subcategory := range m.findingSubcategories {
+		counts[subcategory.Key] = subcategory.Findings + subcategory.Observations
+	}
+	if counts["adcs_ca"] != 2 || counts["adcs_template"] != 1 {
+		t.Fatalf("persisted AD CS records were not reachable: %#v", counts)
+	}
+}
+
 func TestInlineEvidenceLoadsPXEValuesForReferencedTaskSequence(t *testing.T) {
 	root := t.TempDir()
 	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")
