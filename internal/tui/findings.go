@@ -43,6 +43,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"active_directory": {
 		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
+		{"account_security", "Account Security", "Evidence-backed account-control and credential-lifecycle conditions"},
 		{"user_descriptions", "User Descriptions & Notes", "Credential-related values and keyword observations from NetExec user attributes"},
 	},
 	"network": {
@@ -74,6 +75,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	source := strings.ToLower(finding.SourceTool)
 	switch {
 	case strings.HasPrefix(typ, "ad_user_description_"):
+		return "active_directory"
+	case strings.HasPrefix(typ, "ad_account_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_acl_"):
 		return "acl"
@@ -131,6 +134,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "relay"
 	case strings.Contains(typ, "gpo"):
 		return "gpo"
+	case strings.Contains(typ, "passwd_notreqd"), strings.Contains(typ, "dont_expire_password"):
+		return "account_security"
 	case strings.Contains(typ, "ghostspn") || strings.Contains(typ, "spn"):
 		return "spn"
 	case strings.Contains(typ, "mssql"):

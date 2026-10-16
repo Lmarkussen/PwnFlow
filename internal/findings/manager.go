@@ -257,14 +257,19 @@ func (m *Manager) analyze(queued queuedJob) {
 			inputs, err = nil, authErr
 			break
 		}
-		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
-			inputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
-		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
-			inputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
-		} else {
-			inputs = nil
+		securityInputs, securityErr := AnalyzeNetExecSecurity(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		if securityErr != nil {
+			inputs, err = nil, securityErr
+			break
 		}
-		inputs = append(authInputs, inputs...)
+		var parserInputs []storage.FindingInput
+		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
+			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
+			parserInputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		}
+		inputs = append(authInputs, securityInputs...)
+		inputs = append(inputs, parserInputs...)
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "masscan":
@@ -310,7 +315,7 @@ func ParserVersionFor(tool string) string {
 	case "pxethief":
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
-		return netExecAuthenticationParserVersion
+		return netExecSecurityParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		return specializedParserVersion
 	case "masscan":

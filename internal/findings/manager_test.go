@@ -237,3 +237,57 @@ func TestManagerIngestsNetExecAuthenticationIntoSQLite(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerIngestsNetExecSecurityDetectorsIntoSQLite(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.41"); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := db.TargetID(ctx, "example.test", "198.51.100.41")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(id,name,tool,protocol,description,output_filename) VALUES(4,'SMB Server Information','NetExec (nxc)','SMB','test','transcript.txt')`); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "SMB_server_info", "transcript.txt")
+	if err := os.MkdirAll(filepath.Dir(output), 0750); err != nil {
+		t.Fatal(err)
+	}
+	body := "SMB 198.51.100.41 445 MECM [*] Windows Server (signing:False) (SMBv1:False)\n" +
+		"LDAP 198.51.100.40 389 DC [+] User: svc-example\n" +
+		"userAccountControl: 66080\n"
+	if err := os.WriteFile(output, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := db.RecordExecutionID(ctx, assessment, 4, time.Now(), time.Now(), "completed", 0, output, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(ctx, db)
+	if err := manager.Submit(Job{AssessmentID: assessment, ExecutionID: execution, SourceTool: "NetExec (nxc)", ArtifactPath: output, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListFindings(ctx, assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.FindingType] = true
+	}
+	for _, typ := range []string{"smb_signing_not_required", "ad_account_passwd_notreqd", "ad_account_dont_expire_password"} {
+		if !seen[typ] {
+			t.Fatalf("missing persisted detector %s: %#v", typ, seen)
+		}
+	}
+}
