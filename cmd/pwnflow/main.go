@@ -41,6 +41,8 @@ func main() {
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
+	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
+	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
@@ -53,6 +55,37 @@ func main() {
 	flag.Visit(func(f *flag.Flag) { passwordProvided = passwordProvided || f.Name == "password" })
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if *resetFindings {
+		if !*confirmResetFindings {
+			fail(errors.New("--reset-findings requires --confirm-reset-findings; original artifacts are preserved"))
+		}
+		root, err := config.ProjectRoot()
+		if err != nil {
+			fail(err)
+		}
+		cfg, err := config.New(*target, *domain, *username, "", root)
+		if err != nil {
+			fail(err)
+		}
+		db, err := storage.Open(filepath.Join(cfg.ResultsRoot(), "enumeration.db"))
+		if err != nil {
+			fail(err)
+		}
+		defer db.Close()
+		if err := db.UpsertTarget(ctx, cfg.Domain, cfg.Target); err != nil {
+			fail(err)
+		}
+		assessmentID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
+		if err != nil {
+			fail(err)
+		}
+		removed, err := db.ResetDerivedState(ctx, assessmentID)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Fprintf(os.Stdout, "Reset %d derived findings for %s; original artifacts were preserved.\n", removed, cfg.Domain)
+		return
+	}
 	dependencyRegistry := dependencies.DefaultRegistry()
 	dependencyReasons := make(map[string]string)
 	for _, status := range dependencyRegistry.Check(ctx) {

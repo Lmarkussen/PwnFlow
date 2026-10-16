@@ -433,17 +433,16 @@ Neo4j enrichment remain outside automatic execution.
 
 Masscan is registered directly under **Network** and is manual-only: global `A`
 (Default Enumeration) skips it because it is an active raw-packet scan. Press `Enter` on
-Masscan to open the normal orange input flow. Enter the required IPv4 target,
-CIDR, or explicit IPv4 range, then accept or edit the prefilled TCP ports:
+Masscan to open the normal orange input flow and enter one IPv4 target, CIDR, or
+explicit IPv4 range. The port list below is fixed and is not an interactive input:
 
 `21,22,23,25,53,80,110,111,135,139,389,443,445,593,623,636,993,995,1433,1521,1723,2049,2083,2086,3306,3389,5000,5432,5601,5985,5986,6379,8000,8008,8080-8090,8181,8443,8444,8888,9000,9090,9200,9443,10000,27017`
 
-PwnFlow validates every port and range, requires the requested target to be
-contained by an explicit authorized scope, and shows the fixed rate of 4000
-packets per second before approval. `AUTHORIZED_SCOPE` must be configured explicitly;
-the assessment target never expands into a subnet authorization. Configure it, for
-example, with `--module-options masscan.AUTHORIZED_SCOPE=198.51.100.0/24` only
-when that complete network is authorized. Optional exclusions
+PwnFlow validates the requested target syntax and shows the fixed rate of 4000
+packets per second before the existing local sudo preflight. A manually entered
+target does not require `AUTHORIZED_SCOPE`; when that optional restriction is
+configured, the target must remain inside it. Configure it, for example, with
+`--module-options masscan.AUTHORIZED_SCOPE=198.51.100.0/24`. Optional exclusions
 can be supplied with `masscan.EXCLUDE`. Masscan always uses the existing local
 sudo approval and timestamp flow; PwnFlow never stores the sudo password.
 
@@ -452,3 +451,19 @@ Each run writes the original grepable output to
 keeps the execution transcript in the normal module artifact. Open ports are
 shown as Network observations under **Port Discovery**, not as vulnerabilities.
 No live scan is performed by installation or dependency checks.
+
+### Findings history reset
+
+To remove derived Findings history for one assessment while preserving the
+original result artifacts, stop PwnFlow and run the deliberately confirmed
+maintenance command from the project root:
+
+```bash
+./bin/pwnflow --target TARGET --domain DOMAIN --username MAINTENANCE_USER \
+  --reset-findings --confirm-reset-findings
+```
+
+This clears findings, evidence links, and queued analysis jobs for that
+assessment only. It does not require a password or LDAP connection, and it
+does not delete executions, configuration, schema metadata, or raw evidence.
+Create and verify an external database backup before using it.

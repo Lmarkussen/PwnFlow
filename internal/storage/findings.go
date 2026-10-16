@@ -41,6 +41,50 @@ type Finding struct {
 	LastSeen  time.Time
 }
 
+// ResetDerivedState removes only findings-engine state for one assessment. It
+// deliberately leaves targets, executions, modules, endpoints, schema metadata,
+// and every original artifact untouched.
+func (d *DB) ResetDerivedState(ctx context.Context, assessmentID int64) (int64, error) {
+	transaction, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer transaction.Rollback()
+	var args []any
+	where := ""
+	if assessmentID > 0 {
+		where = " WHERE assessment_id=?"
+		args = append(args, assessmentID)
+	}
+	var count int64
+	query := "SELECT COUNT(*) FROM findings" + where
+	if err := transaction.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	if assessmentID > 0 {
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_evidence WHERE finding_id IN (SELECT id FROM findings WHERE assessment_id=?)", assessmentID); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM findings WHERE assessment_id=?", assessmentID); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM analysis_jobs WHERE assessment_id=?", assessmentID); err != nil {
+			return 0, err
+		}
+	} else {
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_evidence"); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM findings"); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM analysis_jobs"); err != nil {
+			return 0, err
+		}
+	}
+	return count, transaction.Commit()
+}
+
 func (d *DB) IngestFindings(ctx context.Context, inputs []FindingInput) error {
 	transaction, err := d.BeginTx(ctx, nil)
 	if err != nil {

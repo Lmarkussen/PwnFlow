@@ -31,22 +31,9 @@ func TestTargetValidationAndAuthorization(t *testing.T) {
 	}
 }
 
-func TestPortValidationPreservesOperatorSelection(t *testing.T) {
-	input := "443, 445,8080-8090,443"
-	got, err := normalizePorts(input)
-	if err != nil || got != "443,445,8080-8090,443" {
-		t.Fatalf("normalizePorts(%q) = %q, %v", input, got, err)
-	}
-	for _, value := range []string{"", "0", "65536", "22-21", "22,,80", "--help"} {
-		if _, err := normalizePorts(value); err == nil {
-			t.Errorf("normalizePorts(%q) unexpectedly succeeded", value)
-		}
-	}
-}
-
 func TestMasscanInputsAndPreview(t *testing.T) {
 	module := Module{}
-	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: {optionTarget: "198.51.100.0/24", optionPorts: defaultPorts, optionScope: "198.51.100.0/24"}}}
+	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: {optionTarget: "198.51.100.0/24", optionScope: "198.51.100.0/24"}}}
 	if got := module.Status(runtime); got != modules.StatusSudoRequired {
 		t.Fatalf("status = %v, want SUDO-REQ", got)
 	}
@@ -54,16 +41,16 @@ func TestMasscanInputsAndPreview(t *testing.T) {
 	if !strings.Contains(preview, "sudo masscan --rate 4000 198.51.100.0/24 -p "+defaultPorts) || !strings.Contains(preview, "<per-run-artifact>/masscan.log") {
 		t.Fatalf("unexpected preview: %s", preview)
 	}
-	if fields := module.MissingInputs(&modules.Runtime{}); len(fields) != 2 || fields[1].Default != defaultPorts {
+	if fields := module.MissingInputs(&modules.Runtime{}); len(fields) != 1 || fields[0].Key != optionTarget {
 		t.Fatalf("unexpected input fields: %#v", fields)
 	}
 }
 
 func TestMasscanScopeIsDistinctFromDependencyAvailability(t *testing.T) {
 	module := Module{}
-	base := map[string]string{optionTarget: "198.51.100.0/24", optionPorts: defaultPorts}
-	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusScopeRequired {
-		t.Fatalf("missing explicit scope status = %v, want SCOPE-REQ", got)
+	base := map[string]string{optionTarget: "198.51.100.0/24"}
+	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusSudoRequired {
+		t.Fatalf("missing optional scope status = %v, want SUDO-REQ", got)
 	}
 	base[optionScope] = "198.51.100.10/32"
 	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusScopeRequired {
@@ -97,7 +84,7 @@ program="$1"; shift; exec "$program" "$@"`
 		Target:      "198.51.100.10",
 		ResultsRoot: t.TempDir(),
 		ModuleOptions: map[string]map[string]string{moduleID: {
-			optionTarget: "198.51.100.10", optionPorts: "443", optionScope: "198.51.100.10",
+			optionTarget: "198.51.100.10", optionScope: "198.51.100.10",
 		}},
 		Elevation: approvedElevation{},
 	}

@@ -23,7 +23,6 @@ const (
 	artifactFolder  = "Enumeration/Masscan/artifacts"
 	runTimeLayout   = "20060102-150405.000000000"
 	optionTarget    = "TARGET"
-	optionPorts     = "PORTS"
 	optionScope     = "AUTHORIZED_SCOPE"
 	optionExclusion = "EXCLUDE"
 )
@@ -37,10 +36,10 @@ func (Module) Category() modules.Category     { return modules.CategoryServiceEn
 func (Module) Tool() string                   { return "Masscan" }
 func (Module) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (Module) Description() string {
-	return "Runs an explicitly scoped Masscan TCP port scan at 4000 packets per second. The scan always requires operator approval and local sudo; it reports open ports as network observations, not vulnerabilities."
+	return "Runs a manually targeted Masscan TCP scan on the fixed port list at 4000 packets per second. It requires local sudo and reports open ports as network observations, not vulnerabilities."
 }
 func (Module) Prerequisites() []string {
-	return []string{"Masscan installed from the supported system package", "explicit authorized IPv4 scope", "local sudo for raw packets"}
+	return []string{"Masscan installed from the supported system package", "operator-entered IPv4 target", "local sudo for raw packets"}
 }
 func (Module) RequiredPrivileges() []string {
 	return []string{"local raw-packet privileges via the existing sudo approval flow (not remote ADMIN-REQ)"}
@@ -52,20 +51,22 @@ func (Module) SecondaryConnections() []string {
 	return []string{"contacts only the operator-supplied authorized IPv4 target range"}
 }
 func (Module) OptionKeys() []string {
-	return []string{optionTarget, optionPorts, optionScope, optionExclusion}
+	return []string{optionTarget, optionScope, optionExclusion}
 }
 
 func (Module) Status(runtime *modules.Runtime) modules.Status {
-	if runtime == nil || strings.TrimSpace(optionValue(runtime, optionTarget)) == "" || strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
+	if runtime == nil || strings.TrimSpace(optionValue(runtime, optionTarget)) == "" {
 		return modules.StatusInputRequired
 	}
 	target := strings.TrimSpace(optionValue(runtime, optionTarget))
-	scope := strings.TrimSpace(optionValue(runtime, optionScope))
-	if scope == "" {
-		return modules.StatusScopeRequired
+	if _, err := parseTarget(target); err != nil {
+		return modules.StatusInputRequired
 	}
-	if _, err := parseTarget(scope); err != nil || targetWithinScope(target, scope) != nil {
-		return modules.StatusScopeRequired
+	scope := strings.TrimSpace(optionValue(runtime, optionScope))
+	if scope != "" {
+		if _, err := parseTargetList(scope); err != nil || targetWithinScope(target, scope) != nil {
+			return modules.StatusScopeRequired
+		}
 	}
 	return modules.StatusSudoRequired
 }
@@ -74,25 +75,23 @@ func (Module) StatusReason(runtime *modules.Runtime) string {
 	if runtime == nil || strings.TrimSpace(optionValue(runtime, optionTarget)) == "" {
 		return "enter the IPv4 address, CIDR, or explicit IPv4 range to scan"
 	}
-	if strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
-		return "accept or edit the default TCP port list"
+	if target := strings.TrimSpace(optionValue(runtime, optionTarget)); target != "" {
+		if _, err := parseTarget(target); err != nil {
+			return err.Error()
+		}
 	}
-	if strings.TrimSpace(optionValue(runtime, optionScope)) == "" {
-		return "set an explicit AUTHORIZED_SCOPE; the assessment target is not an authorization range"
-	}
-	if err := targetWithinScope(optionValue(runtime, optionTarget), optionValue(runtime, optionScope)); err != nil {
-		return err.Error()
+	if scope := strings.TrimSpace(optionValue(runtime, optionScope)); scope != "" {
+		if err := targetWithinScope(optionValue(runtime, optionTarget), scope); err != nil {
+			return err.Error()
+		}
 	}
 	return "Masscan needs local raw-packet privileges; approve sudo before the active scan"
 }
 
 func (Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
-	missing := make([]modules.InputField, 0, 2)
+	missing := make([]modules.InputField, 0, 1)
 	if strings.TrimSpace(optionValue(runtime, optionTarget)) == "" {
 		missing = append(missing, modules.InputField{Key: optionTarget, Prompt: "IP-Range to scan", Example: "198.51.100.0/24"})
-	}
-	if strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
-		missing = append(missing, modules.InputField{Key: optionPorts, Prompt: "Ports to scan (Enter accepts defaults)", Example: "443,445,8080-8090", Default: defaultPorts})
 	}
 	return missing
 }
@@ -102,18 +101,13 @@ func (Module) ValidateInput(key, value string) error {
 	case optionTarget:
 		_, err := parseTarget(value)
 		return err
-	case optionPorts:
-		_, err := normalizePorts(value)
-		return err
 	default:
 		return nil
 	}
 }
 
 func (Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
-	target := optionValue(runtime, optionTarget)
-	ports := optionValue(runtime, optionPorts)
-	return true, fmt.Sprintf("active Masscan scan of %s on ports %s at %d packets per second; only the explicitly authorized scope may be contacted", target, ports, defaultRate)
+	return false, ""
 }
 
 func (Module) IncludeInGlobalPlan() (bool, string) {
@@ -135,19 +129,11 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if _, err := parseTarget(target); err != nil {
 		return err
 	}
-	ports := strings.TrimSpace(optionValue(runtime, optionPorts))
-	if ports == "" {
-		ports = defaultPorts
-	}
-	if _, err := normalizePorts(ports); err != nil {
-		return err
-	}
 	scope := strings.TrimSpace(optionValue(runtime, optionScope))
-	if scope == "" {
-		return fmt.Errorf("an explicit AUTHORIZED_SCOPE is required for Masscan; the assessment target is not an authorization range")
-	}
-	if err := targetWithinScope(target, scope); err != nil {
-		return err
+	if scope != "" {
+		if err := targetWithinScope(target, scope); err != nil {
+			return err
+		}
 	}
 	if exclusion := strings.TrimSpace(optionValue(runtime, optionExclusion)); exclusion != "" {
 		if _, err := parseTargetList(exclusion); err != nil {
@@ -169,11 +155,7 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 		return err
 	}
 	status := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.Masscan)
-	ports := optionValue(runtime, optionPorts)
-	if ports == "" {
-		ports = defaultPorts
-	}
-	normalizedPorts, _ := normalizePorts(ports)
+	normalizedPorts := defaultPorts
 	target := optionValue(runtime, optionTarget)
 	runDirectory := filepath.Join(runtime.ResultsRoot, artifactFolder, time.Now().UTC().Format(runTimeLayout))
 	if err := os.MkdirAll(runDirectory, 0o700); err != nil {
@@ -208,11 +190,7 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 
 func (Module) CommandPreview(runtime *modules.Runtime) string {
 	target := optionValue(runtime, optionTarget)
-	ports := optionValue(runtime, optionPorts)
-	if ports == "" {
-		ports = defaultPorts
-	}
-	return fmt.Sprintf("sudo masscan --rate %d %s -p %s -oG <per-run-artifact>/masscan.log", defaultRate, target, ports)
+	return fmt.Sprintf("sudo masscan --rate %d %s -p %s -oG <per-run-artifact>/masscan.log", defaultRate, target, defaultPorts)
 }
 
 func optionValue(runtime *modules.Runtime, key string) string {
@@ -322,54 +300,6 @@ func validateRange(value ipRange) (ipRange, error) {
 
 func ipv4Number(ip net.IP) uint32 {
 	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
-}
-
-type portRange struct{ first, last int }
-
-func normalizePorts(value string) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("Masscan ports are required")
-	}
-	parts := strings.Split(value, ",")
-	cleaned := make([]string, 0, len(parts))
-	for _, raw := range parts {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return "", fmt.Errorf("Masscan ports contain an empty entry")
-		}
-		pieces := strings.Split(raw, "-")
-		if len(pieces) > 2 {
-			return "", fmt.Errorf("invalid Masscan port range %q", raw)
-		}
-		first, err := parsePort(pieces[0])
-		if err != nil {
-			return "", err
-		}
-		last := first
-		if len(pieces) == 2 {
-			last, err = parsePort(pieces[1])
-			if err != nil || last < first {
-				return "", fmt.Errorf("invalid Masscan port range %q", raw)
-			}
-		}
-		if len(pieces) == 1 {
-			cleaned = append(cleaned, strconv.Itoa(first))
-		} else {
-			cleaned = append(cleaned, fmt.Sprintf("%d-%d", first, last))
-		}
-	}
-	return strings.Join(cleaned, ","), nil
-}
-
-func parsePort(value string) (int, error) {
-	if value == "" {
-		return 0, fmt.Errorf("Masscan ports contain an empty value")
-	}
-	port, err := strconv.Atoi(value)
-	if err != nil || port < 1 || port > 65535 {
-		return 0, fmt.Errorf("invalid Masscan port %q; ports must be between 1 and 65535", value)
-	}
-	return port, nil
 }
 
 var _ modules.Module = Module{}
