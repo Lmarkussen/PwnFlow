@@ -1123,3 +1123,28 @@ exit 0`)
 		t.Errorf("the summary does not record the failure: %s", stdout)
 	}
 }
+
+func TestInstallerContinuesSpecialistAttemptsAfterMSSQLRelayFailure(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	logPath := filepath.Join(t.TempDir(), "pipx.log")
+	writeExecutable(t, bin, "pipx", fmt.Sprintf("echo \\\"$*\\\" >> %q; exit 42", logPath))
+	output, _, err := runInstallerSplit(t, bin, "--with-mssqlrelay", "--with-mssqlpwner", "--with-gpoparser", "--with-ghostspn")
+	if err == nil {
+		t.Fatalf("installer unexpectedly succeeded after injected failure:\n%s", output)
+	}
+	for _, tool := range []string{"mssqlrelay", "MSSqlPwner", "gpoParser", "ghostSPN"} {
+		if !strings.Contains(output, "Installing "+tool) {
+			t.Fatalf("installer did not attempt %s after the first failure:\n%s", tool, output)
+		}
+	}
+	for _, status := range []string{"mssqlrelay: Failed", "MSSqlPwner: Failed", "gpoParser: Failed", "ghostSPN: Failed"} {
+		if !strings.Contains(output, status) {
+			t.Fatalf("summary omitted %s:\n%s", status, output)
+		}
+	}
+	logged, readErr := os.ReadFile(logPath)
+	if readErr != nil || !strings.Contains(string(logged), "git+https://github.com/CompassSecurity/mssqlrelay.git") {
+		t.Fatalf("mssqlrelay was not passed a Git source to pipx: %q (%v)", logged, readErr)
+	}
+}

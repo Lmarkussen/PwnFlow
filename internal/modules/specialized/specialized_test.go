@@ -18,7 +18,7 @@ func TestModulesExposeOnlyBoundedModes(t *testing.T) {
 		if module.ID() == "sccmsecrets-offline" && module.ExecutionEnabled() {
 			t.Fatal("SCCMSecrets live-capable registration was enabled")
 		}
-		if strings.Contains(module.CommandPreview(&modules.Runtime{Target: "10.0.0.42", Domain: "example.test", Username: "user", Password: "secret"}), "secret@") || strings.Contains(module.CommandPreview(&modules.Runtime{Target: "10.0.0.42", Domain: "example.test", Username: "user", Password: "secret"}), ":secret") {
+		if strings.Contains(module.CommandPreview(&modules.Runtime{Target: "198.51.100.42", Domain: "example.test", Username: "user", Password: "secret"}), "secret@") || strings.Contains(module.CommandPreview(&modules.Runtime{Target: "198.51.100.42", Domain: "example.test", Username: "user", Password: "secret"}), ":secret") {
 			t.Fatalf("secret leaked in preview for %s", module.ID())
 		}
 	}

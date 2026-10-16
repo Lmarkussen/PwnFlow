@@ -403,3 +403,13 @@ pkill -TERM -x pwnflow
 If the shell still appears corrupted after the process exits, restore the
 terminal with `stty sane` or `reset`. In tmux, `Ctrl+B`, then `D` detaches the
 client; PwnFlow does not change the tmux prefix or install tmux keybindings.
+
+### Specialist dependency repair
+
+Run `./install.sh` without flags to verify or install every supported dependency.
+The specialist Python tools use isolated pipx environments; the installer also
+checks `~/.local/bin` so PwnFlow can resolve them from a normal noninteractive
+launch. A failed specialist does not prevent later specialist attempts; the
+final summary reports every outcome and exits nonzero if any selected attempt
+failed. Live relay, SQL command execution, SCCM client registration, and GPO
+Neo4j enrichment remain outside automatic execution.

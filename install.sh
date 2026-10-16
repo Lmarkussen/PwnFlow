@@ -13,6 +13,7 @@ install_mssqlrelay=0
 install_mssqlpwner=0
 install_gpoparser=0
 install_ghostspn=0
+install_failures=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
 certipy_status="Skipped"
@@ -501,8 +502,10 @@ relayking_root() { printf '%s/RelayKing\n' "$(pwnflow_tools_root)"; }
 sccmsecrets_root() { printf '%s/SCCMSecrets\n' "$(pwnflow_tools_root)"; }
 
 install_pipx_source() {
-  local package="$1" url="$2" executable="$3" status_name="$4" current
-  if command -v "${executable}" >/dev/null 2>&1 && "${executable}" --help >/dev/null 2>&1; then
+  local package="$1" url="$2" executable="$3" status_name="$4" expected="$5" current help
+  local executable_path
+  executable_path="$(resolve_user_executable "${executable}")"
+  if [[ -n "${executable_path}" ]] && "${executable_path}" --help >/dev/null 2>&1; then
     printf -v "${status_name}" '%s' "Already installed"
     return 0
   fi
@@ -516,14 +519,40 @@ install_pipx_source() {
     printf -v "${status_name}" '%s' "Failed (pipx install failed)"
     return 1
   fi
-  current="$(${executable} --help 2>&1 | head -n 1 || true)"
+  executable_path="$(resolve_user_executable "${executable}")"
+  if [[ -z "${executable_path}" ]]; then
+    echo "${package} installed but its executable was not found in PATH or ~/.local/bin." >&2
+    printf -v "${status_name}" '%s' "Failed (entry point not found)"
+    return 1
+  fi
+  help="$(${executable_path} --help 2>&1 || true)"
+  if [[ -n "${expected}" && "${help}" != *"${expected}"* ]]; then
+    echo "${package} installed but its help output did not contain ${expected@Q}." >&2
+    printf -v "${status_name}" '%s' "Failed (capability probe failed)"
+    return 1
+  fi
+  current="$(printf '%s\n' "${help}" | head -n 1)"
   echo "${package} installed: ${current}"
   printf -v "${status_name}" '%s' "Installed"
 }
 
+resolve_user_executable() {
+  local executable="$1" candidate
+  candidate="$(command -v "${executable}" 2>/dev/null || true)"
+  if [[ -n "${candidate}" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+  if [[ -x "${HOME}/.local/bin/${executable}" ]]; then
+    printf '%s\n' "${HOME}/.local/bin/${executable}"
+    return 0
+  fi
+  return 1
+}
+
 install_sccmsecrets() {
   local root="$(sccmsecrets_root)"
-  if [[ -x "${root}/.venv/bin/python3" && -f "${root}/SCCMSecrets.py" ]]; then
+  if [[ -x "${root}/.venv/bin/python3" && -f "${root}/SCCMSecrets.py" ]] && "${root}/.venv/bin/python3" "${root}/SCCMSecrets.py" --help >/dev/null 2>&1; then
     sccmsecrets_status="Already installed"
     echo "SCCMSecrets checkout already present at ${root} (live workflows remain disabled)."
     return 0
@@ -885,72 +914,30 @@ print_summary() {
   echo "  ghostSPN: ${ghostspn_status}"
 }
 
-if [[ ${install_netexec_requested} -eq 1 ]]; then
-  if ! install_netexec; then
-    netexec_status="Failed"
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_rusthound_ce} -eq 1 ]]; then
-  if ! install_rusthound_ce; then
-    # install_rusthound_ce records the specific failure reason; only fall back to a
-    # generic status when it returned early without setting one.
-    if [[ ${rusthound_ce_status} == "Skipped" ]]; then
-      rusthound_ce_status="Failed"
+run_install_attempt() {
+  local function_name="$1" status_name="$2"
+  shift 2
+  if ! "${function_name}" "$@"; then
+    if [[ "${!status_name}" == "Skipped" ]]; then
+      printf -v "${status_name}" '%s' "Failed"
     fi
-    print_summary
-    exit 1
+    install_failures=1
   fi
-fi
-if [[ ${install_certipy} -eq 1 ]]; then
-  if ! install_certipy; then
-    if [[ ${certipy_status} == "Skipped" ]]; then
-      certipy_status="Failed"
-    fi
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_sccmhunter} -eq 1 ]]; then
-  if ! install_sccmhunter; then
-    if [[ ${sccmhunter_status} == "Skipped" ]]; then
-      sccmhunter_status="Failed"
-    fi
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_pxethief} -eq 1 ]]; then
-  if ! install_pxethief; then
-    if [[ ${pxethief_status} == "Skipped" ]]; then
-      pxethief_status="Failed"
-    fi
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_networkhound} -eq 1 ]]; then
-  if ! install_networkhound; then
-    if [[ ${networkhound_status} == "Skipped" ]]; then
-      networkhound_status="Failed"
-    fi
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_relayking} -eq 1 ]]; then
-  if ! install_relayking; then
-    if [[ ${relayking_status} == "Skipped" ]]; then
-      relayking_status="Failed"
-    fi
-    print_summary
-    exit 1
-  fi
-fi
-if [[ ${install_sccmsecrets} -eq 1 ]]; then install_sccmsecrets || { print_summary; exit 1; }; fi
-if [[ ${install_mssqlrelay} -eq 1 ]]; then install_pipx_source mssqlrelay https://github.com/CompassSecurity/mssqlrelay.git mssqlrelay mssqlrelay_status || { print_summary; exit 1; }; fi
-if [[ ${install_mssqlpwner} -eq 1 ]]; then install_pipx_source MSSqlPwner 'git+https://github.com/ScorpionesLabs/MSSqlPwner.git' mssqlpwner mssqlpwner_status || { print_summary; exit 1; }; fi
-if [[ ${install_gpoparser} -eq 1 ]]; then install_pipx_source gpoParser 'git+https://github.com/synacktiv/gpoParser.git' gpoParser gpoparser_status || { print_summary; exit 1; }; fi
-if [[ ${install_ghostspn} -eq 1 ]]; then install_pipx_source ghostSPN 'git+https://github.com/mverschu/ghostSPN.git' ghostspn ghostspn_status || { print_summary; exit 1; }; fi
+}
+
+if [[ ${install_netexec_requested} -eq 1 ]]; then run_install_attempt install_netexec netexec_status; fi
+if [[ ${install_rusthound_ce} -eq 1 ]]; then run_install_attempt install_rusthound_ce rusthound_ce_status; fi
+if [[ ${install_certipy} -eq 1 ]]; then run_install_attempt install_certipy certipy_status; fi
+if [[ ${install_sccmhunter} -eq 1 ]]; then run_install_attempt install_sccmhunter sccmhunter_status; fi
+if [[ ${install_pxethief} -eq 1 ]]; then run_install_attempt install_pxethief pxethief_status; fi
+if [[ ${install_networkhound} -eq 1 ]]; then run_install_attempt install_networkhound networkhound_status; fi
+if [[ ${install_relayking} -eq 1 ]]; then run_install_attempt install_relayking relayking_status; fi
+if [[ ${install_sccmsecrets} -eq 1 ]]; then run_install_attempt install_sccmsecrets sccmsecrets_status; fi
+if [[ ${install_mssqlrelay} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlrelay_status mssqlrelay git+https://github.com/CompassSecurity/mssqlrelay.git mssqlrelay mssqlrelay_status Microsoft; fi
+if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlpwner_status MSSqlPwner git+https://github.com/ScorpionesLabs/MSSqlPwner.git mssqlpwner mssqlpwner_status mssqlpwner; fi
+if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
+if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git ghostspn ghostspn_status ghost; fi
 print_summary
+if [[ ${install_failures} -ne 0 ]]; then
+  exit 1
+fi

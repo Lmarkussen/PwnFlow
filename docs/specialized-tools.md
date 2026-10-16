@@ -14,3 +14,23 @@ modules use only the modes listed here; no other upstream mode is exposed.
 The five tool dependencies are optional. A missing executable makes only its
 own module unavailable; it does not block unrelated modules. No live assessment
 was run as part of this integration.
+
+## Installation and verification
+
+`./install.sh` verifies all twelve dependencies when run without flags. The
+pipx-backed tools are installed from Git URLs using isolated environments and
+are resolved from both `PATH` and `~/.local/bin`, so a noninteractive PwnFlow
+launch does not depend on shell startup files. The installer runs every
+selected dependency attempt, prints a complete summary, and returns nonzero if
+any selected attempt fails.
+
+On the Prompt 070 Kali verification, the installed entry points were:
+
+- `/home/kali/.local/bin/mssqlrelay` — upstream `1.1`.
+- `/home/kali/.local/bin/mssqlpwner` — upstream `1.3.2`.
+- `/home/kali/.local/bin/gpoParser` — upstream `1.0.0`.
+- `/home/kali/.local/bin/ghostspn` — upstream `0.1.0`.
+- `/home/kali/.local/share/pwnflow/tools/SCCMSecrets/.venv/bin/python3` plus `SCCMSecrets.py`.
+
+The installer verified each with its actual help entry point. No live target,
+LDAP, DNS, relay, SQL, SCCM registration, or GPO remote operation was run.
