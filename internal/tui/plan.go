@@ -74,7 +74,7 @@ func (m *model) globalPlan() plan {
 	// the real registry: any production registration matching the profile takes
 	// the explicit path above, and a partial production registry still reports
 	// every missing profile entry.
-	if profileMatches(indices) <= 1 {
+	if m.version == "test" && profileMatches(indices) <= 1 {
 		return m.legacyFixturePlan(result)
 	}
 	for _, moduleID := range defaultEnumerationModuleIDs {

@@ -11,9 +11,9 @@ import (
 
 func TestAnalyzeNetExecCredentialsUsesSourceReferencesWithoutPersistingValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "LDAP_get_users_description.txt")
-	content := "LDAP 10.0.0.1 user=LAB\\svc-backup Description: VPN password: Synthetic\\value!\n" +
-		"LDAP 10.0.0.1 user=LAB\\helpdesk Description: Password policy managed by helpdesk\n" +
-		"LDAP 10.0.0.1 user=LAB\\svc-deploy Description: Login: svc-deploy Pass: OtherSynthetic!\n"
+	content := "LDAP 198.51.100.1 user=LAB\\svc-backup Description: VPN password: Synthetic\\value!\n" +
+		"LDAP 198.51.100.1 user=LAB\\helpdesk Description: Password policy managed by helpdesk\n" +
+		"LDAP 198.51.100.1 user=LAB\\svc-deploy Description: Login: svc-deploy Pass: OtherSynthetic!\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
