@@ -49,7 +49,7 @@ func writeCertipy(t *testing.T, directory, name, help string) string {
 --help) printf '%s\n' "` + help + `" ;;
 find)
   if [ "$2" = "--help" ]; then printf '%s\n' "` + certipyFindHelp + `"; exit 0; fi
-  printf '%s\n' "$@" > certipy-args.txt; printf '%s\n' "$PWD" > certipy-cwd.txt; printf '%s\n' '{"ok":true}' > report_Certipy.json ;;
+  echo 'Certipy synthetic live result'; printf '%s\n' "$@" > certipy-args.txt; printf '%s\n' "$PWD" > certipy-cwd.txt; printf '%s\n' '{"ok":true}' > report_Certipy.json ;;
 *) exit 1 ;;
 esac
 `
@@ -139,7 +139,7 @@ func TestCommandArgumentsFollowTheRuntimeConfiguration(t *testing.T) {
 	if args[0] != "find" || args[1] != "-dc-ip" {
 		t.Errorf("unexpected argument order: %#v", args)
 	}
-	for _, forbidden := range []string{"All", "DCOnly", "-stdout", "-csv"} {
+	for _, forbidden := range []string{"All", "DCOnly", "-csv"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("arguments contain %q: %s", forbidden, joined)
 		}
@@ -174,7 +174,7 @@ func TestModuleFiltersAreExplicit(t *testing.T) {
 	for id, option := range cases {
 		module := moduleFor(t, id)
 		joined := strings.Join(module.CommandArgs(runtime), " ")
-		if !strings.Contains(joined, "-dc-only "+option) {
+		if !strings.Contains(joined, "-dc-only") || !strings.Contains(joined, option) {
 			t.Errorf("%s does not pass its documented filter %s: %s", id, option, joined)
 		}
 	}
@@ -300,6 +300,9 @@ func TestRunKeepsPerRunArtifacts(t *testing.T) {
 
 	if err := module.Run(context.Background(), runtime, sink); err != nil {
 		t.Fatalf("run failed: %v", err)
+	}
+	if !strings.Contains(sink.String(), "Certipy synthetic live result") {
+		t.Fatalf("Certipy stdout did not reach the output sink: %q", sink.String())
 	}
 	artifacts := module.ArtifactDirectory(runtime)
 	entries, err := os.ReadDir(artifacts)

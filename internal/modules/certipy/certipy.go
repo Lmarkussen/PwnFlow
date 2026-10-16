@@ -57,7 +57,7 @@ const (
 // that renames or drops one is reported instead of producing a different command
 // than the module advertises.
 var baseOptions = []string{
-	"-dc-ip", "-u", "-p", "-dc-only", "-ldap-scheme", "-ldap-port", "-json", "-text", "-output",
+	"-dc-ip", "-u", "-p", "-dc-only", "-ldap-scheme", "-ldap-port", "-stdout", "-json", "-text", "-output",
 }
 
 // secretOptions carry a value that must never reach a display, a log, or the
@@ -287,7 +287,7 @@ func (m Module) commandArgs(runtime *modules.Runtime, prefix string) []string {
 			args = append(args, "-p", runtime.Password)
 		}
 	}
-	args = append(args, "-dc-only")
+	args = append(args, "-dc-only", "-stdout")
 	args = append(args, m.definition.Options...)
 	args = append(args, "-ldap-scheme", ldapScheme, "-ldap-port", ldapPort, "-json", "-text", "-output", prefix)
 	return args
