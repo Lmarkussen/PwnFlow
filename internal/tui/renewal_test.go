@@ -193,7 +193,7 @@ func TestBatchPreflightAsksForSudoBeforeStarting(t *testing.T) {
 	m.focus = focusModules
 	calls := stubSudoAuthentication(t, nil)
 
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if !m.elevationPrompt || m.running {
 		t.Fatalf("the privileged plan started without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
 	}
@@ -219,7 +219,7 @@ func TestUnprivilegedPlanNeverAsksForSudo(t *testing.T) {
 		selectionModule{id: "nxc-ldap-users", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: &executionLog{}},
 	})
 	calls := stubSudoAuthentication(t, nil)
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if m.elevationPrompt {
 		t.Fatal("an unprivileged plan asked for sudo")
 	}

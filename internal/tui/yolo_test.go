@@ -107,7 +107,7 @@ func TestYoloAsksBeforeCredentialAccess(t *testing.T) {
 	log := &executionLog{}
 	m := yoloModel(t, log)
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if !m.approvalPrompt || m.running {
 		t.Fatalf("A started without asking: prompt=%v running=%v status=%q", m.approvalPrompt, m.running, m.status)
 	}
@@ -134,7 +134,7 @@ func TestYoloAsksBeforeCredentialAccess(t *testing.T) {
 	// Approving them runs the whole plan.
 	approved := &executionLog{}
 	second := yoloModel(t, approved)
-	press(t, second, "a")
+	press(t, second, "ctrl+a")
 	press(t, second, "y")
 	if !second.running || len(second.batchItems) != len(second.allModules) {
 		t.Fatalf("approving started %d of %d modules", len(second.batchItems), len(second.allModules))
@@ -154,7 +154,7 @@ func TestYoloContinuesAfterAFailure(t *testing.T) {
 	m.width, m.height = 140, 45
 	m.resizeOutput()
 	m.focus = focusModules
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if m.approvalPrompt {
 		press(t, m, "n")
 	}
@@ -172,7 +172,7 @@ func TestYoloContinuesAfterAFailure(t *testing.T) {
 func TestCancellingThePlanStopsIt(t *testing.T) {
 	log := &executionLog{}
 	m := yoloModel(t, log)
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	press(t, m, "ctrl+c")
 	if m.running || m.approvalPrompt || m.inputPrompt {
 		t.Fatalf("cancelling left the plan active: running=%v status=%q", m.running, m.status)
@@ -182,7 +182,7 @@ func TestCancellingThePlanStopsIt(t *testing.T) {
 	}
 	// A batch that is already running cancels through the existing path.
 	second := yoloModel(t, log)
-	press(t, second, "a")
+	press(t, second, "ctrl+a")
 	if second.approvalPrompt {
 		press(t, second, "n")
 	}
@@ -234,7 +234,7 @@ func TestYoloRunsADuplicateRegistrationOnce(t *testing.T) {
 	if len(plan.skipped) != 1 || !strings.Contains(plan.skipped[0], "duplicate") {
 		t.Fatalf("the duplicate was not reported: %v", plan.skipped)
 	}
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	waitForBatch(t, m)
 	executed := log.executed()
 	if len(executed) != 2 {
@@ -271,7 +271,7 @@ func TestGlobalPlanHonoursDeclaredPrerequisites(t *testing.T) {
 	m.resizeOutput()
 	m.focus = focusModules
 
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	waitForBatch(t, m)
 	executed := log.executed()
 	if len(executed) != 2 || executed[0] != "sccmhunter-like" || executed[1] != "pxethief-like" {

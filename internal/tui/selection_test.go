@@ -131,8 +131,12 @@ func press(t *testing.T, m *model, key string) {
 		m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	case "r":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	case "ctrl+r":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlR})
 	case "a":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	case "ctrl+a":
+		m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
 	case "tab":
 		m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 	case "right":
@@ -267,7 +271,7 @@ func TestRunsAcrossAnEmptyVisibleScope(t *testing.T) {
 	if len(m.modules) != 1 || m.modules[0].ID() != "network-hosts" {
 		t.Fatalf("unexpected flat Network scope: %v", moduleIDs(m.modules))
 	}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if got := batchIDs(m); strings.Join(got, ",") != "nxc-ldap-users,adcs-discovery" {
 		t.Fatalf("R did not run the selection from an empty scope: %v", got)
 	}
@@ -285,7 +289,7 @@ func TestWatcherOpensForABatchStartedElsewhere(t *testing.T) {
 	if len(m.modules) != 1 || m.modules[0].ID() != "network-hosts" {
 		t.Fatalf("unexpected flat Network scope: %v", moduleIDs(m.modules))
 	}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlW})
 	if !m.watcher {
 		t.Fatalf("the watcher refused a running batch from an empty scope: %q", m.status)
@@ -345,7 +349,7 @@ func TestGlobalSelectionSurvivesNavigationAndRunsAcrossFamilies(t *testing.T) {
 	}
 
 	m.focus = focusModules
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	want := []string{"nxc-ldap-users", "nxc-ldap-groups", "nxc-smb-shares", "nxc-credential-audit", "adcs-discovery", "rusthound-collect"}
 	if got := batchIDs(m); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("R did not batch the global selection in registry order:\ngot  %v\nwant %v", got, want)
@@ -396,7 +400,7 @@ func TestYoloIgnoresTheGlobalSelection(t *testing.T) {
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
 	m.setProtocol(0)
 
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if m.approvalPrompt {
 		press(t, m, "n")
 	}
@@ -423,7 +427,7 @@ func TestUnavailableSelectedModuleIsSkippedAndReported(t *testing.T) {
 	selectInScope(t, m, "rusthound-collect")
 
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if got := batchIDs(m); strings.Join(got, ",") != "nxc-ldap-users" {
 		t.Fatalf("an unavailable selection entered the batch: %v", got)
 	}
@@ -439,7 +443,7 @@ func TestUnavailableSelectedModuleIsSkippedAndReported(t *testing.T) {
 	// With nothing eligible, R reports instead of starting an empty batch.
 	m.batch, m.batchItems, m.running = nil, nil, false
 	m.selectedModules = map[string]bool{"rusthound-collect": true}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if m.batch != nil {
 		t.Fatal("R started a batch with no eligible module")
 	}
@@ -451,7 +455,7 @@ func TestUnavailableSelectedModuleIsSkippedAndReported(t *testing.T) {
 // R with no selection says so instead of behaving like YOLO.
 func TestRWithoutSelectionReportsAndRunsNothing(t *testing.T) {
 	m := selectionModel(t, &executionLog{})
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if m.batch != nil {
 		t.Fatal("R started a batch without a selection")
 	}
@@ -507,7 +511,7 @@ func TestMixedBatchWatcherAndCancellation(t *testing.T) {
 	selectInScope(t, m, "nxc-ldap-users")
 	navigateTo(t, m, modules.ToolFamilyADCS, modules.CategoryEnumeration)
 	selectInScope(t, m, "adcs-discovery")
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 
 	states := m.watcherStates()
 	if len(states) != 2 {
@@ -554,7 +558,7 @@ func TestSelectionBatchOrderIsDeterministic(t *testing.T) {
 		if changeScope {
 			navigateTo(t, m, modules.ToolFamilyNetwork, modules.Category("Host Discovery"))
 		}
-		press(t, m, "r")
+		press(t, m, "ctrl+r")
 		orders = append(orders, batchIDs(m))
 		m.cancelBatch()
 		waitForBatch(t, m)
@@ -570,7 +574,7 @@ func TestSelectionBatchOrderIsDeterministic(t *testing.T) {
 func TestUppercaseAStartsGlobalYOLO(t *testing.T) {
 	log := &executionLog{}
 	model := selectionModel(t, log)
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
 	if model.batch == nil && !model.running && model.status == "" {
 		t.Fatal("uppercase A did not enter the global YOLO path")
 	}

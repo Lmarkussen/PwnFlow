@@ -375,7 +375,7 @@ func TestExecutionAfterScrolling(t *testing.T) {
 	m.running = false
 
 	// A scoped run after scrolling runs the visible scope's modules, in order.
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if !m.running || len(m.batchItems) != len(registered) {
 		t.Fatalf("A ran %d modules, want %d", len(m.batchItems), len(registered))
 	}
@@ -390,7 +390,7 @@ func TestExecutionAfterScrolling(t *testing.T) {
 
 	// A global selection made while scrolled still runs through R.
 	press(t, m, " ")
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.running {
 		t.Fatalf("R refused the selected module: %q", m.status)
 	}

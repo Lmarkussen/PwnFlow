@@ -39,6 +39,17 @@ func TestPrimaryRunShortcutsRemainSafeInInputPrompt(t *testing.T) {
 	}
 }
 
+func TestPlainGlobalShortcutAliasesAreIgnored(t *testing.T) {
+	for _, key := range []rune{'a', 'A', 'r', 'R', 'f', 'F'} {
+		log := &executionLog{}
+		m := selectionModel(t, log)
+		m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if m.findingsView || m.batch != nil || m.running {
+			t.Fatalf("plain %q still triggered a global action: findings=%v batch=%v running=%v", key, m.findingsView, m.batch != nil, m.running)
+		}
+	}
+}
+
 func TestNavigationHelpUsesBoundedCompactShortcuts(t *testing.T) {
 	for _, width := range []int{20, 32, 48, 76} {
 		wrapped := wrapFooter(helpText, width)

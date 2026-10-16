@@ -143,7 +143,7 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 	// Default Enumeration must not silently drop the credential-access/privileged
 	// operation while waiting for the grouped authorization decision.
 	m.focus = focusModules
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if m.approvalPrompt || strings.Contains(strings.ToUpper(m.status), "APPROVAL") {
 		t.Fatalf("Default Enumeration opened an approval prompt: prompt=%v status=%q", m.approvalPrompt, m.status)
 	}
@@ -171,7 +171,7 @@ func TestSCCMDiscoveryFeedsPXEThiefInOneBatch(t *testing.T) {
 		m.cursor = rowOf(t, m, id)
 		press(t, m, " ")
 	}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	approveElevationIfAsked(t, m)
 	if got := strings.Join(batchIDs(m), ","); got != "sccmhunter,pxethief" {
 		t.Fatalf("the batch must discover before it probes: %s", got)
@@ -324,7 +324,7 @@ func TestElevationPromptDeclinesSafelyAndRunsTheRest(t *testing.T) {
 		press(t, m, " ")
 	}
 
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.elevationPrompt || m.batch != nil {
 		t.Fatalf("the batch started without asking for elevation: prompt=%v batch=%v", m.elevationPrompt, m.batch)
 	}
@@ -370,7 +370,7 @@ func TestElevationApprovalAppliesToTheRequestedRunOnly(t *testing.T) {
 
 	prompts := stubSudo(t, nil)
 
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	approveElevationIfAsked(t, m)
 	if *prompts != 1 {
 		t.Fatalf("sudo was asked for %d times, want once per requested run", *prompts)
@@ -391,7 +391,7 @@ func TestElevationApprovalAppliesToTheRequestedRunOnly(t *testing.T) {
 	}
 	m.batch, m.batchItems, m.running = nil, nil, false
 	m.selectedModules = map[string]bool{"needs-privileges": true, "other": true}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.elevationPrompt {
 		t.Fatal("a later run did not ask for elevation again")
 	}
@@ -420,7 +420,7 @@ func TestElevationFailureSkipsOnlyThePrivilegedModule(t *testing.T) {
 	}
 	t.Cleanup(func() { sudoAuthenticate = previous })
 
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	approveElevationIfAsked(t, m)
 	failureStatus := m.status
 	waitForBatch(t, m)
@@ -469,7 +469,7 @@ func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
 	// The global batch with R.
 	m.cursor = rowOf(t, m, "pxethief-like")
 	press(t, m, " ")
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.elevationPrompt || m.running {
 		t.Fatalf("R started a privileged module without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
 	}
@@ -486,7 +486,7 @@ func TestEveryEntryPointRequiresApprovalForPXEThief(t *testing.T) {
 	// anything.
 	m.batch, m.batchItems, m.running = nil, nil, false
 	navigateTo(t, m, modules.ToolFamilyNetExec, modules.CategoryEnumeration)
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if !m.elevationPrompt || m.running {
 		t.Fatalf("A started a privileged module without asking: prompt=%v running=%v", m.elevationPrompt, m.running)
 	}

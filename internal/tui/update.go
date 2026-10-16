@@ -288,10 +288,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
-	case "A":
-		if !m.running {
-			return m, m.executeAll()
-		}
 	case "q":
 		if m.running && !m.batchComplete() {
 			m.quitConfirm = true
@@ -333,7 +329,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resizeWatcher()
 		m.refreshWatcher()
 		return m, nil
-	case "ctrl+f", "f", "F":
+	case "ctrl+f":
 		if m.watcher {
 			m.findingsFromWatcher = true
 			m.watcher = false
@@ -481,19 +477,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.execute(m.cursor)
 		}
-	case "r":
-		// R is registry-wide: it never depends on which scope is visible, so an
-		// empty or different scope cannot hide the operator's selection.
-		if !m.running {
-			return m, m.executeSelected()
-		}
 	case "ctrl+r":
 		if !m.running {
 			return m, m.executeSelected()
-		}
-	case "a":
-		if !m.running {
-			return m, m.executeAll()
 		}
 	case "ctrl+a":
 		if !m.running {
@@ -505,11 +491,13 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "?":
 		m.status = helpText
-	case "ctrl+f", "f", "F":
+	case "ctrl+f":
 		m.findingsView = true
 		m.findingsFromWatcher = false
 		m.findingDetail = false
 		m.findingSearchMode = false
+		m.findingSearch = ""
+		m.findingViewMode = "all"
 		m.findingCategoryView = true
 		m.findingCategory = ""
 		m.findingCursor = 0
@@ -541,22 +529,6 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.evidenceTop = min(max(0, m.evidenceTop), maxTop)
 		return m, nil
 	}
-	if m.findingSearchMode {
-		switch key {
-		case "enter", "esc":
-			m.findingSearchMode = false
-		case "backspace":
-			if len(m.findingSearch) > 0 {
-				m.findingSearch = m.findingSearch[:len(m.findingSearch)-1]
-			}
-		default:
-			if len(key) == 1 && key >= " " && key <= "~" {
-				m.findingSearch += key
-			}
-		}
-		m.refreshFindings()
-		return m, nil
-	}
 	if m.findingCategoryView && m.findingSubcategoryView {
 		switch key {
 		case "ctrl+w":
@@ -582,21 +554,10 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.findingCursor -= 5
 		case "pgdown":
 			m.findingCursor += 5
-		case "f":
-			m.findingViewMode = "findings"
-		case "o":
-			m.findingViewMode = "observations"
-		case "a":
-			m.findingViewMode = "all"
-		case "/":
-			m.findingSearchMode = true
 		case "enter":
 			if len(m.findingSubcategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingSubcategories) {
 				selected := m.findingSubcategories[m.findingCursor]
 				m.findingSubcategory = selected.Key
-				if selected.Findings == 0 && selected.Observations > 0 {
-					m.findingViewMode = "observations"
-				}
 				m.findingCategoryView = false
 				m.findingSubcategoryView = false
 				m.findingCursor, m.findingTop = 0, 0
@@ -646,13 +607,6 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.findingCursor += 5
 		case "enter":
-			if m.findingSearch != "" {
-				m.findingCategoryView = false
-				m.findingDetail = len(m.findingRows) > 0
-				m.findingCursor = 0
-				m.findingTop = 0
-				return m, m.beginFindingInlineEvidence()
-			}
 			if len(m.findingCategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingCategories) {
 				m.findingCategory = m.findingCategories[m.findingCursor].Key
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
@@ -661,14 +615,6 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				m.findingTop = 0
 				m.refreshFindings()
 			}
-		case "/":
-			m.findingSearchMode = true
-		case "f":
-			m.findingViewMode = "findings"
-		case "o":
-			m.findingViewMode = "observations"
-		case "a":
-			m.findingViewMode = "all"
 		}
 		if m.findingCursor < 0 {
 			m.findingCursor = 0
@@ -758,27 +704,11 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.findingCursor = 0
 	case "end":
 		m.findingCursor = len(m.findingRows) - 1
-	case "f":
-		m.findingViewMode = "findings"
-	case "o":
-		m.findingViewMode = "observations"
-	case "a":
-		m.findingViewMode = "all"
 	case "enter":
 		if len(m.findingRows) > 0 {
 			m.findingDetail = true
 			return m, m.beginFindingInlineEvidence()
 		}
-	case "/":
-		m.findingSearchMode = true
-	case "1":
-		m.findingSeverity = "high"
-	case "2":
-		m.findingSeverity = "medium"
-	case "3":
-		m.findingSeverity = "informational"
-	case "0":
-		m.findingSeverity = ""
 	case "p":
 		return m, m.reanalyzeEvidence()
 	}

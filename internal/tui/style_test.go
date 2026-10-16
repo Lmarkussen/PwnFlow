@@ -28,7 +28,7 @@ func promptModel(t *testing.T) *model {
 		m.cursor = rowOf(t, m, id)
 		press(t, m, " ")
 	}
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.elevationPrompt {
 		t.Fatal("the privilege confirmation was not asked for")
 	}

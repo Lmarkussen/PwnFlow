@@ -55,7 +55,7 @@ func TestWatcherCtrlWClosesWithoutStoppingBatch(t *testing.T) {
 func TestRunSelectedRequiresAnExplicitSelection(t *testing.T) {
 	m := newModel(context.Background(), config.Config{}, nil, []modules.Module{viewTestModule{}}, []int64{1}, 1, "test")
 	m.focus = focusModules
-	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlR})
 	if updated.(*model).status != "no modules selected; press Space to select a module" {
 		t.Fatalf("unexpected status: %q", updated.(*model).status)
 	}

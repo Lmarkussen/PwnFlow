@@ -97,7 +97,7 @@ func TestYoloFromAFlatScopeStillPlansTheEntireRegistry(t *testing.T) {
 	if len(m.modules) != 1 || m.modules[0].ID() != "adcs-discovery" {
 		t.Fatalf("the flat AD CS scope is wrong: %v", moduleIDs(m.modules))
 	}
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	waitForBatch(t, m)
 	if got := log.executed(); strings.Join(got, ",") != "nxc-ldap-users,adcs-discovery,rusthound-collect" {
 		t.Fatalf("YOLO from an empty scope ran %v, want the whole registry", got)

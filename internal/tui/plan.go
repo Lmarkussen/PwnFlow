@@ -65,7 +65,7 @@ var defaultEnumerationModuleIDs = []string{
 	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 }
 
-// globalPlan builds the deliberate Default Enumeration plan for A. Missing
+// globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing
 // profile entries are reported explicitly; there is no run-the-registry fallback.
 func (m *model) globalPlan() plan {
 	result := plan{name: "Default Enumeration", requested: len(defaultEnumerationModuleIDs)}

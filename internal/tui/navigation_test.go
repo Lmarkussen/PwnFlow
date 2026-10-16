@@ -120,7 +120,7 @@ func TestReportingModuleCannotBeExecuted(t *testing.T) {
 	if found {
 		t.Fatal("the global plan includes a module outside the tool families")
 	}
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	press(t, m, "n") // decline the credential-access modules this plan also holds
 	waitForBatch(t, m)
 	for _, id := range log.executed() {
@@ -131,7 +131,7 @@ func TestReportingModuleCannotBeExecuted(t *testing.T) {
 
 	// Nothing is selected, so R has nothing to resolve: no batch may start.
 	m.batch, m.batchItems, m.running = nil, nil, false
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if m.batch != nil {
 		t.Fatalf("R started a batch with nothing selected: %v", batchIDs(m))
 	}

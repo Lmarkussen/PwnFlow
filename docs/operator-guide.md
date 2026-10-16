@@ -43,9 +43,9 @@ documented in [the artifact schema note](rusthound-artifact-schema.md). Findings
 processing is explicit and read-only; it does not replace BloodHound CE's graph
 analysis or automatically process partial artifacts at startup.
 
-`Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
+`Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `Ctrl+R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `Ctrl+A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 
-`A` reports requested, eligible, authorization-required, skipped, executed, and analysis counts separately. It collects required values before execution and keeps credential-access, remote-admin, local-sudo, missing-input, and wider-scope entries visible with their reason. Declining a specific authorization continues the eligible remainder; it does not make the profile appear complete.
+`Ctrl+A` reports requested, eligible, authorization-required, skipped, executed, and analysis counts separately. It collects required values before execution and keeps credential-access, remote-admin, local-sudo, missing-input, and wider-scope entries visible with their reason. Declining a specific authorization continues the eligible remainder; it does not make the profile appear complete.
 
 LDAP-based modules prefer LDAPS. NetExec LDAP modules therefore pass `--port 636`, which is how the installed NetExec selects `ldaps://` for its LDAP protocol, while its SMB modules keep their defaults. Certipy `find` passes `-ldap-scheme ldaps -ldap-port 636`, and RustHound-CE passes `--ldaps`; none of these is downgraded to unsigned LDAP at runtime, and none requires extra certificate configuration. PwnFlow's own certificate trust decisions apply to its Go LDAP preflight only: each external tool verifies - or, for its own historical reasons, does not verify - the domain controller's certificate on its own, and PwnFlow neither changes nor claims to change that.
 
@@ -81,7 +81,7 @@ Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the
 
 ### Default Enumeration
 
-Uppercase `A` runs the fixed **Default Enumeration** profile, not the whole
+`Ctrl+A` runs the fixed **Default Enumeration** profile, not the whole
 registry. It includes the selected NetExec LDAP checks (password-not-required,
 delegation, DNS, obsolete operating systems, SCCM, authenticated-user info,
 AS-REP and Kerberos material) and the selected SMB checks (server/session and
@@ -92,7 +92,7 @@ material, local-sudo, missing-input and wider-scope operations remain explicitly
 gated; declined items are recorded and the eligible remainder continues.
 
 Masscan is deliberately excluded from this profile. Run it manually with
-`Enter` or `R` after entering and approving its target and port inputs.
+`Enter` after entering and approving its target and port inputs.
 
 ### Network assessment: NetworkHound
 
@@ -132,7 +132,7 @@ PwnFlow is an enumeration and assessment framework, so the NetExec registry hold
 
 Module Information explains a registration before you run it: the transport, the NetExec module or native flag, the options (yours and the defaults), and whether the target has to grant an administrator right.
 
-Controls: Navigation uses `↑/↓` to select a row and `←/→` to change its value. Modules use `↑/↓`, `PgUp`/`PgDn`, `Home`/`End`, `Space` to select, `Enter` to run the highlighted module, `I` to fill in a value a module needs, `R` to run the selection, and `A` to run the whole registry; the module list scrolls with the selection, and its header shows the window (`ENUMERATION MODULES // 9-21/24`) when the list is longer than the pane. While a prompt is open, `Enter` answers it, `Esc` skips that one module, and `Ctrl+C` abandons the plan. Output uses arrows, `PgUp`/`PgDn`, `Home`, and `End`. `Tab` cycles Navigation → Modules → Output; `Ctrl+W` opens the operator-controlled watcher; `Esc` closes it; `?` shows help; `Q` quits when idle.
+Controls: Navigation uses `↑/↓` to select a row and `←/→` to change its value. Modules use `↑/↓`, `PgUp`/`PgDn`, `Home`/`End`, `Space` to select, `Enter` to run the highlighted module, `I` to fill in a value a module needs, `Ctrl+R` to run the selection, and `Ctrl+A` to run Default Enumeration; the module list scrolls with the selection, and its header shows the window (`ENUMERATION MODULES // 9-21/24`) when the list is longer than the pane. While a prompt is open, `Enter` answers it, `Esc` skips that one module, and `Ctrl+C` abandons the plan. Output uses arrows, `PgUp`/`PgDn`, `Home`, and `End`. `Tab` cycles Navigation → Modules → Output; `Ctrl+W` opens the operator-controlled watcher; `Esc` closes it; `?` shows help; `Q` quits when idle.
 
 ## Development
 

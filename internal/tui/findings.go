@@ -208,28 +208,15 @@ func (m *model) refreshFindings() {
 		m.findingsLoaded = true
 	}
 	rows := m.findingAllRows
-	search := strings.ToLower(strings.TrimSpace(m.findingSearch))
+	m.findingViewMode = "all"
+	m.findingSearch = ""
+	m.findingSeverity = ""
 	filtered := make([]storage.Finding, 0, len(rows))
 	for _, finding := range rows {
-		if m.findingViewMode == "" {
-			m.findingViewMode = "findings"
-		}
-		if m.findingViewMode == "findings" && !actionableFinding(finding) {
-			continue
-		}
-		if m.findingViewMode == "observations" && actionableFinding(finding) {
-			continue
-		}
-		if m.findingSeverity != "" && !strings.EqualFold(finding.Severity, m.findingSeverity) {
-			continue
-		}
 		if m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
 			continue
 		}
 		if m.findingSubcategory != "" && findingSubcategoryKey(finding) != m.findingSubcategory {
-			continue
-		}
-		if search != "" && !strings.Contains(strings.ToLower(strings.Join([]string{finding.Title, finding.AffectedObject, finding.RelatedObject, finding.SourceTool, finding.FindingType}, " ")), search) {
 			continue
 		}
 		filtered = append(filtered, finding)
@@ -367,13 +354,6 @@ func (m *model) findingsViewRender() string {
 	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
-	if m.findingSearch != "" {
-		content.WriteString(dim.Render("Search: "+m.findingSearch) + "\n")
-	}
-	content.WriteString(dim.Render("View: "+strings.Title(m.findingViewMode)+"   f Findings   o Observations   a All") + "\n")
-	if m.findingSeverity != "" {
-		content.WriteString(dim.Render("Severity: "+strings.ToUpper(m.findingSeverity)) + "\n")
-	}
 	content.WriteString("\n")
 	m.keepFindingVisible()
 	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
@@ -425,10 +405,7 @@ func (m *model) findingsViewRender() string {
 		}
 	}
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
-	if m.findingSearchMode {
-		content.WriteString("\nSearch text: " + m.findingSearch + "_")
-	}
-	content.WriteString(dim.Render("\n\nEnter Detail   / Search   P Reanalyze Certipy   1 High   2 Medium   3 Info   0 All   Esc Close"))
+	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -509,14 +486,11 @@ func (m *model) findingSubcategoryOverview(width int) string {
 	if empty {
 		content.WriteString(warn.Render("No records in this category. Analysis status: NOT ASSESSED.") + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter Open Group   f Findings   o Observations   a All   Esc Back"))
+	content.WriteString(dim.Render("\nEnter = Open    Esc = Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
 func (m *model) findingCategoryOverview(width int) string {
-	if strings.TrimSpace(m.findingSearch) != "" {
-		return m.findingSearchResults(width)
-	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n\n")
@@ -535,34 +509,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\nEnter Open Category   / Search   f Findings   o Observations   a All   Esc Close"))
-	return paneStyle(false).Width(width).Render(content.String())
-}
-
-func (m *model) findingSearchResults(width int) string {
-	var content strings.Builder
-	content.WriteString(title.Render("PwnFlow // FINDINGS SEARCH") + "\n")
-	content.WriteString(dim.Render("Search: "+m.findingSearch+"   Results span all categories") + "\n\n")
-	m.keepFindingVisible()
-	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
-	for index := m.findingTop; index < end; index++ {
-		finding := m.findingRows[index]
-		prefix := "  "
-		if index == m.findingCursor {
-			prefix = "> "
-		}
-		category := findingCategoryKey(finding)
-		line := fmt.Sprintf("%s%-10s %-18s %-42s %s", prefix, strings.ToUpper(finding.Severity), category, truncateFinding(finding.Title, 42), truncateFinding(displayFindingObject(finding.AffectedObject, finding.AffectedObjectID), 24))
-		if index == m.findingCursor {
-			line = lipgloss.NewStyle().Bold(true).Render(line)
-		}
-		content.WriteString(line + "\n")
-	}
-	if len(m.findingRows) == 0 {
-		content.WriteString("No findings match across any category.\n")
-	}
-	content.WriteString(fmt.Sprintf("\n%d cross-category results  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
-	content.WriteString(dim.Render("\n\nEnter Detail   / Edit Search   Esc Categories"))
+	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

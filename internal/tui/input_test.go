@@ -188,7 +188,7 @@ func TestCancellingInputSkipsOnlyThatModule(t *testing.T) {
 	m, _, _ := inputModel(t, log)
 	m.selectedModules["daclread-like"] = true
 	m.selectedModules["nxc-ldap-users"] = true
-	press(t, m, "r")
+	press(t, m, "ctrl+r")
 	if !m.inputPrompt {
 		t.Fatalf("R did not ask for the missing value: %q", m.status)
 	}
@@ -235,7 +235,7 @@ func TestCancellingThePromptAbandonsThePlan(t *testing.T) {
 func TestGlobalPlanCollectsInputBeforeStarting(t *testing.T) {
 	log := &executionLog{}
 	m, dacl, find := inputModel(t, log)
-	press(t, m, "a")
+	press(t, m, "ctrl+a")
 	if !m.inputPrompt || m.running {
 		t.Fatalf("A did not ask for the values first: prompt=%v running=%v status=%q", m.inputPrompt, m.running, m.status)
 	}

@@ -145,15 +145,16 @@ func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
 	}
 }
 
-func TestGlobalFindingSearchRendersCategories(t *testing.T) {
-	model := &model{findingsView: true, findingCategoryView: true, findingSearch: "ESC1", findingViewMode: "all", width: 100, height: 24, findingRows: []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — WebEnrollment", Severity: "high", AffectedObject: "WebEnrollment"}}}}
+func TestFindingsFooterUsesOnlyOpenAndClose(t *testing.T) {
+	model := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
 	frame := ansi.Strip(model.View())
-	if !strings.Contains(frame, "FINDINGS SEARCH") || !strings.Contains(frame, "adcs") || !strings.Contains(frame, "ESC1") {
-		t.Fatalf("global search omitted category or result: %s", frame)
+	if !strings.Contains(frame, "Enter = Open Category    Esc = Close") {
+		t.Fatalf("root footer missing: %s", frame)
 	}
-	_, _ = model.handleFindingsKey("enter")
-	if model.findingCategoryView || !model.findingDetail {
-		t.Fatal("global search result did not open detail")
+	for _, unwanted := range []string{"Search", "Findings", "Observations", "All"} {
+		if strings.Contains(frame, unwanted) {
+			t.Fatalf("findings footer still advertises %q: %s", unwanted, frame)
+		}
 	}
 }
 
@@ -167,14 +168,6 @@ func TestLegacyCertipyRecordIsObservationWithoutESC(t *testing.T) {
 	esc.Title = "Certipy reported ESC1 — WebEnrollment"
 	if !actionableFinding(esc) {
 		t.Fatal("explicit ESC record was downgraded to an observation")
-	}
-}
-
-func TestUppercaseAIsNotFindingsAll(t *testing.T) {
-	model := &model{findingsView: true, findingCategoryView: true, findingViewMode: "findings", width: 100, height: 24}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-	if model.findingViewMode == "all" {
-		t.Fatal("uppercase A was interpreted as Findings All")
 	}
 }
 
@@ -471,7 +464,7 @@ func TestFindingsHierarchyOpensObservationOnlyGroup(t *testing.T) {
 		}
 	}
 	model.handleFindingsKey("enter")
-	if model.findingViewMode != "observations" || len(model.findingRows) != 1 {
+	if model.findingViewMode != "all" || len(model.findingRows) != 1 {
 		t.Fatalf("observation-only group was not opened: mode=%q rows=%d", model.findingViewMode, len(model.findingRows))
 	}
 	model.handleFindingsKey("enter")
