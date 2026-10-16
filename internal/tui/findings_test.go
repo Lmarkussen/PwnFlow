@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -304,5 +305,51 @@ func TestInlineEvidenceLoadsCompleteKerberosRecord(t *testing.T) {
 	loaded := loadInlineEvidence(config.Config{Root: root, Domain: "example.test"}, finding)
 	if loaded.error != "" || len(loaded.lines) != 1 || loaded.lines[0] != record {
 		t.Fatalf("full Kerberos record was not preserved: %#v error=%q", loaded.lines, loaded.error)
+	}
+}
+
+func TestFindingsHierarchyOpensObservationOnlyGroup(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.10"); err != nil {
+		t.Fatal(err)
+	}
+	targetID, err := db.TargetID(ctx, "example.test", "198.51.100.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.IngestFindings(ctx, []storage.FindingInput{{
+		FindingKey: "keyword:one", AssessmentID: targetID, SourceTool: "NetExec",
+		FindingType: "ad_user_description_keyword_observed", Title: "Credential keyword in info/notes",
+		Severity: "informational", Confidence: "observed-sensitive-keyword", AffectedObject: "LAB\\svc-user",
+		ArtifactPath: "user-info.txt", ArtifactRef: "line:4", EvidenceJSON: `{"attribute":"info/notes"}`,
+		ObservedAt: time.Unix(1700000000, 0).UTC(), Status: "open", ParserVersion: "test",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	model := &model{ctx: ctx, db: db, targetID: targetID, findingsView: true, findingCategoryView: true, findingViewMode: "findings", width: 120, height: 40}
+	model.refreshFindings()
+	for index, category := range model.findingCategories {
+		if category.Key == "active_directory" {
+			model.findingCursor = index
+		}
+	}
+	model.handleFindingsKey("enter")
+	for index, subcategory := range model.findingSubcategories {
+		if subcategory.Key == "user_descriptions" {
+			model.findingCursor = index
+		}
+	}
+	model.handleFindingsKey("enter")
+	if model.findingViewMode != "observations" || len(model.findingRows) != 1 {
+		t.Fatalf("observation-only group was not opened: mode=%q rows=%d", model.findingViewMode, len(model.findingRows))
+	}
+	model.handleFindingsKey("enter")
+	if !model.findingDetail {
+		t.Fatal("finding detail did not open from populated child group")
 	}
 }

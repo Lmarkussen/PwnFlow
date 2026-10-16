@@ -14,16 +14,17 @@ import (
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
-const netExecCredentialParserVersion = "netexec-ad-user-credentials-v1"
+const netExecCredentialParserVersion = "netexec-ad-user-credentials-v2"
 
-var credentialAssignment = regexp.MustCompile(`(?i)\b(password|passwd|pwd|passphrase|pass|secret|token|api[_ -]?key)\b\s*(?:[:=]|=>)\s*["']?([^"'\r\n,;]+)`)
-var followingField = regexp.MustCompile(`(?i)\s+\b(?:password|passwd|pwd|passphrase|secret|token|api[_ -]?key|username|user|login|account)\b\s*(?:[:=]|=>)`)
-var principalAssignment = regexp.MustCompile(`(?i)\b(?:user(?:name)?|account|login|principal)\b\s*(?:[:=]|=>)\s*([^\s,;]+)`)
+var credentialKeyword = regexp.MustCompile(`(?i)\b(?:passwords?|passwd|pwd|passphrase|pass|secrets?|credentials?|creds|user[ _-]+name|login|logon|tokens?|api[ _-]?key)\b`)
+var userField = regexp.MustCompile(`(?i)\buser\s*[:=]\s*([^\s,;]+)`)
+var attributeField = regexp.MustCompile(`(?i)\b(description|info|notes?)\s*[:=]`)
+var assignmentAfterKeyword = regexp.MustCompile(`(?i)(?:passwords?|passwd|pwd|passphrase|pass|secrets?|credentials?|creds|user[ _-]?name|login|logon|tokens?|api[ _-]?key)\s*(?:[:=]|=>)\s*["']?([^"'\r\n,;]+)`)
 
-// AnalyzeNetExecCredentials extracts only non-empty credential-like values from
-// user info/description output. The value is intentionally absent from the
-// FindingInput: the restricted source line is loaded only when the operator
-// deliberately opens the finding detail.
+// AnalyzeNetExecCredentials extracts keyword observations and potential
+// credential exposures from NetExec user attribute records. Values remain in
+// the restricted source artifact and are loaded only for deliberate detail
+// viewing.
 func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
 	info, err := os.Stat(artifactPath)
 	if err != nil {
@@ -43,12 +44,14 @@ func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessm
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	attribute := "user-info"
+	defaultAttribute := "user-info"
 	if strings.Contains(strings.ToLower(filepath.Base(artifactPath)), "description") {
-		attribute = "user-description"
+		defaultAttribute = "description"
 	}
 	seen := make(map[string]bool)
 	var result []storage.FindingInput
+	var principal string
+	var attribute string
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
 	lineNumber := 0
@@ -58,41 +61,43 @@ func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessm
 			return nil, err
 		}
 		line := scanner.Text()
-		match := credentialAssignment.FindStringSubmatch(line)
-		if len(match) != 3 {
+		if match := userField.FindStringSubmatch(line); len(match) == 2 {
+			principal = strings.TrimSpace(match[1])
+			attribute = defaultAttribute
+		}
+		if match := attributeField.FindStringSubmatch(line); len(match) == 2 {
+			attribute = normalizeUserAttribute(match[1])
+		}
+		if principal == "" || !credentialKeyword.MatchString(line) {
 			continue
 		}
-		value := strings.TrimSpace(match[2])
-		if next := followingField.FindStringIndex(value); next != nil {
-			value = strings.TrimSpace(value[:next[0]])
+		keywords := credentialKeyword.FindAllString(line, -1)
+		keyword := strings.ToLower(keywords[0])
+		potential := credentialAssignmentPresent(line)
+		findingType := "ad_user_description_keyword_observed"
+		title := "Credential-related keyword in " + attribute
+		description := "A credential-related keyword appears in a NetExec user attribute. The source text is an observation; it does not by itself prove that a usable secret was disclosed."
+		severity := "informational"
+		confidence := "observed-sensitive-keyword"
+		if potential {
+			findingType = "ad_user_description_credential_exposed"
+			title = "Potential credential exposure in " + attribute
+			description = "A NetExec user attribute contains a credential-related field with a populated value. Treat it as potential exposed credential material; it has not been tested for authentication."
+			severity = "high"
+			confidence = "observed-credential-like-value"
 		}
-		if !credentialValueLikelySecret(value) {
-			continue
-		}
-		principal := ""
-		if principalMatch := principalAssignment.FindStringSubmatch(line); len(principalMatch) == 2 {
-			principal = strings.TrimSpace(principalMatch[1])
-		}
-		if principal == "" {
-			principal = principalFromPrefix(line)
-		}
-		if principal == "" {
-			principal = "unresolved principal"
-		}
-		credentialType := strings.ToLower(strings.ReplaceAll(match[1], "_", " "))
-		key := stableSourceKey(assessmentID, "netexec-user-credential", principal, map[string]any{"attribute": attribute, "credential_type": credentialType})
+		key := stableSourceKey(assessmentID, "netexec-user-attribute", principal, map[string]any{"attribute": attribute, "finding_type": findingType})
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		evidence, _ := json.Marshal(map[string]any{"attribute": attribute, "credential_type": credentialType, "principal": principal, "line": lineNumber})
+		evidence, _ := json.Marshal(map[string]any{"attribute": attribute, "keyword": keyword, "principal": principal, "line": lineNumber})
 		result = append(result, storage.FindingInput{
 			FindingKey: key, AssessmentID: assessmentID, SourceTool: "NetExec", SourceExecution: executionID,
-			FindingType: "ad_user_description_credential_exposed", Title: "Credential-like value exposed in " + attribute,
-			Description: "A NetExec user attribute contains a non-empty credential-like assignment. The value is potential exposed credential material; it has not been tested for authentication.",
-			Severity:    "high", Confidence: "observed-credential-like-value", AffectedObject: principal,
-			EvidenceJSON: string(evidence), ArtifactPath: artifactPath, ArtifactRef: fmt.Sprintf("line:%d", lineNumber),
-			ObservedAt: now, Status: "open", ParserVersion: netExecCredentialParserVersion,
+			FindingType: findingType, Title: title, Description: description, Severity: severity,
+			Confidence: confidence, AffectedObject: principal, EvidenceJSON: string(evidence),
+			ArtifactPath: artifactPath, ArtifactRef: fmt.Sprintf("line:%d", lineNumber), ObservedAt: now,
+			Status: "open", ParserVersion: netExecCredentialParserVersion,
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -101,30 +106,24 @@ func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessm
 	return result, nil
 }
 
-func credentialValueLikelySecret(value string) bool {
-	value = strings.Trim(strings.TrimSpace(value), "\"'")
-	if value == "" || strings.EqualFold(value, "null") || strings.EqualFold(value, "none") || value == "-" || value == "<empty>" {
-		return false
+func normalizeUserAttribute(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "note" || value == "notes" {
+		return "info/notes"
 	}
-	lower := strings.ToLower(value)
-	for _, phrase := range []string{"expires", "policy", "managed by", "reset your", "format is"} {
-		if strings.Contains(lower, phrase) {
-			return false
-		}
-	}
-	return true
+	return value
 }
 
-func principalFromPrefix(line string) string {
-	if index := strings.Index(strings.ToLower(line), "description:"); index > 0 {
-		prefix := strings.TrimSpace(line[:index])
-		prefix = strings.Trim(prefix, "[]()")
-		if fields := strings.Fields(prefix); len(fields) > 0 {
-			candidate := strings.Trim(fields[len(fields)-1], ":")
-			if candidate != "LDAP" && candidate != "SMB" {
-				return candidate
-			}
+func credentialAssignmentPresent(line string) bool {
+	for _, match := range assignmentAfterKeyword.FindAllStringSubmatch(line, -1) {
+		if len(match) != 2 {
+			continue
 		}
+		value := strings.TrimSpace(match[1])
+		if value == "" || strings.EqualFold(value, "null") || strings.EqualFold(value, "none") || value == "-" || value == "<empty>" {
+			continue
+		}
+		return true
 	}
-	return ""
+	return false
 }

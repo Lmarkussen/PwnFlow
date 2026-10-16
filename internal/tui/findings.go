@@ -39,7 +39,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"active_directory": {
 		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
-		{"user_descriptions", "Exposed Credentials / User Descriptions", "Credential-like values recovered from NetExec user attributes"},
+		{"user_descriptions", "User Descriptions & Notes", "Credential-related values and keyword observations from NetExec user attributes"},
 	},
 	"network": {
 		{"smb", "SMB Signing", "SMB signing conditions"},
@@ -473,7 +473,7 @@ func (m *model) findingSubcategoryOverview(width int) string {
 	if len(m.findingSubcategories) == 0 || (m.findingSubcategories[m.findingCursor].Findings == 0 && m.findingSubcategories[m.findingCursor].Observations == 0) {
 		content.WriteString(warn.Render("No records in this category. Analysis status: NOT ASSESSED.") + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter Open Group   Esc Back"))
+	content.WriteString(dim.Render("\nEnter Open Group   f Findings   o Observations   a All   Esc Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

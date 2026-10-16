@@ -571,9 +571,21 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.findingCursor -= 5
 		case "pgdown":
 			m.findingCursor += 5
+		case "f":
+			m.findingViewMode = "findings"
+		case "o":
+			m.findingViewMode = "observations"
+		case "a":
+			m.findingViewMode = "all"
+		case "/":
+			m.findingSearchMode = true
 		case "enter":
 			if len(m.findingSubcategories) > 0 {
-				m.findingSubcategory = m.findingSubcategories[m.findingCursor].Key
+				selected := m.findingSubcategories[m.findingCursor]
+				m.findingSubcategory = selected.Key
+				if selected.Findings == 0 && selected.Observations > 0 {
+					m.findingViewMode = "observations"
+				}
 				m.findingCategoryView = false
 				m.findingSubcategoryView = false
 				m.findingCursor, m.findingTop = 0, 0
