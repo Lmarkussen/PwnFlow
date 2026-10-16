@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,5 +185,55 @@ func TestNetExecArtifactRequiresMatchingModuleAndOutput(t *testing.T) {
 	}
 	if got := netExecArtifactForExecution("Get AD-User Info", path); got != path {
 		t.Fatalf("matching NetExec execution did not resolve artifact: %q", got)
+	}
+}
+
+func TestManagerIngestsNetExecAuthenticationIntoSQLite(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.40"); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := db.TargetID(ctx, "example.test", "198.51.100.40")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(id,name,tool,protocol,description,output_filename) VALUES(3,'SMB Authentication Check','NetExec (nxc)','SMB','test','transcript.txt')`); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "SMB_auth_check", "transcript.txt")
+	if err := os.MkdirAll(filepath.Dir(output), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, []byte("SMB 198.51.100.40 445 SERVER [+] EXAMPLE\\operator:synthetic (Pwn3d!)\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := db.RecordExecutionID(ctx, assessment, 3, time.Now(), time.Now(), "completed", 0, output, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(ctx, db)
+	if err := manager.Submit(Job{AssessmentID: assessment, ExecutionID: execution, SourceTool: "NetExec (nxc)", ArtifactPath: output, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListFindings(ctx, assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("persisted findings=%d, want success and privileged records", len(rows))
+	}
+	for _, row := range rows {
+		if strings.Contains(row.Title+row.Description+row.EvidenceJSON, "synthetic") {
+			t.Fatal("authentication secret leaked into SQLite metadata")
+		}
 	}
 }
