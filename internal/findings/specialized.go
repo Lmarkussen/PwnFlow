@@ -66,7 +66,9 @@ func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, no
 				walk(child, fmt.Sprintf("%s/%d", ref, i))
 			}
 		case map[string]any:
-			explicit := false
+			exploitability, _ := typed["exploitability"].(string)
+			exploitability = strings.ToUpper(strings.TrimSpace(exploitability))
+			explicit := exploitability == "HIGH" || exploitability == "MEDIUM" || exploitability == "LOW"
 			for key, child := range typed {
 				lower := strings.ToLower(key)
 				if (strings.Contains(lower, "ghost") || strings.Contains(lower, "orphan") || strings.Contains(lower, "stale")) && child == true {
@@ -78,13 +80,24 @@ func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, no
 				if spn == "" {
 					spn, _ = typed["SPN"].(string)
 				}
-				principal, _ := typed["account"].(string)
+				principal, _ := typed["account_sam"].(string)
+				if principal == "" {
+					principal, _ = typed["account"].(string)
+				}
 				if principal == "" {
 					principal, _ = typed["principal"].(string)
 				}
 				if spn != "" {
-					evidence, _ := json.Marshal(map[string]any{"spn": spn, "principal": principal, "explicit_ghost_indicator": true})
-					findings = append(findings, specializedFinding(assessmentID, executionID, "ghostspn_orphaned_spn", "Orphaned or stale SPN: "+spn, "ghostSPN explicitly marked this SPN as ghost/orphaned; this does not establish compromise.", "medium", principal, string(evidence), path, ref, now))
+					reason, _ := typed["reason"].(string)
+					if reason == "" {
+						reason = "ghostSPN explicitly marked this SPN as a possible orphan; this does not establish compromise."
+					}
+					evidence, _ := json.Marshal(typed)
+					severity := strings.ToLower(exploitability)
+					if severity == "" || severity == "self" || severity == "excluded" {
+						severity = "informational"
+					}
+					findings = append(findings, specializedFinding(assessmentID, executionID, "ghostspn_orphaned_spn", "Orphaned or stale SPN: "+spn, reason, severity, principal, string(evidence), path, ref, now))
 				}
 			}
 			for key, child := range typed {
@@ -97,6 +110,37 @@ func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, no
 }
 
 func parseGPO(data []byte, path string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
+	var structured any
+	if json.Unmarshal(data, &structured) == nil {
+		var findings []storage.FindingInput
+		var walk func(any, string)
+		walk = func(item any, ref string) {
+			switch typed := item.(type) {
+			case []any:
+				for index, child := range typed {
+					walk(child, fmt.Sprintf("%s/%d", ref, index))
+				}
+			case map[string]any:
+				for key, child := range typed {
+					text, ok := child.(string)
+					if ok {
+						lower := strings.ToLower(text)
+						if strings.Contains(lower, "cpassword") || strings.Contains(lower, "local group") || strings.Contains(lower, "remote desktop") {
+							kind, severity := "gpo_security_configuration_observed", "informational"
+							if strings.Contains(lower, "cpassword") {
+								kind, severity = "gpo_preference_credential_exposed", "high"
+							}
+							evidence, _ := json.Marshal(map[string]any{"field": key, "configuration": text})
+							findings = append(findings, specializedFinding(assessmentID, executionID, kind, "GPO security configuration observed", "gpoParser output contains an explicit security-relevant policy setting. Applicability and resulting access must be confirmed from GPO linkage and filtering data.", severity, "", string(evidence), path, ref+"/"+key, now))
+						}
+					}
+					walk(child, ref+"/"+key)
+				}
+			}
+		}
+		walk(structured, "")
+		return findings, nil
+	}
 	var findings []storage.FindingInput
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	line := 0

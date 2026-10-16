@@ -36,10 +36,15 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"acl":        {{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"}},
 	"adcs":       {{"adcs", "Vulnerable Templates", "Explicit ESC conditions reported by Certipy"}},
 	"delegation": {{"delegation", "Delegation", "Delegation configurations and related observations"}},
+	"active_directory": {
+		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
+		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
+	},
 	"network": {
 		{"smb", "SMB Signing", "SMB signing conditions"},
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
+		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
 	},
 }
 
@@ -48,6 +53,7 @@ var findingCategoryOrder = []struct {
 }{
 	{"credentials", "Credentials & SCCM", "Recovered credentials and SCCM security conditions"},
 	{"kerberos", "Kerberos", "Kerberoasting, AS-REP and Kerberos material"},
+	{"active_directory", "Active Directory", "Group Policy and SPN configuration conditions"},
 	{"acl", "Active Directory ACLs", "Direct control relationships and object permissions"},
 	{"adcs", "AD CS", "Certificate template and CA security conditions"},
 	{"delegation", "Delegation", "Delegation configuration and related exposure"},
@@ -68,8 +74,12 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "adcs"
 	case strings.HasPrefix(typ, "unconstrained_delegation"), strings.HasPrefix(typ, "constrained_delegation"), strings.HasPrefix(typ, "rbcd_"), strings.HasPrefix(typ, "delegation_"):
 		return "delegation"
+	case strings.HasPrefix(typ, "gpo_"), strings.HasPrefix(typ, "ghostspn_"):
+		return "active_directory"
 	case strings.HasPrefix(typ, "sccm_"), strings.EqualFold(source, "pxethief"):
 		return "credentials"
+	case strings.HasPrefix(typ, "mssql_") || strings.EqualFold(source, "mssqlrelay") || strings.EqualFold(source, "mssqlpwner"):
+		return "network"
 	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
 		return "network"
 	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
@@ -96,6 +106,12 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "ldap"
 	case strings.Contains(typ, "relay"):
 		return "relay"
+	case strings.Contains(typ, "gpo"):
+		return "gpo"
+	case strings.Contains(typ, "ghostspn") || strings.Contains(typ, "spn"):
+		return "spn"
+	case strings.Contains(typ, "mssql"):
+		return "mssql"
 	default:
 		return findingCategoryKey(finding)
 	}

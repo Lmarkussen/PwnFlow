@@ -49,8 +49,14 @@ func (m Module) Description() string            { return m.definition.Descriptio
 func (m Module) Prerequisites() []string {
 	return []string{"verified upstream installation for " + m.Tool()}
 }
-func (m Module) RequiredPrivileges() []string     { return nil }
-func (m Module) OutputFile() string               { return filepath.Join(outputRoot, m.definition.SlugValue+".log") }
+func (m Module) RequiredPrivileges() []string { return nil }
+func (m Module) OutputFile() string {
+	extension := ".log"
+	if m.definition.IDValue == "ghostspn-audit" || m.definition.IDValue == "gpoparser-local" || m.definition.IDValue == "gpoparser-remote" {
+		extension = ".json"
+	}
+	return filepath.Join(outputRoot, m.definition.SlugValue+extension)
+}
 func (m Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySensitive }
 func (m Module) ReadOnly() bool                   { return m.definition.Enabled }
 func (m Module) SecondaryConnections() []string {
@@ -94,7 +100,7 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if !status.Available {
 		return fmt.Errorf("%s: %s", status.DisplayName, status.Detail)
 	}
-	if runtime.Target == "" || runtime.Domain == "" || runtime.Username == "" {
+	if m.definition.IDValue != "gpoparser-local" && (runtime.Target == "" || runtime.Domain == "" || runtime.Username == "") {
 		return fmt.Errorf("target, domain and username are required")
 	}
 	for _, key := range m.definition.Options {
@@ -121,7 +127,19 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	command := exec.CommandContext(ctx, program, args...)
 	command.Dir = filepath.Dir(outputPath)
 	output, err := command.CombinedOutput()
-	if writeErr := os.WriteFile(outputPath, output, 0o600); writeErr != nil {
+	if strings.HasSuffix(outputPath, ".json") {
+		stdoutPath := strings.TrimSuffix(outputPath, ".json") + ".log"
+		if writeErr := os.WriteFile(stdoutPath, output, 0o600); writeErr != nil {
+			return writeErr
+		}
+		if err == nil {
+			if _, statErr := os.Stat(outputPath); os.IsNotExist(statErr) {
+				if writeErr := os.WriteFile(outputPath, []byte("[]\n"), 0o600); writeErr != nil {
+					return writeErr
+				}
+			}
+		}
+	} else if writeErr := os.WriteFile(outputPath, output, 0o600); writeErr != nil {
 		return writeErr
 	}
 	if _, writeErr := sink.Write(output); writeErr != nil {

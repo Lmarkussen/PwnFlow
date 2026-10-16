@@ -242,6 +242,10 @@ func TestFindingCategoryUsesStableDetectorIdentity(t *testing.T) {
 		{"adcs_esc_esc1", "Certipy", "adcs"},
 		{"unconstrained_delegation_configured", "RustHound-CE", "delegation"},
 		{"relay_exposure_observed", "RelayKing", "network"},
+		{"ghostspn_orphaned_spn", "ghostSPN", "active_directory"},
+		{"gpo_security_configuration_observed", "gpoParser", "active_directory"},
+		{"mssql_encryption_not_enforced", "mssqlrelay", "network"},
+		{"mssql_relationship_observed", "MSSqlPwner", "network"},
 	}
 	for _, test := range cases {
 		finding := storage.Finding{FindingInput: storage.FindingInput{FindingType: test.typ, SourceTool: test.source}}

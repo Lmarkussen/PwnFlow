@@ -43,3 +43,30 @@ func TestOfflineModuleRequiresExplicitPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandBuildersMatchInstalledCLIs(t *testing.T) {
+	runtime := &modules.Runtime{Target: "198.51.100.42", Domain: "example.test", Username: "operator", Password: "synthetic-password"}
+	cases := map[string][]string{
+		"mssqlrelay-check":     {"check", "-target", "198.51.100.42", "-u", "operator@example.test", "-p", "synthetic-password", "-windows-auth"},
+		"mssqlpwner-enumerate": {"example.test/operator:synthetic-password@198.51.100.42", "-windows-auth", "enumerate"},
+		"gpoparser-remote":     {"remote", "-s", "198.51.100.42", "-d", "example.test", "-u", "operator", "-p", "synthetic-password", "-o", "artifact"},
+		"ghostspn-audit":       {"--server", "198.51.100.42", "--domain", "example.test", "--username", "operator", "--password", "synthetic-password", "--output", "artifact"},
+	}
+	for _, module := range Modules() {
+		want, ok := cases[module.ID()]
+		if !ok {
+			continue
+		}
+		got := module.definition.Args(runtime, "artifact")
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("%s args = %#v, want %#v", module.ID(), got, want)
+		}
+	}
+	for _, module := range Modules() {
+		if module.ID() == "ghostspn-audit" || strings.HasPrefix(module.ID(), "gpoparser-") {
+			if !strings.HasSuffix(module.OutputFile(), ".json") {
+				t.Errorf("%s output is not structured JSON: %s", module.ID(), module.OutputFile())
+			}
+		}
+	}
+}
