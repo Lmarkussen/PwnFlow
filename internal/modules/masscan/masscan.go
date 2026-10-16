@@ -59,6 +59,14 @@ func (Module) Status(runtime *modules.Runtime) modules.Status {
 	if runtime == nil || strings.TrimSpace(optionValue(runtime, optionTarget)) == "" || strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
 		return modules.StatusInputRequired
 	}
+	target := strings.TrimSpace(optionValue(runtime, optionTarget))
+	scope := strings.TrimSpace(optionValue(runtime, optionScope))
+	if scope == "" {
+		return modules.StatusScopeRequired
+	}
+	if _, err := parseTarget(scope); err != nil || targetWithinScope(target, scope) != nil {
+		return modules.StatusScopeRequired
+	}
 	return modules.StatusSudoRequired
 }
 
@@ -68,6 +76,12 @@ func (Module) StatusReason(runtime *modules.Runtime) string {
 	}
 	if strings.TrimSpace(optionValue(runtime, optionPorts)) == "" {
 		return "accept or edit the default TCP port list"
+	}
+	if strings.TrimSpace(optionValue(runtime, optionScope)) == "" {
+		return "set an explicit AUTHORIZED_SCOPE; the assessment target is not an authorization range"
+	}
+	if err := targetWithinScope(optionValue(runtime, optionTarget), optionValue(runtime, optionScope)); err != nil {
+		return err.Error()
 	}
 	return "Masscan needs local raw-packet privileges; approve sudo before the active scan"
 }
@@ -130,10 +144,7 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	}
 	scope := strings.TrimSpace(optionValue(runtime, optionScope))
 	if scope == "" {
-		scope = strings.TrimSpace(runtime.Target)
-	}
-	if scope == "" {
-		return fmt.Errorf("an explicit AUTHORIZED_SCOPE is required for Masscan; the assessment target is not a usable IPv4 scope")
+		return fmt.Errorf("an explicit AUTHORIZED_SCOPE is required for Masscan; the assessment target is not an authorization range")
 	}
 	if err := targetWithinScope(target, scope); err != nil {
 		return err

@@ -107,8 +107,9 @@ exit 1`)
 	return record
 }
 
-// The SCCM family is a first-class navigation scope with both modules registered
-// under Enumeration, and YOLO stays limited to NetExec.
+// The SCCM family is a first-class navigation scope. Default Enumeration keeps
+// PXEThief behind its specific local-sudo authorization rather than the old
+// blanket approval panel.
 func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 	sccmTooling(t)
 	registered := []modules.Module{sccm.SCCMHunter{Resolver: sccmResolver{}}, sccm.PXEThief{}}
@@ -140,11 +141,12 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 			t.Fatalf("%s is unavailable although it is installed: %q", m.modules[index].ID(), reason)
 		}
 	}
-	// A stays scoped: the SCCM scope is not NetExec enumeration.
+	// Default Enumeration includes the curated SCCM discovery module, but does not
+	// launch PXEThief without its specific authorization.
 	m.focus = focusModules
 	press(t, m, "a")
-	if m.batch != nil {
-		t.Fatalf("YOLO started outside NetExec enumeration: %v", batchIDs(m))
+	if m.batch == nil || !contains(batchIDs(m), "sccmhunter") || contains(batchIDs(m), "pxethief") {
+		t.Fatalf("unexpected Default Enumeration SCCM batch: %v", batchIDs(m))
 	}
 }
 

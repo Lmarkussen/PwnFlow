@@ -148,6 +148,8 @@ func (m *model) moduleState(index int) string {
 		return "ADMIN-REQ"
 	case "SUDO-REQ":
 		return "SUDO-REQ"
+	case "SCOPE-REQ":
+		return "SCOPE-REQ"
 	case "INPUT-REQ":
 		return "INPUT-REQ"
 	}
@@ -173,6 +175,8 @@ func (m *model) moduleStatus(module modules.Module) (status string, reason strin
 		return "ADMIN-REQ", provider.StatusReason(runtime)
 	case modules.StatusSudoRequired:
 		return "SUDO-REQ", provider.StatusReason(runtime)
+	case modules.StatusScopeRequired:
+		return "SCOPE-REQ", provider.StatusReason(runtime)
 	case modules.StatusInputRequired:
 		return "INPUT-REQ", provider.StatusReason(runtime)
 	}
@@ -195,6 +199,8 @@ func (m *model) infoView() string {
 		privilege = "ADMIN-REQ (" + statusReason + ")"
 	case "SUDO-REQ":
 		privilege = "SUDO-REQ (local operator privilege; not remote administrator access)"
+	case "SCOPE-REQ":
+		availability = "SCOPE-REQ: " + statusReason
 	case "INPUT-REQ":
 		availability = "CONFIGURABLE: " + statusReason + " - press Enter to be asked for it, or pass it with --module-options"
 	}

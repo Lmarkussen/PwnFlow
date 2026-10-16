@@ -440,9 +440,10 @@ CIDR, or explicit IPv4 range, then accept or edit the prefilled TCP ports:
 
 PwnFlow validates every port and range, requires the requested target to be
 contained by an explicit authorized scope, and shows the fixed rate of 4000
-packets per second before approval. The assessment target is used as the
-fallback authorized scope; a broader scan can be authorized explicitly with
-`--module-options masscan.AUTHORIZED_SCOPE=198.51.100.0/24`. Optional exclusions
+packets per second before approval. `AUTHORIZED_SCOPE` must be configured explicitly;
+the assessment target never expands into a subnet authorization. Configure it, for
+example, with `--module-options masscan.AUTHORIZED_SCOPE=198.51.100.0/24` only
+when that complete network is authorized. Optional exclusions
 can be supplied with `masscan.EXCLUDE`. Masscan always uses the existing local
 sudo approval and timestamp flow; PwnFlow never stores the sudo password.
 

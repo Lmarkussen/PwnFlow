@@ -166,6 +166,9 @@ const (
 	// the module can open its privileged process. It is distinct from a
 	// target-side administrator requirement.
 	StatusSudoRequired
+	// StatusScopeRequired means the requested target is not covered by the
+	// explicitly configured authorization scope.
+	StatusScopeRequired
 )
 
 // StatusProvider lets a module report its display status and, when it is not

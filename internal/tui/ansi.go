@@ -64,7 +64,29 @@ func wrapPaneText(value string, width int) string {
 	if width < 1 {
 		width = 1
 	}
-	return ansi.HardwrapWc(value, width, true)
+	var wrapped strings.Builder
+	for lineIndex, line := range strings.Split(value, "\n") {
+		if lineIndex > 0 {
+			wrapped.WriteByte('\n')
+		}
+		if ansi.StringWidthWc(line) <= width || !strings.Contains(line, ",") {
+			wrapped.WriteString(ansi.HardwrapWc(line, width, true))
+			continue
+		}
+		current := ""
+		for _, part := range strings.SplitAfter(line, ",") {
+			if current != "" && ansi.StringWidthWc(current)+ansi.StringWidthWc(part) > width {
+				wrapped.WriteString(ansi.HardwrapWc(current, width, true))
+				wrapped.WriteByte('\n')
+				current = ""
+			}
+			current += part
+		}
+		if current != "" {
+			wrapped.WriteString(ansi.HardwrapWc(current, width, true))
+		}
+	}
+	return wrapped.String()
 }
 
 func wrapPaneStyle(style lipgloss.Style, value string, width int) string {

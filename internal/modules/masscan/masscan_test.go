@@ -59,6 +59,22 @@ func TestMasscanInputsAndPreview(t *testing.T) {
 	}
 }
 
+func TestMasscanScopeIsDistinctFromDependencyAvailability(t *testing.T) {
+	module := Module{}
+	base := map[string]string{optionTarget: "198.51.100.0/24", optionPorts: defaultPorts}
+	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusScopeRequired {
+		t.Fatalf("missing explicit scope status = %v, want SCOPE-REQ", got)
+	}
+	base[optionScope] = "198.51.100.10/32"
+	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusScopeRequired {
+		t.Fatalf("out-of-scope status = %v, want SCOPE-REQ", got)
+	}
+	base[optionTarget] = "198.51.100.10"
+	if got := module.Status(&modules.Runtime{ModuleOptions: map[string]map[string]string{moduleID: base}}); got != modules.StatusSudoRequired {
+		t.Fatalf("authorized status = %v, want SUDO-REQ", got)
+	}
+}
+
 func TestRunUsesSudoAndUniqueGrepableArtifact(t *testing.T) {
 	bin := t.TempDir()
 	masscanScript := `if [ "$1" = "--version" ]; then echo "masscan version 1.3.2"; exit 1; fi
