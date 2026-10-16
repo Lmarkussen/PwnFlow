@@ -300,6 +300,18 @@ type Runtime struct {
 
 type OutputSink interface{ Write([]byte) (int, error) }
 
+// SkipError is returned when a requested operation is valid but has no safe
+// work to perform. The runner records this as skipped rather than treating it
+// as a dependency failure or a successful assessment.
+type SkipError struct{ Reason string }
+
+func (e SkipError) Error() string {
+	if e.Reason == "" {
+		return "operation skipped"
+	}
+	return e.Reason
+}
+
 // ModuleOption returns the operator-supplied value for one option of one module.
 // A runtime built without a module-options map answers "not supplied" for every
 // key, which is what makes a module that requires one report itself unavailable

@@ -151,8 +151,28 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 		}
 		return fmt.Errorf("%s failed: %w", m.Tool(), err)
 	}
+	if semanticErr := semanticAssessmentError(m.ID(), output); semanticErr != nil {
+		return semanticErr
+	}
 	return nil
 }
+
+// semanticAssessmentError catches the mssqlrelay 1.1 failure mode where the
+// Python wrapper prints a refused connection and traceback but exits zero. Raw
+// output remains persisted; only the execution result is corrected.
+func semanticAssessmentError(moduleID string, output []byte) error {
+	if moduleID != "mssqlrelay-check" {
+		return nil
+	}
+	text := strings.ToLower(string(output))
+	for _, marker := range []string{"connection refused", "'int' object has no attribute 'sendall'", "traceback (most recent call last)"} {
+		if strings.Contains(text, marker) {
+			return fmt.Errorf("mssqlrelay reported an assessment failure: %s", marker)
+		}
+	}
+	return nil
+}
+
 func (m Module) CommandPreview(runtime *modules.Runtime) string {
 	args := m.definition.Args(runtime, "<artifact>")
 	if runtime != nil && runtime.Password != "" {

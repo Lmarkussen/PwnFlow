@@ -99,6 +99,10 @@ func statusForCheck(ctx context.Context, err error) string {
 	if ctx.Err() != nil {
 		return "cancelled"
 	}
+	var skipped modules.SkipError
+	if errors.As(err, &skipped) {
+		return "skipped"
+	}
 	return "unavailable"
 }
 
@@ -135,6 +139,10 @@ func (s *safeSink) writeSanitized(p []byte) (int, error) {
 func statusFor(ctx context.Context, err error) string {
 	if ctx.Err() != nil {
 		return "cancelled"
+	}
+	var skipped modules.SkipError
+	if errors.As(err, &skipped) {
+		return "skipped"
 	}
 	return "failed"
 }

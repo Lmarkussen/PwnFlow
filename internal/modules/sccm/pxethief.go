@@ -31,8 +31,8 @@ func (PXEThief) Category() modules.Category     { return modules.CategoryEnumera
 func (PXEThief) Tool() string                   { return "PXEThief" }
 func (PXEThief) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (PXEThief) Description() string {
-	return "Runs PXEThief against this assessment's discovered SCCM endpoints: mode 1 (DHCP PXE broadcast discovery) " +
-		"when nothing has been discovered, and one mode 2 invocation per stored endpoint address otherwise. " +
+	return "Runs PXEThief mode 2 once for every eligible SCCM/PXE endpoint discovered by SCCMhunter; " +
+		"an explicitly approved manual run may use mode 1 for DHCP discovery. " +
 		"PXEThief crafts raw DHCP packets, so it needs raw-socket privileges, and it follows the operator's own " +
 		"settings.ini, including its automatic blank-password exploitation setting."
 }
@@ -51,21 +51,6 @@ func (PXEThief) DependencyKey() string            { return string(dependencies.P
 // both SCCM modules runs SCCMhunter first, so PXEThief reads the endpoints of the
 // current run rather than whatever was stored before it.
 func (PXEThief) BatchPrerequisites() []string { return []string{moduleIDSCCMHunter} }
-
-// PlanApproval implements modules.ApprovalRequester. A run with stored endpoints
-// contacts those endpoints only, which is the assessment's own discovery. A run
-// without them falls back to mode 1, which broadcasts a DHCP discover on the local
-// segment: a wider action that a global run must not start on its own.
-func (m PXEThief) PlanApproval(runtime *modules.Runtime) (bool, string) {
-	endpoints, err := m.plannedEndpoints(context.Background(), runtime)
-	if err != nil {
-		return true, "the stored endpoint list could not be read, so the run mode is undetermined"
-	}
-	if len(endpoints) == 0 {
-		return true, "no stored endpoint for this assessment: it would run mode 1 (DHCP PXE broadcast discovery)"
-	}
-	return false, fmt.Sprintf("%d stored endpoint(s): one mode 2 invocation each", len(endpoints))
-}
 
 // ElevationRequired reports that PXEThief cannot craft its DHCP packets without
 // CAP_NET_RAW, which this process only has when the operator granted it.
@@ -111,8 +96,8 @@ func (m PXEThief) elevationCommand(ctx context.Context, runtime *modules.Runtime
 // an explicitly requested run can reach.
 func (PXEThief) SecondaryConnections() []string {
 	return []string{
-		"mode 1 broadcasts a DHCP discover on the local segment and follows the PXE server it finds",
-		"mode 2 contacts one stored endpoint address directly",
+		"mode 2 contacts only stored SCCM/PXE endpoint addresses discovered for this assessment",
+		"explicitly approved manual mode 1 may broadcast a DHCP discover on the local segment",
 	}
 }
 
@@ -139,13 +124,27 @@ func (m PXEThief) CommandArgs(endpoints []modules.Endpoint) []string {
 func (m PXEThief) CommandPreview(runtime *modules.Runtime) string {
 	endpoints, err := m.plannedEndpoints(context.Background(), runtime)
 	if err != nil || len(endpoints) == 0 {
-		return "pxethief.py 1   (no stored endpoints: DHCP PXE broadcast discovery)"
+		return "pxethief.py 1   (explicit manual approval required when no endpoint is discovered)"
 	}
 	preview := "pxethief.py 2 " + endpoints[0].Address
 	if len(endpoints) > 1 {
 		preview += fmt.Sprintf("   (+%d more endpoint(s), one invocation each)", len(endpoints)-1)
 	}
 	return preview
+}
+
+// PlanApproval keeps a manual no-candidate run behind an explicit decision. A
+// Default Enumeration plan records it as authorization-required instead of
+// silently falling back to a DHCP broadcast.
+func (m PXEThief) PlanApproval(runtime *modules.Runtime) (bool, string) {
+	endpoints, err := m.plannedEndpoints(context.Background(), runtime)
+	if err != nil {
+		return true, "the stored endpoint list could not be read, so the run mode is undetermined"
+	}
+	if len(endpoints) == 0 {
+		return true, "no stored endpoint for this assessment: manual execution would use mode 1 (DHCP PXE broadcast discovery)"
+	}
+	return false, fmt.Sprintf("%d stored endpoint(s): one mode 2 invocation each", len(endpoints))
 }
 
 // plannedEndpoints reads the assessment's endpoint list at run time. Nothing is
@@ -307,7 +306,7 @@ func (m PXEThief) Run(ctx context.Context, runtime *modules.Runtime, sink module
 			return err
 		}
 		elevationNoted = m.noteElevation(elevated, elevationNoted, output)
-		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) as explicitly requested.")
+		fmt.Fprintln(output, "[i] No stored endpoint address for this assessment: running PXEThief mode 1 (DHCP PXE broadcast discovery) after explicit approval.")
 		if err := m.runOne(ctx, program, base, []string{"1"}, filepath.Join(runDirectory, "mode-1"), "mode-1", status.Root, runtime.Password, elevated, output); err != nil {
 			return err
 		}

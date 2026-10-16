@@ -433,7 +433,6 @@ exit 1`
 		endpoints []modules.Endpoint
 		want      []string
 	}{
-		{name: "no endpoints", want: []string{"pxethief.py 1"}},
 		{name: "one endpoint", endpoints: []modules.Endpoint{{Address: "198.51.100.41", Hostname: "pxe01.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain}}, want: []string{"pxethief.py 2 198.51.100.41"}},
 		{name: "three endpoints", endpoints: []modules.Endpoint{
 			{Address: "198.51.100.43", Hostname: "pxe03.corp.example", Role: rolePXEDistributionPoint, Domain: testDomain},

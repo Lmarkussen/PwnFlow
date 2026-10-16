@@ -300,5 +300,10 @@ func (m *model) batchSummary() string {
 	if active >= 0 && active < len(states) {
 		activeName = states[active].Module.Name()
 	}
-	return fmt.Sprintf("Mode: %s   Target: %s\nProgress: [%s] %d/%d   Completed: %d   Running: %d   Failed: %d   Unavailable: %d   Cancelled: %d   Skipped: %d   Queued: %d   Active: %s\n", m.batchName, m.cfg.Domain, bar, progress, len(states), completed, running, failed, unavailable, cancelled, skipped, queued, activeName)
+	requested := m.batchRequested
+	if requested == 0 {
+		requested = len(states)
+	}
+	resolution := fmt.Sprintf("Requested: %d   Executed: %d   Planned-skip: %d", requested, len(states), len(m.batchSkipped))
+	return fmt.Sprintf("Mode: %s   Target: %s\n%s\nProgress: [%s] %d/%d   Completed: %d   Running: %d   Failed: %d   Unavailable: %d   Cancelled: %d   Skipped: %d   Queued: %d   Active: %s\n", m.batchName, m.cfg.Domain, resolution, bar, progress, len(states), completed, running, failed, unavailable, cancelled, skipped, queued, activeName)
 }

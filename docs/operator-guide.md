@@ -43,9 +43,9 @@ documented in [the artifact schema note](rusthound-artifact-schema.md). Findings
 processing is explicit and read-only; it does not replace BloodHound CE's graph
 analysis or automatically process partial artifacts at startup.
 
-`Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `A` runs the whole eligible registry - every tool family, category, and protocol - regardless of the family, category, protocol, focus, scroll position, or selection that happens to be on screen, and it needs no selection at all.
+`Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 
-`A` is comprehensive, not unconditional. Before a batch starts, PwnFlow collects the values any module in the plan needs, so a run is never interrupted by a question, and it names the operations that are not plain enumeration for your decision: the credential-access categories and any module whose own run reaches further than the assessment's discovery (PXEThief with no stored endpoint, for example, which would broadcast a DHCP discover). Declining them runs the rest of the plan. Privileged execution still goes through the existing amber confirmation and sudo handoff, so nothing in a global run happens without being asked for.
+`A` reports requested, eligible, authorization-required, skipped, executed, and analysis counts separately. It collects required values before execution and keeps credential-access, remote-admin, local-sudo, missing-input, and wider-scope entries visible with their reason. Declining a specific authorization continues the eligible remainder; it does not make the profile appear complete.
 
 LDAP-based modules prefer LDAPS. NetExec LDAP modules therefore pass `--port 636`, which is how the installed NetExec selects `ldaps://` for its LDAP protocol, while its SMB modules keep their defaults. Certipy `find` passes `-ldap-scheme ldaps -ldap-port 636`, and RustHound-CE passes `--ldaps`; none of these is downgraded to unsigned LDAP at runtime, and none requires extra certificate configuration. PwnFlow's own certificate trust decisions apply to its Go LDAP preflight only: each external tool verifies - or, for its own historical reasons, does not verify - the domain controller's certificate on its own, and PwnFlow neither changes nor claims to change that.
 
@@ -333,8 +333,10 @@ Module Information pane reports the stored endpoint count by role.
 
 **PXEThief** resolves that endpoint list when it runs, so selecting both modules and
 pressing `R` discovers first and probes afterwards. With no usable endpoint stored,
-an explicitly run PXEThief uses mode 1, which **broadcasts a DHCP discover on the
-local network** and follows the PXE server it finds; mode 1 also honours the
+Default Enumeration records PXEThief as awaiting SCCMhunter discovery and does not
+broadcast. An explicitly approved manual PXEThief run may use mode 1, which
+**broadcasts a DHCP discover on the local network** and follows the PXE server it
+finds; mode 1 also honours the
 operator's own `settings.ini`, including its automatic blank-password exploitation
 setting, so it is only ever an operator-initiated action. With endpoints stored, one
 `pxethief.py 2 <address>` invocation runs per endpoint — separately, never combined,

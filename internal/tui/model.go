@@ -108,6 +108,8 @@ type model struct {
 	batchSummaryShown bool
 	analysisPending   bool
 	batchName         string
+	batchRequested    int
+	batchSkipped      []string
 	watcherSelected   int
 	watcherListCursor int
 	// watcherAbort holds the execution an operator asked to abort, captured when

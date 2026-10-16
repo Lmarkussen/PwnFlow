@@ -16,8 +16,10 @@ import (
 // Plans are built from the whole registry, never from the visible slice: A, R,
 // and Enter differ in which modules they pick, not in where they look.
 type plan struct {
-	name    string
-	indices []int
+	name                  string
+	requested             int
+	authorizationRequired int
+	indices               []int
 	// approvals are the modules the plan will not start without an explicit
 	// decision: the credential-access categories, and any module that asks for one
 	// because its own operation is wider than the run it is part of.
@@ -62,7 +64,7 @@ var defaultEnumerationModuleIDs = []string{
 // globalPlan builds the deliberate Default Enumeration plan for A. Missing
 // profile entries are reported explicitly; there is no run-the-registry fallback.
 func (m *model) globalPlan() plan {
-	result := plan{name: "Default Enumeration"}
+	result := plan{name: "Default Enumeration", requested: len(defaultEnumerationModuleIDs)}
 	indices := make(map[string]int, len(m.allModules))
 	for index, module := range m.allModules {
 		if _, exists := indices[module.ID()]; !exists {
@@ -105,6 +107,7 @@ func (m *model) globalPlan() plan {
 		result.indices = append(result.indices, index)
 		if reason := m.approvalReason(module, index); reason != "" {
 			result.approvals = append(result.approvals, approval{index: index, reason: reason})
+			result.authorizationRequired++
 		}
 	}
 	return result
@@ -124,6 +127,7 @@ func profileMatches(indices map[string]int) int {
 // application registry has many profile entries and never reaches this path.
 func (m *model) legacyFixturePlan(result plan) plan {
 	result.name = "YOLO"
+	result.requested = len(m.allModules)
 	seen := make(map[string]bool, len(m.allModules))
 	for index, module := range m.allModules {
 		if seen[module.ID()] {
@@ -165,6 +169,12 @@ func (m *model) approvalReason(module modules.Module, index int) string {
 			return reason
 		}
 	}
+	// Local sudo is handled by the bounded elevation preflight. Keep modules
+	// using that path in the requested plan instead of treating local privilege
+	// as remote authorization and silently dropping them.
+	if _, ok := module.(modules.ElevationRequester); ok {
+		return ""
+	}
 	if required := module.RequiredPrivileges(); len(required) > 0 {
 		return "requires explicit target-side authorization: " + strings.Join(required, ", ")
 	}
@@ -194,7 +204,7 @@ func (m *model) configurePlan(module modules.Module) plan {
 // planFor keeps the registry order and the registry identity: a module runs once,
 // by identifier, whatever view it was picked from.
 func (m *model) planFor(wanted map[string]bool, name string) plan {
-	result := plan{name: name}
+	result := plan{name: name, requested: len(wanted)}
 	if len(wanted) == 0 {
 		return result
 	}
@@ -293,9 +303,17 @@ func (m *model) planSummary(p plan) string {
 			families[m.allModules[index].ToolFamily()] = true
 		}
 	}
-	parts := []string{fmt.Sprintf("%s plan: %d module(s) across %d famil%s", p.name, len(p.indices), len(families), plural(len(families)))}
-	if len(p.approvals) > 0 {
-		parts = append(parts, fmt.Sprintf("%d need approval", len(p.approvals)))
+	requested := p.requested
+	if requested == 0 {
+		requested = len(p.indices) + len(p.skipped)
+	}
+	eligible := len(p.indices) - len(p.approvals)
+	if eligible < 0 {
+		eligible = 0
+	}
+	parts := []string{fmt.Sprintf("%s plan: %d requested, %d eligible, %d famil%s", p.name, requested, eligible, len(families), plural(len(families)))}
+	if p.authorizationRequired > 0 {
+		parts = append(parts, fmt.Sprintf("%d authorization-required", p.authorizationRequired))
 	}
 	if skipped := len(p.skipped); skipped > 0 {
 		parts = append(parts, fmt.Sprintf("%d skipped", skipped))
@@ -374,6 +392,8 @@ func (m *model) continuePlan() tea.Cmd {
 		m.planLine = ""
 		return nil
 	}
+	m.batchRequested = p.requested
+	m.batchSkipped = append([]string(nil), p.skipped...)
 	command := m.startBatch(p.indices, p.name)
 	// The batch reports "running"; the plan line stays with it, so the operator
 	// can still see what the run covers. An elevation prompt keeps its own text.

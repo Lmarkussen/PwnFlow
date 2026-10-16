@@ -997,6 +997,14 @@ func (m *model) finishElevation(err error) tea.Cmd {
 func (m *model) declineElevation(message string) tea.Cmd {
 	skipped, indices, name := m.elevationModules, m.pendingIndices, m.pendingName
 	m.elevationPrompt, m.pendingIndices, m.pendingName, m.elevationModules = false, nil, "", nil
+	for _, moduleID := range skipped {
+		for _, module := range m.allModules {
+			if module.ID() == moduleID {
+				m.batchSkipped = append(m.batchSkipped, module.Name()+" (local authorization declined)")
+				break
+			}
+		}
+	}
 	remaining := make([]int, 0, len(indices))
 	for _, index := range indices {
 		if index >= 0 && index < len(m.allModules) && contains(skipped, m.allModules[index].ID()) {

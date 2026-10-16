@@ -70,3 +70,16 @@ func TestCommandBuildersMatchInstalledCLIs(t *testing.T) {
 		}
 	}
 }
+
+func TestMSSQLRelaySemanticFailureDoesNotLookSuccessful(t *testing.T) {
+	output := []byte("[-] [Errno 111] Connection refused\n[-] 'int' object has no attribute 'sendall'\n")
+	if err := semanticAssessmentError("mssqlrelay-check", output); err == nil {
+		t.Fatal("recognized mssqlrelay failure was classified as success")
+	}
+	if err := semanticAssessmentError("mssqlrelay-check", []byte("[+] encryption check complete; no qualifying finding")); err != nil {
+		t.Fatalf("ordinary no-finding output was classified as failure: %v", err)
+	}
+	if err := semanticAssessmentError("mssqlpwner-enumerate", output); err != nil {
+		t.Fatalf("unrelated tool output was classified as mssqlrelay failure: %v", err)
+	}
+}
