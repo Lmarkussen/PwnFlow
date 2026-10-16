@@ -43,6 +43,7 @@ func main() {
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
+	flushDB := flag.Bool("flushdb", false, "Clear previous database assessment records before starting; preserve raw evidence")
 	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	reanalyzeLatest := flag.Bool("reanalyze-latest", false, "offline-analyze the latest supported saved artifacts; never starts modules")
@@ -58,6 +59,25 @@ func main() {
 	flag.Visit(func(f *flag.Flag) { passwordProvided = passwordProvided || f.Name == "password" })
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if *flushDB && (*resetFindings || *reanalyzeLatest) {
+		fail(errors.New("--flushdb cannot be combined with --reset-findings or --reanalyze-latest"))
+	}
+	if *flushDB {
+		root, err := config.ProjectRoot()
+		if err != nil {
+			fail(err)
+		}
+		cfg, err := config.New(*target, *domain, *username, "", root)
+		if err != nil {
+			fail(err)
+		}
+		backupDir := filepath.Join(filepath.Dir(root), "pwnflow-backups")
+		report, err := storage.FlushAssessment(ctx, filepath.Join(cfg.ResultsRoot(), "enumeration.db"), cfg.Domain, cfg.Target, backupDir)
+		if err != nil {
+			fail(fmt.Errorf("--flushdb failed: %w", err))
+		}
+		fmt.Fprintf(os.Stdout, "Flushed assessment database for %s; removed %d findings, %d observations/evidence links, %d analysis jobs, and %d executions. Backup: %s\n", cfg.Domain, report.Findings, report.Evidence, report.AnalysisJobs, report.Executions, report.BackupPath)
+	}
 	if *resetFindings {
 		if !*confirmResetFindings {
 			fail(errors.New("--reset-findings requires --confirm-reset-findings; original artifacts are preserved"))
