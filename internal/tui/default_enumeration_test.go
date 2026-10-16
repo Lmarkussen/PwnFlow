@@ -7,12 +7,22 @@ import (
 	"github.com/pwnflow/pwnflow/internal/config"
 )
 
-func TestDefaultEnumerationProfileHas32EntriesAndExcludesMSSQL(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 32 {
-		t.Fatalf("Default Enumeration has %d entries, want 32", len(defaultEnumerationModuleIDs))
+func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
+	if len(defaultEnumerationModuleIDs) != 39 {
+		t.Fatalf("Default Enumeration has %d entries, want 39", len(defaultEnumerationModuleIDs))
+	}
+	base := defaultEnumerationModuleIDs[:32]
+	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
+		t.Fatal("the original 32-entry profile was not preserved as the prefix")
+	}
+	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check", "mssql-auth-check"}
+	for index, id := range wantAuth {
+		if defaultEnumerationModuleIDs[32+index] != id {
+			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[32+index], id)
+		}
 	}
 	for _, id := range defaultEnumerationModuleIDs {
-		if id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" {
+		if id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" {
 			t.Fatalf("excluded module %q entered Default Enumeration", id)
 		}
 	}

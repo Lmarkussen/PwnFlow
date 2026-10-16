@@ -174,7 +174,7 @@ func TestOptionRequiringModulesAreConfigurableNotUnavailable(t *testing.T) {
 		}
 	}
 	slices.Sort(configure)
-	want := []string{"daclread", "find-computer"}
+	want := []string{"daclread", "find-computer", "mssql-auth-check"}
 	if strings.Join(configure, ",") != strings.Join(want, ",") {
 		t.Fatalf("configurable registrations = %v, want exactly %v", configure, want)
 	}

@@ -438,7 +438,13 @@ func protocolCommand(protocol modules.Protocol) string { return strings.ToLower(
 // preview, an execution, and a test all agree.
 func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 	protocol := spec(m.Protocol())
-	args := []string{protocol.command, runtime.Target}
+	target := runtime.Target
+	if m.ID() == "mssql-auth-check" {
+		if configured, ok := m.optionValue(runtime, "TARGET"); ok {
+			target = configured
+		}
+	}
+	args := []string{protocol.command, target}
 	if protocol.username {
 		args = append(args, "-u", runtime.Username)
 	}

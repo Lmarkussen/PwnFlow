@@ -102,6 +102,8 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 	name := strings.ToLower(moduleName)
 	path := strings.ToLower(filepath.Clean(outputPath))
 	switch {
+	case strings.Contains(name, "authentication check"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "as-rep") && strings.Contains(path, "ldap_asreproast"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "kerberoast") && strings.Contains(path, "ldap_kerberoasting"):
@@ -250,14 +252,19 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzePXEThief(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "netexec", "netexec (nxc)":
 		lowerPath := strings.ToLower(job.ArtifactPath)
+		authInputs, authErr := AnalyzeNetExecAuthentication(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		if authErr != nil {
+			inputs, err = nil, authErr
+			break
+		}
 		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			inputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
 			inputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else {
-			_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no supported NetExec artifact extractor")
-			return
+			inputs = nil
 		}
+		inputs = append(authInputs, inputs...)
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "masscan":
@@ -303,7 +310,7 @@ func ParserVersionFor(tool string) string {
 	case "pxethief":
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
-		return netExecCredentialParserVersion
+		return netExecAuthenticationParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		return specializedParserVersion
 	case "masscan":
@@ -362,6 +369,12 @@ func DiscoverArtifact(tool, outputPath string) string {
 			if _, err := os.Stat(outputPath); err == nil {
 				return outputPath
 			}
+		}
+		// Every NetExec execution has a run-scoped transcript. Returning that
+		// finalized file lets protocol-wide detectors inspect authentication
+		// results without guessing a protocol-specific filename.
+		if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
+			return outputPath
 		}
 	}
 	base := filepath.Join(filepath.Dir(outputPath), "artifacts")

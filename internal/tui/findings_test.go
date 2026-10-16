@@ -98,13 +98,14 @@ func TestFindingCategoriesClassifyAndCountRecords(t *testing.T) {
 		{FindingInput: storage.FindingInput{FindingType: "ad_acl_genericwrite", Title: "Direct ACL GenericWrite", Severity: "informational", SourceTool: "RustHound-CE"}},
 		{FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — WebEnrollment", Severity: "high", SourceTool: "Certipy"}},
 		{FindingInput: storage.FindingInput{FindingType: "relay_exposure", Title: "Potential NTLM relay exposure", Severity: "medium", SourceTool: "RelayKing"}},
+		{FindingInput: storage.FindingInput{FindingType: "netexec_auth_success", Title: "Authentication successful — SMB", Severity: "informational", SourceTool: "NetExec (nxc)"}},
 	}
 	categories := buildFindingCategories(rows)
 	counts := map[string]findingCategory{}
 	for _, category := range categories {
 		counts[category.Key] = category
 	}
-	if counts["credentials"].Findings != 1 || counts["kerberos"].Findings != 1 || counts["adcs"].Findings != 1 || counts["network"].Findings != 1 {
+	if counts["credentials"].Findings != 1 || counts["kerberos"].Findings != 1 || counts["adcs"].Findings != 1 || counts["network"].Findings != 1 || counts["network"].Observations != 1 {
 		t.Fatalf("unexpected category counts: %#v", counts)
 	}
 	if counts["acl"].Observations != 1 || counts["acl"].Findings != 0 {

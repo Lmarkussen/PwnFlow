@@ -390,3 +390,15 @@ func installFakeNXC(t *testing.T, script string) {
 	ResetCapabilities()
 	t.Cleanup(ResetCapabilities)
 }
+
+func TestMSSQLAuthenticationUsesExplicitTargetOption(t *testing.T) {
+	module := findModule(t, "mssql-auth-check")
+	runtime := &modules.Runtime{Target: "198.51.100.40", Domain: "sccm.lab", Username: "operator", Password: "synthetic", ModuleOptions: map[string]map[string]string{"mssql-auth-check": {"TARGET": "198.51.100.42:1433"}}}
+	args := module.CommandArgs(runtime)
+	if len(args) < 2 || args[1] != "198.51.100.42:1433" {
+		t.Fatalf("MSSQL auth target was not routed from explicit option: %#v", args)
+	}
+	if module.Status(&modules.Runtime{Target: "198.51.100.40"}) != modules.StatusInputRequired {
+		t.Fatal("MSSQL auth check did not require an explicit target")
+	}
+}

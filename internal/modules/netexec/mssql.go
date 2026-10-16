@@ -17,7 +17,9 @@ func MSSQLEnumerationModules() []modules.Module {
 		{
 			id: "mssql-auth-check", name: "MSSQL Authentication Check",
 			description: "Authenticates to the SQL Server instance and prints the result, including the server version the login may read.",
-			output:      "MSSQL_auth_check.txt",
+			options:     []string{"TARGET"}, required: []string{"TARGET"},
+			inputUsage: map[string]string{"TARGET": "the explicitly approved SQL Server host or host:port"},
+			output:     "MSSQL_auth_check.txt",
 		},
 		{
 			id: "mssql-databases", name: "List Databases",

@@ -111,6 +111,16 @@ func TestDiscoverArtifactUsesFinalizedPXEAndKerberosOutputs(t *testing.T) {
 	if got := DiscoverArtifact("NetExec (nxc)", transcript); got != transcript {
 		t.Fatalf("NetExec AS-REP transcript was not selected: %q", got)
 	}
+	generic := filepath.Join(root, "CredentialAuditing", "NetExec", "SMB_auth_check", "transcript.txt")
+	if err := os.MkdirAll(filepath.Dir(generic), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(generic, []byte("SMB 10.1.10.40 445 DC [+] EXAMPLE\\operator:synthetic\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := DiscoverArtifact("NetExec (nxc)", generic); got != generic {
+		t.Fatalf("generic NetExec transcript was not selected: %q", got)
+	}
 }
 
 func TestManagerRecoversPendingJobFromExecutionOutputPath(t *testing.T) {
