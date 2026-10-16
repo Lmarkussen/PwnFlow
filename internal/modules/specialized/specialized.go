@@ -30,8 +30,8 @@ const outputRoot = "Enumeration/Specialized"
 
 func Modules() []Module {
 	return []Module{
-		{definition: Definition{IDValue: "mssqlrelay-check", NameValue: "MSSQL Encryption Assessment", ToolValue: "mssqlrelay", SlugValue: "mssqlrelay-check", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategorySecurityAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSQLRelay, Enabled: true, DescriptionValue: "Runs mssqlrelay check against only the configured MSSQL target. This reads encryption and login configuration; relay, coercion and command execution are not invoked.", Args: mssqlRelayArgs}},
-		{definition: Definition{IDValue: "mssqlpwner-enumerate", NameValue: "MSSQL Linked-Server and Impersonation Enumeration", ToolValue: "MSSqlPwner", SlugValue: "mssqlpwner-enumerate", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategoryPermissionsAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSqlPwner, Enabled: true, Approval: "enumerates linked-server and impersonation relationships through the selected MSSQL connection", DescriptionValue: "Runs MSSqlPwner enumerate only. It collects server, linked-server and impersonation relationship evidence; command execution, relay and write-capable modules are not registered.", Args: mssqlPwnerArgs}},
+		{definition: Definition{IDValue: "mssqlrelay-check", NameValue: "MSSQL Encryption Assessment", ToolValue: "mssqlrelay", SlugValue: "mssqlrelay-check", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategorySecurityAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSQLRelay, Enabled: true, Options: []string{"MSSQL_TARGET"}, DescriptionValue: "Runs mssqlrelay check against the explicitly configured MSSQL target. This reads encryption and login configuration; relay, coercion and command execution are not invoked.", Args: mssqlRelayArgs}},
+		{definition: Definition{IDValue: "mssqlpwner-enumerate", NameValue: "MSSQL Linked-Server and Impersonation Enumeration", ToolValue: "MSSqlPwner", SlugValue: "mssqlpwner-enumerate", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategoryPermissionsAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSqlPwner, Enabled: true, Options: []string{"MSSQL_TARGET"}, Approval: "enumerates linked-server and impersonation relationships through the explicitly selected MSSQL connection", DescriptionValue: "Runs MSSqlPwner enumerate only against the explicitly configured MSSQL target. It collects server, linked-server and impersonation relationship evidence; command execution, relay and write-capable modules are not registered.", Args: mssqlPwnerArgs}},
 		{definition: Definition{IDValue: "gpoparser-local", NameValue: "GPO Offline Analysis", ToolValue: "gpoParser", SlugValue: "gpoparser-local", Family: modules.ToolFamilyActiveDirectory, CategoryValue: modules.CategoryConfigurationAuditing, ProtocolValue: modules.ProtocolNA, Dependency: dependencies.GPOParser, Enabled: true, Options: []string{"SYSVOL", "LDAP_EXPORT"}, DescriptionValue: "Analyzes explicitly supplied SYSVOL and directory-export paths with gpoParser local. It does not contact the network or enrich an external graph database.", Args: gpoLocalArgs}},
 		{definition: Definition{IDValue: "gpoparser-remote", NameValue: "GPO Remote Analysis", ToolValue: "gpoParser", SlugValue: "gpoparser-remote", Family: modules.ToolFamilyActiveDirectory, CategoryValue: modules.CategoryConfigurationAuditing, ProtocolValue: modules.ProtocolLDAP, Dependency: dependencies.GPOParser, Enabled: true, Approval: "reads LDAP and SYSVOL policy data from the configured domain controller", DescriptionValue: "Runs gpoParser remote against the configured domain controller. The enrich mode and external database writes are not invoked.", Args: gpoRemoteArgs}},
 		{definition: Definition{IDValue: "ghostspn-audit", NameValue: "Ghost SPN Audit", ToolValue: "ghostSPN", SlugValue: "ghostspn-audit", Family: modules.ToolFamilyActiveDirectory, CategoryValue: modules.CategorySecurityAuditing, ProtocolValue: modules.ProtocolLDAP, Dependency: dependencies.GhostSPN, Enabled: true, DescriptionValue: "Audits SPNs through the configured domain controller and stores ghostSPN JSON output. It does not reclassify ordinary SPNs as Kerberoastable findings.", Args: ghostSPNArgs}},
@@ -184,10 +184,17 @@ func (m Module) CommandPreview(runtime *modules.Runtime) string {
 }
 
 func mssqlRelayArgs(r *modules.Runtime, _ string) []string {
-	return []string{"check", "-target", r.Target, "-u", r.Username + "@" + r.Domain, "-p", r.Password, "-windows-auth"}
+	return []string{"check", "-target", moduleTarget(r, "mssqlrelay-check"), "-u", r.Username + "@" + r.Domain, "-p", r.Password, "-windows-auth"}
 }
 func mssqlPwnerArgs(r *modules.Runtime, _ string) []string {
-	return []string{"" + r.Domain + "/" + r.Username + ":" + r.Password + "@" + r.Target, "-windows-auth", "enumerate"}
+	return []string{"" + r.Domain + "/" + r.Username + ":" + r.Password + "@" + moduleTarget(r, "mssqlpwner-enumerate"), "-windows-auth", "enumerate"}
+}
+
+func moduleTarget(r *modules.Runtime, id string) string {
+	if target, ok := r.ModuleOption(id, "MSSQL_TARGET"); ok {
+		return target
+	}
+	return r.Target
 }
 func gpoLocalArgs(r *modules.Runtime, output string) []string {
 	return []string{"local", moduleOptionValue(r, "gpoparser-local", "SYSVOL"), moduleOptionValue(r, "gpoparser-local", "LDAP_EXPORT"), "-o", output}

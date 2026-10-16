@@ -346,21 +346,6 @@ func (m *model) startPlan(p plan) tea.Cmd {
 // continuePlan resumes a plan: input first, then approvals, then the batch.
 func (m *model) continuePlan() tea.Cmd {
 	p := m.pending
-	if p.name == "Default Enumeration" && len(p.approvals) > 0 {
-		// Default Enumeration is unattended by design. Sensitive, target-admin,
-		// and wider-scope modules remain visible in the plan but are not launched
-		// merely because A was pressed; their specific manual approval paths remain
-		// available through Enter/R.
-		dropped := p.approvalIndices()
-		for _, index := range dropped {
-			if index >= 0 && index < len(m.allModules) {
-				p.skipped = append(p.skipped, m.allModules[index].Name()+" (specific authorization required)")
-			}
-		}
-		p = p.withoutIndices(dropped)
-		p.approvals = nil
-		m.pending = p
-	}
 	if requests := m.inputRequests(p.indices); len(requests) > 0 {
 		m.inputQueue = requests
 		m.planLine = fmt.Sprintf("%s, %d need input", m.planSummary(p), len(requests))

@@ -131,11 +131,18 @@ func (m *model) approvePlan() tea.Cmd {
 // declinePlan drops the credential-access modules and continues with the rest.
 func (m *model) declinePlan() tea.Cmd {
 	dropped := m.pending.approvalIndices()
+	skipped := make([]string, 0, len(m.pending.approvals))
+	for _, item := range m.pending.approvals {
+		if item.index < 0 || item.index >= len(m.allModules) {
+			continue
+		}
+		skipped = append(skipped, m.allModules[item.index].Name()+" (authorization not granted)")
+	}
 	m.approvalPrompt = false
 	m.approvalIndices = nil
 	m.pending = m.pending.withoutIndices(dropped)
 	m.pending.approvals = nil
-	m.pending.skipped = append(m.pending.skipped, "credential-access modules (not approved)")
+	m.pending.skipped = append(m.pending.skipped, skipped...)
 	command := m.continuePlan()
 	m.status = "the modules that needed your decision were skipped; running the rest of the plan"
 	return command
@@ -173,14 +180,21 @@ func (m *model) approvalPromptView() string {
 	if m.planLine != "" {
 		body.WriteString(dim.Render(m.planLine) + "\n\n")
 	}
-	body.WriteString(wrapPaneStyle(warn, "This plan includes operations that are not plain enumeration:", m.outputViewport.Width) + "\n\n")
+	body.WriteString(wrapPaneStyle(warn, "This grouped approval covers only the listed operations for this run:", m.outputViewport.Width) + "\n\n")
+	groups := make(map[string][]string)
+	order := make([]string, 0)
 	for _, item := range m.pending.approvals {
 		if item.index < 0 || item.index >= len(m.allModules) {
 			continue
 		}
-		module := m.allModules[item.index]
-		body.WriteString(wrapPaneText(fmt.Sprintf("  %s (%s, %s)\n    %s", module.Name(), module.Category(), module.Protocol(), item.reason), m.outputViewport.Width) + "\n")
+		if _, ok := groups[item.reason]; !ok {
+			order = append(order, item.reason)
+		}
+		groups[item.reason] = append(groups[item.reason], m.allModules[item.index].Name())
 	}
-	body.WriteString("\n" + wrapPaneText("Y runs them with the rest of the plan   N skips them and runs the rest   Ctrl+C cancels the plan", m.outputViewport.Width))
+	for _, reason := range order {
+		body.WriteString(wrapPaneText(fmt.Sprintf("  %d operation(s): %s\n    %s", len(groups[reason]), strings.Join(groups[reason], ", "), reason), m.outputViewport.Width) + "\n")
+	}
+	body.WriteString("\n" + wrapPaneText("Y authorize these operations for this run   N skip them (recorded)   Ctrl+C cancel", m.outputViewport.Width))
 	return paneStyle(m.focus == focusOutput).Render(header + "\n" + body.String())
 }

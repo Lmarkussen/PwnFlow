@@ -108,8 +108,7 @@ exit 1`)
 }
 
 // The SCCM family is a first-class navigation scope. Default Enumeration keeps
-// PXEThief behind its specific local-sudo authorization rather than the old
-// blanket approval panel.
+// both requested operations in the pending plan until their explicit decision.
 func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 	sccmTooling(t)
 	registered := []modules.Module{sccm.SCCMHunter{Resolver: sccmResolver{}}, sccm.PXEThief{}}
@@ -141,12 +140,12 @@ func TestSCCMFamilyIsRegisteredAndScoped(t *testing.T) {
 			t.Fatalf("%s is unavailable although it is installed: %q", m.modules[index].ID(), reason)
 		}
 	}
-	// Default Enumeration includes the curated SCCM discovery module, but does not
-	// launch PXEThief without its specific authorization.
+	// Default Enumeration must not silently drop the credential-access/privileged
+	// operation while waiting for the grouped authorization decision.
 	m.focus = focusModules
 	press(t, m, "a")
-	if m.batch == nil || !contains(batchIDs(m), "sccmhunter") || contains(batchIDs(m), "pxethief") {
-		t.Fatalf("unexpected Default Enumeration SCCM batch: %v", batchIDs(m))
+	if !m.approvalPrompt || len(m.pending.indices) != 2 || len(m.pending.approvals) != 1 {
+		t.Fatalf("Default Enumeration dropped a requested SCCM operation: prompt=%v indices=%v approvals=%v", m.approvalPrompt, m.pending.indices, m.pending.approvals)
 	}
 }
 

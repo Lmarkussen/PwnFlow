@@ -71,6 +71,31 @@ func TestCommandBuildersMatchInstalledCLIs(t *testing.T) {
 	}
 }
 
+func TestMSSQLCommandBuildersUseExplicitMSSQLTarget(t *testing.T) {
+	runtime := &modules.Runtime{
+		Target: "198.51.100.40", Domain: "example.test", Username: "operator", Password: "synthetic-password",
+		ModuleOptions: map[string]map[string]string{
+			"mssqlrelay-check":     {"MSSQL_TARGET": "198.51.100.42"},
+			"mssqlpwner-enumerate": {"MSSQL_TARGET": "198.51.100.42"},
+		},
+	}
+	for _, module := range Modules() {
+		var want []string
+		switch module.ID() {
+		case "mssqlrelay-check":
+			want = []string{"check", "-target", "198.51.100.42", "-u", "operator@example.test", "-p", "synthetic-password", "-windows-auth"}
+		case "mssqlpwner-enumerate":
+			want = []string{"example.test/operator:synthetic-password@198.51.100.42", "-windows-auth", "enumerate"}
+		default:
+			continue
+		}
+		got := module.definition.Args(runtime, "artifact")
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("%s args = %#v, want %#v", module.ID(), got, want)
+		}
+	}
+}
+
 func TestMSSQLRelaySemanticFailureDoesNotLookSuccessful(t *testing.T) {
 	output := []byte("[-] [Errno 111] Connection refused\n[-] 'int' object has no attribute 'sendall'\n")
 	if err := semanticAssessmentError("mssqlrelay-check", output); err == nil {
