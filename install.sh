@@ -13,6 +13,7 @@ install_mssqlrelay=0
 install_mssqlpwner=0
 install_gpoparser=0
 install_ghostspn=0
+install_masscan=0
 install_failures=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
@@ -26,6 +27,7 @@ mssqlrelay_status="Skipped"
 mssqlpwner_status="Skipped"
 gpoparser_status="Skipped"
 ghostspn_status="Skipped"
+masscan_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
@@ -42,6 +44,7 @@ for argument in "$@"; do
     --with-mssqlpwner) install_mssqlpwner=1 ;;
     --with-gpoparser) install_gpoparser=1 ;;
     --with-ghostspn) install_ghostspn=1 ;;
+    --with-masscan) install_masscan=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -49,12 +52,12 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan]"
       echo ""
       echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
       echo "tooling SCCMhunter and PXEThief, and the network assessment tools"
-      echo "NetworkHound and RelayKing, as source checkouts with their own virtual"
+      echo "NetworkHound, RelayKing and Masscan. NetworkHound and RelayKing are source checkouts with their own virtual"
       echo "environments. No shell activation is required."
       echo "Kali Linux is the only supported installation target."
       exit 0
@@ -78,6 +81,7 @@ if [[ $# -eq 0 ]]; then
   install_mssqlpwner=1
   install_gpoparser=1
   install_ghostspn=1
+  install_masscan=1
 fi
 
 ensure_sudo_authenticated() {
@@ -317,6 +321,40 @@ install_netexec() {
   netexec_functional || { echo "NetExec installation did not provide a working nxc --help capability" >&2; return 1; }
   echo "NetExec installed: $(nxc --help 2>&1 | head -n 1)"
   netexec_status="Installed"
+}
+
+masscan_functional() {
+  local version
+  command -v masscan >/dev/null 2>&1 || return 1
+  version="$(masscan --version 2>&1 || true)"
+  [[ "${version,,}" == *masscan* ]]
+}
+
+masscan_version() {
+  local version
+  version="$(dpkg-query -W -f='${Version}' masscan 2>/dev/null || true)"
+  if [[ -z "${version}" ]]; then
+    version="version unavailable"
+  fi
+  printf '%s\n' "${version%%$'\n'*}"
+}
+
+install_masscan() {
+  if masscan_functional; then
+    echo "Masscan already installed and functional: $(masscan_version)"
+    masscan_status="Already installed"
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "No supported package manager found. Install Masscan using Kali's package manager." >&2
+    return 1
+  fi
+  echo "Installing missing Masscan from the Kali APT repository."
+  run_apt update
+  run_apt_install masscan
+  masscan_functional || { echo "Masscan installation did not provide a working masscan --version capability" >&2; return 1; }
+  echo "Masscan installed: $(masscan_version)"
+  masscan_status="Installed"
 }
 
 rusthound_executable() {
@@ -912,6 +950,7 @@ print_summary() {
   echo "  MSSqlPwner: ${mssqlpwner_status}"
   echo "  gpoParser: ${gpoparser_status}"
   echo "  ghostSPN: ${ghostspn_status}"
+  echo "  Masscan: ${masscan_status}"
 }
 
 run_install_attempt() {
@@ -937,6 +976,7 @@ if [[ ${install_mssqlrelay} -eq 1 ]]; then run_install_attempt install_pipx_sour
 if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlpwner_status MSSqlPwner git+https://github.com/ScorpionesLabs/MSSqlPwner.git mssqlpwner mssqlpwner_status mssqlpwner; fi
 if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
 if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git ghostspn ghostspn_status ghost; fi
+if [[ ${install_masscan} -eq 1 ]]; then run_install_attempt install_masscan masscan_status; fi
 print_summary
 if [[ ${install_failures} -ne 0 ]]; then
   exit 1

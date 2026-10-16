@@ -17,7 +17,7 @@ was run as part of this integration.
 
 ## Installation and verification
 
-`./install.sh` verifies all twelve dependencies when run without flags. The
+`./install.sh` verifies all thirteen dependencies when run without flags. The
 pipx-backed tools are installed from Git URLs using isolated environments and
 are resolved from both `PATH` and `~/.local/bin`, so a noninteractive PwnFlow
 launch does not depend on shell startup files. The installer runs every

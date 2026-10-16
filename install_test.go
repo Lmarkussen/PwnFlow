@@ -247,6 +247,7 @@ func installNetworkToolLayouts(t *testing.T, bin, toolsRoot string) {
 	for name, banner := range map[string]string{"mssqlrelay": "Microsoft SQL Relaying Tool", "mssqlpwner": "MSSQL Pwner", "gpoParser": "GPO Analysis Tool", "ghostspn": "ghostSPN"} {
 		writeExecutable(t, bin, name, fmt.Sprintf("echo %q; exit 0", banner))
 	}
+	writeExecutable(t, bin, "masscan", `if [ "$1" = "--version" ]; then echo "masscan 1.3.2"; exit 0; fi; exit 1`)
 }
 
 func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
@@ -273,6 +274,7 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 		"Certipy: Already installed",
 		"NetworkHound: Already installed",
 		"RelayKing: Already installed",
+		"Masscan: Already installed",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q: %s", want, output)

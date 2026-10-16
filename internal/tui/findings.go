@@ -45,6 +45,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
+		{"port_discovery", "Port Discovery", "Masscan open-port observations"},
 	},
 }
 
@@ -80,6 +81,8 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "credentials"
 	case strings.HasPrefix(typ, "mssql_") || strings.EqualFold(source, "mssqlrelay") || strings.EqualFold(source, "mssqlpwner"):
 		return "network"
+	case strings.HasPrefix(typ, "masscan_") || strings.EqualFold(source, "masscan"):
+		return "network"
 	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
 		return "network"
 	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
@@ -112,6 +115,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "spn"
 	case strings.Contains(typ, "mssql"):
 		return "mssql"
+	case strings.Contains(typ, "masscan") || strings.Contains(typ, "port"):
+		return "port_discovery"
 	default:
 		return findingCategoryKey(finding)
 	}

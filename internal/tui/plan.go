@@ -76,6 +76,12 @@ func (m *model) globalPlan() plan {
 			result.skipped = append(result.skipped, module.Name()+" (unsupported by the installed build)")
 			continue
 		}
+		if policy, ok := module.(modules.GlobalExecutionPolicy); ok {
+			if include, reason := policy.IncludeInGlobalPlan(); !include {
+				result.skipped = append(result.skipped, module.Name()+" ("+reason+")")
+				continue
+			}
+		}
 		result.indices = append(result.indices, index)
 		if reason := m.approvalReason(module, index); reason != "" {
 			result.approvals = append(result.approvals, approval{index: index, reason: reason})

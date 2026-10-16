@@ -413,3 +413,26 @@ launch. A failed specialist does not prevent later specialist attempts; the
 final summary reports every outcome and exits nonzero if any selected attempt
 failed. Live relay, SQL command execution, SCCM client registration, and GPO
 Neo4j enrichment remain outside automatic execution.
+
+### Network assessment: Masscan
+
+Masscan is registered directly under **Network** and is manual-only: global `A`
+(YOLO) skips it because it is an active raw-packet scan. Press `Enter` on
+Masscan to open the normal orange input flow. Enter the required IPv4 target,
+CIDR, or explicit IPv4 range, then accept or edit the prefilled TCP ports:
+
+`21,22,23,25,53,80,110,111,135,139,389,443,445,593,623,636,993,995,1433,1521,1723,2049,2083,2086,3306,3389,5000,5432,5601,5985,5986,6379,8000,8008,8080-8090,8181,8443,8444,8888,9000,9090,9200,9443,10000,27017`
+
+PwnFlow validates every port and range, requires the requested target to be
+contained by an explicit authorized scope, and shows the fixed rate of 4000
+packets per second before approval. The assessment target is used as the
+fallback authorized scope; a broader scan can be authorized explicitly with
+`--module-options masscan.AUTHORIZED_SCOPE=198.51.100.0/24`. Optional exclusions
+can be supplied with `masscan.EXCLUDE`. Masscan always uses the existing local
+sudo approval and timestamp flow; PwnFlow never stores the sudo password.
+
+Each run writes the original grepable output to
+`results/<domain>/Enumeration/Masscan/artifacts/<timestamp>/masscan.log` and
+keeps the execution transcript in the normal module artifact. Open ports are
+shown as Network observations under **Port Discovery**, not as vulnerabilities.
+No live scan is performed by installation or dependency checks.

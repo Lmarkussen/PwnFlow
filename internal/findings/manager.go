@@ -196,6 +196,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		}
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "masscan":
+		inputs, err = AnalyzeMasscan(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -240,6 +242,8 @@ func ParserVersionFor(tool string) string {
 		return kerberosParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		return specializedParserVersion
+	case "masscan":
+		return masscanParserVersion
 	default:
 		return ""
 	}
@@ -257,8 +261,13 @@ func DiscoverArtifact(tool, outputPath string) string {
 	if outputPath == "" {
 		return ""
 	}
-	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true}
+	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "masscan": true}
 	if specializedTool[strings.ToLower(tool)] {
+		if strings.EqualFold(tool, "masscan") {
+			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
+				return outputPath
+			}
+		}
 		if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
 			return outputPath
 		}

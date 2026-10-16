@@ -181,6 +181,15 @@ type InputField struct {
 	Prompt string
 	// Example is an optional hint shown with the prompt.
 	Example string
+	// Default is shown in the editable field and is accepted when the operator
+	// presses Enter without changing it.
+	Default string
+}
+
+// InputValidator lets a module reject an operator value while its existing
+// input prompt is still open, before an execution plan can be approved.
+type InputValidator interface {
+	ValidateInput(key, value string) error
 }
 
 // InputRequester is implemented by modules that need operator-supplied values.
@@ -197,6 +206,12 @@ type InputRequester interface {
 // reason, which the plan shows the operator before anything runs.
 type ApprovalRequester interface {
 	PlanApproval(*Runtime) (bool, string)
+}
+
+// GlobalExecutionPolicy lets an explicitly registered module remain available
+// for manual selection while being excluded from the broad unattended plan.
+type GlobalExecutionPolicy interface {
+	IncludeInGlobalPlan() (bool, string)
 }
 
 // Endpoint is one SCCM-related system discovered during an assessment.

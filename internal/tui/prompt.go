@@ -47,7 +47,7 @@ func (m *model) openInput(request inputRequest, field modules.InputField) {
 	m.inputPrompt = true
 	m.inputRequest = request
 	m.inputField = field
-	m.textInput.SetValue("")
+	m.textInput.SetValue(field.Default)
 	m.textInput.CursorEnd()
 	m.textInput.Focus()
 	m.status = fmt.Sprintf("%s needs %s: %s", request.module.Name(), field.Key, field.Prompt)
@@ -58,9 +58,18 @@ func (m *model) openInput(request inputRequest, field modules.InputField) {
 // it on the target.
 func (m *model) acceptInput() tea.Cmd {
 	value := strings.TrimSpace(m.textInput.Value())
+	if value == "" && m.inputField.Default != "" {
+		value = m.inputField.Default
+	}
 	if value == "" {
 		m.status = fmt.Sprintf("%s is required; type a value and press Enter, or Esc to skip %s", m.inputField.Key, m.inputRequest.module.Name())
 		return nil
+	}
+	if validator, ok := m.inputRequest.module.(modules.InputValidator); ok {
+		if err := validator.ValidateInput(m.inputField.Key, value); err != nil {
+			m.status = fmt.Sprintf("%s is invalid: %s", m.inputField.Key, err)
+			return nil
+		}
 	}
 	m.setModuleInput(m.inputRequest.module.ID(), m.inputField.Key, value)
 	m.inputPrompt = false

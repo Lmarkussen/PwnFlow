@@ -246,6 +246,7 @@ func TestFindingCategoryUsesStableDetectorIdentity(t *testing.T) {
 		{"gpo_security_configuration_observed", "gpoParser", "active_directory"},
 		{"mssql_encryption_not_enforced", "mssqlrelay", "network"},
 		{"mssql_relationship_observed", "MSSqlPwner", "network"},
+		{"masscan_open_port_observed", "Masscan", "network"},
 	}
 	for _, test := range cases {
 		finding := storage.Finding{FindingInput: storage.FindingInput{FindingType: test.typ, SourceTool: test.source}}

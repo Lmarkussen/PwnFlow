@@ -49,6 +49,7 @@ const (
 	MSSqlPwner   ID = "mssqlpwner"
 	GPOParser    ID = "gpoparser"
 	GhostSPN     ID = "ghostspn"
+	Masscan      ID = "masscan"
 )
 
 // Layout locates a tool that is a source checkout with its own interpreter.
@@ -134,6 +135,7 @@ func DefaultRegistry() Registry {
 		{ID: MSSqlPwner, DisplayName: "MSSqlPwner", Install: "install.sh --with-mssqlpwner", InstallHint: "./install.sh --with-mssqlpwner", InstallMethod: InstallPipx, Package: "MSSqlPwner", Required: false, Executable: "mssqlpwner", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"usage: mssqlpwner"}},
 		{ID: GPOParser, DisplayName: "gpoParser", Install: "install.sh --with-gpoparser", InstallHint: "./install.sh --with-gpoparser", InstallMethod: InstallPipx, Package: "gpoParser", Required: false, Executable: "gpoParser", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"GPO Analysis Tool"}},
 		{ID: GhostSPN, DisplayName: "ghostSPN", Install: "install.sh --with-ghostspn", InstallHint: "./install.sh --with-ghostspn", InstallMethod: InstallPipx, Package: "ghostSPN", Required: false, Executable: "ghostspn", ExecutableCandidates: []string{"ghostspn", "ghostSPN.py"}, ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"ghost"}},
+		{ID: Masscan, DisplayName: "Masscan", Install: "install.sh --with-masscan", InstallHint: "./install.sh --with-masscan", InstallMethod: InstallAPT, Package: "masscan", Required: false, Executable: "masscan", ProbeArgs: []string{"--version"}, VersionArgs: []string{"--version"}, ProbeMustContain: []string{"masscan"}, ProbeAcceptsNonZeroExit: true},
 	}}
 }
 
@@ -195,13 +197,15 @@ func check(ctx context.Context, definition Definition) Status {
 	probe := exec.CommandContext(ctx, path, probeArgs...)
 	probe.Stdout, probe.Stderr = &probeStdout, &probeStderr
 	if err := probe.Run(); err != nil {
-		state := "broken"
-		if ctx.Err() != nil {
-			state = "check failed"
+		if !definition.ProbeAcceptsNonZeroExit || (probeStdout.Len() == 0 && probeStderr.Len() == 0) {
+			state := "broken"
+			if ctx.Err() != nil {
+				state = "check failed"
+			}
+			status.State = state
+			status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", definition.DisplayName, strings.Join(probeArgs, " "), diagnostic(probeStdout.String(), probeStderr.String(), err))
+			return status
 		}
-		status.State = state
-		status.Detail = fmt.Sprintf("%s capability probe %q failed: %s", definition.DisplayName, strings.Join(probeArgs, " "), diagnostic(probeStdout.String(), probeStderr.String(), err))
-		return status
 	}
 	for _, required := range definition.ProbeMustContain {
 		if !strings.Contains(probeStdout.String(), required) && !strings.Contains(probeStderr.String(), required) {

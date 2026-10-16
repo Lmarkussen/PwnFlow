@@ -10,6 +10,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
+	"github.com/pwnflow/pwnflow/internal/modules/masscan"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/modules/relayking"
@@ -54,6 +55,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	for _, module := range specialized.Modules() {
 		registry.Register(module)
 	}
+	registry.Register(masscan.Module{})
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
 		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
