@@ -36,6 +36,7 @@ type model struct {
 	findingSubcategories   []findingSubcategory
 	findingCategories      []findingCategory
 	findingAllRows         []storage.Finding
+	findingsLoaded         bool
 	inlineEvidence         inlineEvidence
 	inlineEvidenceTop      int
 	inlineEvidenceLoading  bool

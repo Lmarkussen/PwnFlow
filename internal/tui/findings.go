@@ -180,15 +180,19 @@ func (m *model) refreshFindings() {
 	if !m.findingsView || m.db == nil {
 		return
 	}
-	rows, err := m.db.ListFindings(m.ctx, m.targetID)
-	if err != nil {
-		m.status = "findings unavailable: " + err.Error()
-		return
+	if !m.findingsLoaded {
+		rows, err := m.db.ListFindings(m.ctx, m.targetID)
+		if err != nil {
+			m.status = "findings unavailable: " + err.Error()
+			return
+		}
+		m.findingAllRows = append(m.findingAllRows[:0], rows...)
+		m.findingCategories = buildFindingCategories(m.findingAllRows)
+		m.findingsLoaded = true
 	}
-	m.findingAllRows = append(m.findingAllRows[:0], rows...)
-	m.findingCategories = buildFindingCategories(rows)
+	rows := m.findingAllRows
 	search := strings.ToLower(strings.TrimSpace(m.findingSearch))
-	filtered := rows[:0]
+	filtered := make([]storage.Finding, 0, len(rows))
 	for _, finding := range rows {
 		if m.findingViewMode == "" {
 			m.findingViewMode = "findings"
@@ -219,10 +223,20 @@ func (m *model) refreshFindings() {
 	}
 	sort.SliceStable(filtered, func(i, j int) bool { return severityRank(filtered[i].Severity) > severityRank(filtered[j].Severity) })
 	m.findingRows = append(m.findingRows[:0], filtered...)
-	if m.findingCursor >= len(m.findingRows) {
+	if m.findingCategoryView {
+		limit := len(m.findingCategories)
+		if m.findingSubcategoryView {
+			limit = len(m.findingSubcategories)
+		}
+		if m.findingCursor >= limit {
+			m.findingCursor = max(0, limit-1)
+		}
+	} else if m.findingCursor >= len(m.findingRows) {
 		m.findingCursor = max(0, len(m.findingRows)-1)
 	}
-	m.keepFindingVisible()
+	if !m.findingCategoryView {
+		m.keepFindingVisible()
+	}
 }
 
 func groupVisibleFindings(rows []storage.Finding) []storage.Finding {
@@ -470,7 +484,12 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		}
 		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
-	if len(m.findingSubcategories) == 0 || (m.findingSubcategories[m.findingCursor].Findings == 0 && m.findingSubcategories[m.findingCursor].Observations == 0) {
+	empty := len(m.findingSubcategories) == 0
+	if !empty {
+		index := min(max(0, m.findingCursor), len(m.findingSubcategories)-1)
+		empty = m.findingSubcategories[index].Findings == 0 && m.findingSubcategories[index].Observations == 0
+	}
+	if empty {
 		content.WriteString(warn.Render("No records in this category. Analysis status: NOT ASSESSED.") + "\n")
 	}
 	content.WriteString(dim.Render("\nEnter Open Group   f Findings   o Observations   a All   Esc Back"))

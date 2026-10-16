@@ -120,6 +120,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case findingsCompleteMsg:
 		m.analysisPending = false
 		m.batchSummaryShown = true
+		m.findingsLoaded = false
 		if msg.err != nil {
 			m.status = "Findings analysis partial: " + msg.err.Error()
 		} else if m.findings != nil {
@@ -129,6 +130,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case findingsReanalysisMsg:
+		m.findingsLoaded = false
 		if msg.err != nil {
 			m.status = "historical reanalysis failed: " + msg.err.Error()
 		} else {
@@ -161,8 +163,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.findingCursor < 0 {
 				m.findingCursor = 0
 			}
-			if m.findingCursor >= len(m.findingRows) {
-				m.findingCursor = max(0, len(m.findingRows)-1)
+			limit := len(m.findingRows)
+			if m.findingCategoryView {
+				limit = len(m.findingCategories)
+				if m.findingSubcategoryView {
+					limit = len(m.findingSubcategories)
+				}
+			}
+			if m.findingCursor >= limit {
+				m.findingCursor = max(0, limit-1)
 			}
 			m.keepFindingVisible()
 		}
@@ -333,6 +342,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.findingCategoryView = true
 			m.findingCategory = ""
 			m.findingCursor = 0
+			m.findingsLoaded = false
 			m.refreshFindings()
 			return m, nil
 		}
@@ -503,6 +513,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.findingCategoryView = true
 		m.findingCategory = ""
 		m.findingCursor = 0
+		m.findingsLoaded = false
 		m.refreshFindings()
 	}
 	return m, nil
@@ -580,7 +591,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "/":
 			m.findingSearchMode = true
 		case "enter":
-			if len(m.findingSubcategories) > 0 {
+			if len(m.findingSubcategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingSubcategories) {
 				selected := m.findingSubcategories[m.findingCursor]
 				m.findingSubcategory = selected.Key
 				if selected.Findings == 0 && selected.Observations > 0 {
@@ -642,7 +653,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				m.findingTop = 0
 				return m, m.beginFindingInlineEvidence()
 			}
-			if len(m.findingCategories) > 0 {
+			if len(m.findingCategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingCategories) {
 				m.findingCategory = m.findingCategories[m.findingCursor].Key
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
 				m.findingSubcategoryView = true

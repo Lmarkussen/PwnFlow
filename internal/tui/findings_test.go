@@ -193,6 +193,73 @@ func TestFindingsHierarchyBackNavigation(t *testing.T) {
 	}
 }
 
+func TestFindingsRootNavigationUsesAllCategories(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.UpsertTarget(ctx, "example.test", "192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	assessmentID, err := db.TargetID(ctx, "example.test", "192.0.2.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.IngestFindings(ctx, []storage.FindingInput{{
+		FindingKey: "root-navigation", AssessmentID: assessmentID, SourceTool: "synthetic",
+		FindingType: "kerberoastable_account",
+		Title:       "Synthetic Kerberos finding", Severity: "medium", Confidence: "confirmed", EvidenceJSON: "{}",
+		ArtifactPath: "synthetic.log", ArtifactRef: "line 1", ObservedAt: time.Now().UTC(), Status: "open", ParserVersion: "test",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{ctx: ctx, db: db, targetID: assessmentID, findingsView: true, findingCategoryView: true, findingViewMode: "all", width: 120, height: 40}
+	m.refreshFindings()
+	want := []string{"credentials", "kerberos", "active_directory", "acl", "adcs", "delegation", "network", "other"}
+	if len(m.findingCategories) != len(want) {
+		t.Fatalf("category count=%d, want %d", len(m.findingCategories), len(want))
+	}
+	for index, key := range want {
+		if m.findingCategories[index].Key != key {
+			t.Fatalf("category %d=%q, want %q", index, m.findingCategories[index].Key, key)
+		}
+		if index > 0 {
+			m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		}
+		if m.findingCursor != index {
+			t.Fatalf("after %d Down keys cursor=%d, want %d", index, m.findingCursor, index)
+		}
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	if m.findingCursor != len(want)-1 {
+		t.Fatalf("End cursor=%d, want %d", m.findingCursor, len(want)-1)
+	}
+	for index := len(want) - 2; index >= 0; index-- {
+		m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		if m.findingCursor != index {
+			t.Fatalf("after reverse navigation cursor=%d, want %d", m.findingCursor, index)
+		}
+	}
+}
+
+func TestFindingsEscRemainsResponsiveWithLargeACLSet(t *testing.T) {
+	rows := make([]storage.Finding, 1400)
+	for index := range rows {
+		rows[index] = storage.Finding{FindingInput: storage.FindingInput{
+			FindingKey: fmt.Sprintf("acl-%d", index), FindingType: "ad_acl_genericwrite", Title: "Synthetic ACL",
+			Severity: "informational", RelatedObjectID: fmt.Sprintf("principal-%d", index), AffectedObjectID: "target",
+		}}
+	}
+	m := &model{findingsView: true, findingCategoryView: false, findingCategory: "acl", findingViewMode: "all", findingRows: rows, findingCursor: 700, width: 120, height: 40}
+	started := time.Now()
+	m.handleFindingsKey("esc")
+	if elapsed := time.Since(started); elapsed >= 100*time.Millisecond {
+		t.Fatalf("Esc took %s with a large ACL presentation", elapsed)
+	}
+}
+
 func TestGlobalVisibleFindingsGroupsACLRecordsOnly(t *testing.T) {
 	rows := []storage.Finding{
 		{FindingInput: storage.FindingInput{FindingType: "ad_acl_writedacl", RelatedObjectID: "p", AffectedObjectID: "t", RelatedObject: "P", AffectedObject: "T", Severity: "high"}},
