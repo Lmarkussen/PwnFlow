@@ -44,6 +44,28 @@ func TestHeadlessUsesTheCuratedDefaultPlanSource(t *testing.T) {
 	}
 }
 
+func TestGlobalPlanKeepsProfileEntriesAcrossDependencyEnvironments(t *testing.T) {
+	registered := buildRegistry().All()
+	moduleIDs := make([]int64, len(registered))
+	rootModel := newModel(context.Background(), config.Config{Target: "198.51.100.10", Domain: "example.test", Username: "operator", Root: t.TempDir()}, nil, registered, moduleIDs, 1, "production-test")
+	userReasons := make(map[string]string)
+	for _, module := range registered {
+		userReasons[module.ID()] = "dependency unavailable in this environment"
+	}
+	userModel := newModel(context.Background(), config.Config{Target: "198.51.100.10", Domain: "example.test", Username: "operator", Root: t.TempDir()}, nil, registered, moduleIDs, 1, "production-test", userReasons)
+	rootPlan := rootModel.globalPlan()
+	userPlan := userModel.globalPlan()
+	if len(rootPlan.indices) != len(userPlan.indices) {
+		t.Fatalf("dependency environment changed selected count: root=%d user=%d", len(rootPlan.indices), len(userPlan.indices))
+	}
+	if strings.Join(rootModel.planNames(rootPlan.indices), ",") != strings.Join(userModel.planNames(userPlan.indices), ",") {
+		t.Fatalf("dependency environment changed selected module order")
+	}
+	if len(userPlan.unavailable) == 0 {
+		t.Fatal("dependency limitations were not retained for reporting")
+	}
+}
+
 func containsHeadlessString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

@@ -160,6 +160,9 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	if len(plan.skipped) > 0 {
 		fmt.Fprintf(out, "%s\n", colors.yellow(fmt.Sprintf("Modules skipped by the existing plan: %d", len(plan.skipped))))
 	}
+	for _, limitation := range plan.unavailable {
+		fmt.Fprintf(out, "%s\n", colors.yellow("Module limitation: "+safeAutoText(limitation)))
+	}
 	fmt.Fprintln(out, colors.heading("ENUMERATION"))
 	if cmd := m.runBatch(plan.indices, plan.name); cmd != nil {
 		return fmt.Errorf("headless batch did not start")
