@@ -231,3 +231,31 @@ func TestNetworkHoundArtifactOwnershipUsesOutputPrefix(t *testing.T) {
 		t.Fatalf("scope sources = %#v", scopeSources)
 	}
 }
+
+func TestInventorySourceSelectionExcludesGroupsAndScopeCandidates(t *testing.T) {
+	rusthound := publicationExecution{Tool: "RustHound-CE", OutputPath: "rusthound-ce.log"}
+	if inventoryJSONAllowed(rusthound, "20261017143224_sccm-lab_groups.json") {
+		t.Fatal("RustHound groups were accepted as user inventory")
+	}
+	if !inventoryJSONAllowed(rusthound, "20261017143224_sccm-lab_users.json") || !inventoryJSONAllowed(rusthound, "20261017143224_sccm-lab_computers.json") {
+		t.Fatal("RustHound user/computer sources were rejected")
+	}
+	topology := publicationExecution{Tool: "NetworkHound", OutputPath: "topology.log"}
+	scope := publicationExecution{Tool: "NetworkHound", OutputPath: "scope-validation.log"}
+	if !inventoryJSONAllowed(topology, "network_opengraph.json") {
+		t.Fatal("NetworkHound topology was rejected")
+	}
+	if inventoryJSONAllowed(scope, "network_scope.json") {
+		t.Fatal("NetworkHound scope candidates contaminated host inventory")
+	}
+}
+
+func TestInventoryIPOrderingIsNumeric(t *testing.T) {
+	records := map[string]*inventoryRecord{
+		"a": {IPs: map[string]bool{"192.0.2.10": true, "192.0.2.2": true}, Users: map[string]bool{}},
+	}
+	inventory := inventoryFromRecords(records, true)
+	if strings.Join(inventory.IPs, ",") != "192.0.2.2,192.0.2.10" {
+		t.Fatalf("numeric IP ordering = %#v", inventory.IPs)
+	}
+}

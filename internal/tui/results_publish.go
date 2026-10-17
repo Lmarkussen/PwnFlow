@@ -221,7 +221,10 @@ func publicationSources(execution publicationExecution, root string) []string {
 		}
 	}
 	add(execution.OutputPath)
-	add(findingengine.DiscoverArtifact(execution.Tool, execution.OutputPath))
+	isRustHound := strings.EqualFold(execution.Tool, "rusthound") || strings.EqualFold(execution.Tool, "rusthound-ce")
+	if !isRustHound {
+		add(findingengine.DiscoverArtifact(execution.Tool, execution.OutputPath))
+	}
 	if execution.OutputPath != "" {
 		base := filepath.Dir(execution.OutputPath)
 		artifactRoot := filepath.Join(base, "artifacts")
@@ -232,7 +235,7 @@ func publicationSources(execution publicationExecution, root string) []string {
 				if !entry.IsDir() {
 					continue
 				}
-				if !strings.HasPrefix(entry.Name(), prefix) {
+				if !strings.HasPrefix(entry.Name(), prefix) && !isRustHound {
 					continue
 				}
 				path := filepath.Join(artifactRoot, entry.Name())
@@ -431,7 +434,7 @@ func collectPublicationInventory(executions []publicationExecution, root, domain
 				continue
 			}
 			for _, path := range entries {
-				if strings.HasSuffix(strings.ToLower(path), ".json") {
+				if inventoryJSONAllowed(execution, path) {
 					data, err := os.ReadFile(path)
 					if err != nil {
 						complete = false
@@ -444,6 +447,10 @@ func collectPublicationInventory(executions []publicationExecution, root, domain
 			}
 		}
 	}
+	return inventoryFromRecords(records, complete), nil
+}
+
+func inventoryFromRecords(records map[string]*inventoryRecord, complete bool) publishedInventory {
 	var names, ips, pairs, users []string
 	nameSet, ipSet, pairSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	userSet := map[string]string{}
@@ -477,10 +484,33 @@ func collectPublicationInventory(executions []publicationExecution, root, domain
 		users = append(users, value)
 	}
 	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
-	sort.Strings(ips)
+	sort.Slice(ips, func(i, j int) bool {
+		left, right := net.ParseIP(ips[i]).To4(), net.ParseIP(ips[j]).To4()
+		for index := range left {
+			if left[index] != right[index] {
+				return left[index] < right[index]
+			}
+		}
+		return ips[i] < ips[j]
+	})
 	sort.Strings(pairs)
 	sort.Slice(users, func(i, j int) bool { return strings.ToLower(users[i]) < strings.ToLower(users[j]) })
-	return publishedInventory{Names: names, IPs: ips, Pairs: pairs, Users: users, Complete: complete && len(users) > 0, UserEvidence: len(users) > 0}, nil
+	return publishedInventory{Names: names, IPs: ips, Pairs: pairs, Users: users, Complete: complete && len(users) > 0, UserEvidence: len(users) > 0}
+}
+
+func inventoryJSONAllowed(execution publicationExecution, path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	switch strings.ToLower(execution.Tool) {
+	case "rusthound", "rusthound-ce":
+		return strings.HasSuffix(name, "_users.json") || strings.HasSuffix(name, "_computers.json")
+	case "networkhound":
+		output := strings.ToLower(filepath.Base(execution.OutputPath))
+		return strings.HasPrefix(output, "topology") && name == "network_opengraph.json"
+	case "netexec", "netexec (nxc)":
+		return strings.Contains(name, "user") || strings.Contains(name, "computer")
+	default:
+		return false
+	}
 }
 
 func extractInventoryJSON(data []byte, domain string, records map[string]*inventoryRecord) bool {
