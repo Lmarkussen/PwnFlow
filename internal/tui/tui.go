@@ -26,6 +26,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/trustinventory"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
+	"golang.org/x/term"
 )
 
 func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string, dependencyReasons ...map[string]string) error {
@@ -104,6 +105,9 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	if out == nil {
 		out = io.Discard
 	}
+	colors := newAutoTheme(out)
+	fmt.Fprintln(out, colors.green(embeddedBanner))
+	fmt.Fprintln(out, colors.cyan("PwnFlow — Automated Active Directory Assessment"))
 	registry := buildRegistry()
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
@@ -136,6 +140,12 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 			}
 		}
 		for _, approval := range plan.approvals {
+			if approval.index < 0 || approval.index >= len(m.allModules) {
+				continue
+			}
+			if _, requiresElevation := m.allModules[approval.index].(modules.ElevationRequester); !requiresElevation {
+				continue
+			}
 			if err := headlessAuthorize(ctx, m, approval); err != nil {
 				return fmt.Errorf("--auto cannot authorize local privileges for %s: %w", safeAutoText(strings.Join(names, ", ")), err)
 			}
@@ -144,14 +154,15 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	if len(plan.indices) == 0 {
 		return fmt.Errorf("Default Enumeration has no available modules")
 	}
-	fmt.Fprintf(out, "PwnFlow — Headless Default Enumeration\n\nDomain: %s\nModules selected: %d\n", safeAutoText(cfg.Domain), len(plan.indices))
+	fmt.Fprintf(out, "\nTarget:       %s\nDomain:       %s\nMode:         Headless Default Enumeration\nModules:      %d\nScope CIDR:   %s\n", safeAutoText(cfg.Target), safeAutoText(cfg.Domain), len(plan.indices), safeAutoText(autoScope(cfg)))
 	if len(plan.skipped) > 0 {
-		fmt.Fprintf(out, "Modules skipped by the existing plan: %d\n", len(plan.skipped))
+		fmt.Fprintf(out, "%s\n", colors.yellow(fmt.Sprintf("Modules skipped by the existing plan: %d", len(plan.skipped))))
 	}
+	fmt.Fprintln(out, colors.heading("ENUMERATION"))
 	if cmd := m.runBatch(plan.indices, plan.name); cmd != nil {
 		return fmt.Errorf("headless batch did not start")
 	}
-	if err := reportAutoProgress(ctx, out, m); err != nil {
+	if err := reportAutoProgress(ctx, out, m, colors); err != nil {
 		if ctx.Err() != nil {
 			_ = m.syncBatchError()
 		}
@@ -178,31 +189,35 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	if err := writeFindingsSummary(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
 		return fmt.Errorf("findings summary export: %w", err)
 	}
-	fmt.Fprintln(out, "Findings summary ... generated")
+	fmt.Fprintln(out, colors.green("✔ Findings summary generated"))
 	if err := publishDefaultResults(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
 		return fmt.Errorf("flat results publication: %w", err)
 	}
-	fmt.Fprintln(out, "Flat tool results and inventories ... published")
+	fmt.Fprintln(out, colors.green("✔ Flat tool results and inventories published"))
 	if err := writeCollectionQuality(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
 		return fmt.Errorf("collection quality export: %w", err)
 	}
-	fmt.Fprintln(out, "Collection quality report ... generated")
+	fmt.Fprintln(out, colors.green("✔ Collection quality report generated"))
 	if err := writeADPrivilegedAccess(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
 		return fmt.Errorf("privileged access report: %w", err)
 	}
-	fmt.Fprintln(out, "Privileged access inventory ... generated")
+	fmt.Fprintln(out, colors.green("✔ Privileged access inventory generated"))
 	for _, label := range []string{"findings_summary.txt", "collection_completeness.txt", "AD_PRIVILEGED_ACCESS.txt", "AD_USERS.txt", "DNS_NAMES.txt", "DNS_NAME_IP.txt", "IP_ADDRESSES.txt", "published_results_manifest.txt"} {
 		if _, statErr := os.Stat(filepath.Join(cfg.ResultsRoot(), label)); statErr != nil {
 			return fmt.Errorf("required report %s was not generated", label)
 		}
 	}
-	if batchHasFailure(m.batch) {
-		return errors.New("one or more Default Enumeration modules failed or did not complete")
-	}
 	if findingsErr != nil {
 		return errors.New("findings analysis reported one or more failures")
 	}
-	fmt.Fprintf(out, "Assessment completed.\nResults: %s\n", safeAutoText(cfg.ResultsRoot()))
+	completed, unavailable, failed := batchStatusCounts(m.batch)
+	fmt.Fprintln(out, colors.heading("ASSESSMENT SUMMARY"))
+	fmt.Fprintf(out, "Completed:    %d\nUnavailable:  %d\nFailed:       %d\n\nResults: %s\n", completed, unavailable, failed, safeAutoText(cfg.ResultsRoot()))
+	if batchHasFailure(m.batch) {
+		fmt.Fprintln(out, colors.yellow("Assessment completed with module limitations."))
+		return errors.New("one or more Default Enumeration modules failed or did not complete")
+	}
+	fmt.Fprintln(out, colors.green("Assessment completed."))
 	return nil
 }
 
@@ -217,7 +232,7 @@ func headlessAuthorize(ctx context.Context, m *model, approval approval) error {
 	return nil
 }
 
-func reportAutoProgress(ctx context.Context, out io.Writer, m *model) error {
+func reportAutoProgress(ctx context.Context, out io.Writer, m *model, colors autoTheme) error {
 	seen := make(map[int]string)
 	for {
 		states, _, _, _ := m.batch.Snapshot()
@@ -226,7 +241,7 @@ func reportAutoProgress(ctx context.Context, out io.Writer, m *model) error {
 				continue
 			}
 			seen[index] = state.Status
-			fmt.Fprintf(out, "[%02d/%02d] %s ... %s\n", index+1, len(states), safeAutoText(state.Module.Name()), safeAutoText(state.Status))
+			fmt.Fprintf(out, "[%02d/%02d] %-44s %s\n", index+1, len(states), safeAutoText(state.Module.Name()), colors.status(state.Status))
 		}
 		select {
 		case <-m.batch.Done():
@@ -236,7 +251,7 @@ func reportAutoProgress(ctx context.Context, out io.Writer, m *model) error {
 					continue
 				}
 				seen[index] = state.Status
-				fmt.Fprintf(out, "[%02d/%02d] %s ... %s\n", index+1, len(states), safeAutoText(state.Module.Name()), safeAutoText(state.Status))
+				fmt.Fprintf(out, "[%02d/%02d] %-44s %s\n", index+1, len(states), safeAutoText(state.Module.Name()), colors.status(state.Status))
 			}
 			return nil
 		case <-ctx.Done():
@@ -271,6 +286,62 @@ func batchHasFailure(batch *runner.BatchRun) bool {
 		}
 	}
 	return false
+}
+
+func batchStatusCounts(batch *runner.BatchRun) (completed, unavailable, failed int) {
+	states, _, _, _ := batch.Snapshot()
+	for _, state := range states {
+		switch strings.ToLower(state.Status) {
+		case "completed":
+			completed++
+		case "unavailable", "skipped":
+			unavailable++
+		default:
+			failed++
+		}
+	}
+	return
+}
+
+func autoScope(cfg config.Config) string {
+	if values := cfg.ModuleOptions["networkhound-scope-validation"]; values != nil && strings.TrimSpace(values["NETWORKS"]) != "" {
+		return values["NETWORKS"]
+	}
+	return "not supplied (scope validation unavailable)"
+}
+
+type autoTheme struct{ enabled bool }
+
+func newAutoTheme(out io.Writer) autoTheme {
+	file, ok := out.(*os.File)
+	return autoTheme{enabled: ok && term.IsTerminal(int(file.Fd())) && os.Getenv("NO_COLOR") == ""}
+}
+
+func (theme autoTheme) paint(code, value string) string {
+	if !theme.enabled {
+		return value
+	}
+	return code + value + "\x1b[0m"
+}
+func (theme autoTheme) green(value string) string  { return theme.paint("\x1b[32m", value) }
+func (theme autoTheme) cyan(value string) string   { return theme.paint("\x1b[36m", value) }
+func (theme autoTheme) yellow(value string) string { return theme.paint("\x1b[33m", value) }
+func (theme autoTheme) red(value string) string    { return theme.paint("\x1b[31m", value) }
+func (theme autoTheme) dim(value string) string    { return theme.paint("\x1b[90m", value) }
+func (theme autoTheme) heading(value string) string {
+	return theme.cyan("\n" + strings.Repeat("─", 60) + "\n" + value + "\n" + strings.Repeat("─", 60))
+}
+func (theme autoTheme) status(status string) string {
+	switch strings.ToLower(status) {
+	case "completed":
+		return theme.green("✔ Done")
+	case "unavailable", "skipped":
+		return theme.yellow("! " + strings.Title(strings.ToLower(status)))
+	case "failed", "aborted", "cancelled":
+		return theme.red("✖ " + strings.Title(strings.ToLower(status)))
+	default:
+		return theme.dim(safeAutoText(status))
+	}
 }
 
 func safeAutoText(value string) string {

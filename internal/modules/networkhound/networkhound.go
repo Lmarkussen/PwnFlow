@@ -383,6 +383,25 @@ func validateScope(scope string) error {
 	return nil
 }
 
+// ValidateScope exposes the existing scope contract to non-TUI entry points.
+// It validates configuration only; it does not expand, resolve, or probe hosts.
+func ValidateScope(scope string) error { return validateScope(scope) }
+
+// ValidateCIDR validates the narrower --network-cidr CLI form. NetworkHound's
+// existing module still receives the original CIDR and retains its command
+// semantics; this helper only rejects malformed and management-network input.
+func ValidateCIDR(value string) error {
+	ip, network, err := net.ParseCIDR(strings.TrimSpace(value))
+	if err != nil || ip.To4() == nil || !ip.Equal(network.IP) {
+		return fmt.Errorf("network CIDR must be a valid IPv4 network")
+	}
+	tailscale := &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+	if tailscale.Contains(network.IP) || network.Contains(tailscale.IP) {
+		return fmt.Errorf("network CIDR overlaps the prohibited Tailscale range")
+	}
+	return nil
+}
+
 // installedHelp reads the checkout's own usage text.
 func installedHelp(ctx context.Context, found dependencies.Status) (string, error) {
 	program, base, err := command(found)

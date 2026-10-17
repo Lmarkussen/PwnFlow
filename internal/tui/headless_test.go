@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -12,6 +13,13 @@ func TestHeadlessProgressTextIsPlainAndSanitized(t *testing.T) {
 	value := safeAutoText("\x1b[31mpassword: hidden\x1b[0m")
 	if strings.ContainsAny(value, "\x1b") || strings.Contains(value, "hidden") || strings.Contains(value, "31m") {
 		t.Fatalf("unsafe progress text: %q", value)
+	}
+}
+
+func TestHeadlessThemeDisablesColorWhenOutputIsRedirected(t *testing.T) {
+	theme := newAutoTheme(&bytes.Buffer{})
+	if theme.enabled || strings.Contains(theme.green("done"), "\x1b") {
+		t.Fatal("redirected headless output enabled ANSI color")
 	}
 }
 
