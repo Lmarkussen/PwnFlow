@@ -232,7 +232,7 @@ func publicationSources(execution publicationExecution, root string) []string {
 				if !entry.IsDir() {
 					continue
 				}
-				if !strings.HasPrefix(entry.Name(), prefix) && !strings.EqualFold(execution.Tool, "networkhound") {
+				if !strings.HasPrefix(entry.Name(), prefix) {
 					continue
 				}
 				path := filepath.Join(artifactRoot, entry.Name())
@@ -497,16 +497,19 @@ func extractInventoryJSON(data []byte, domain string, records map[string]*invent
 				visit(child)
 			}
 		case map[string]any:
-			attributes, _ := item["attributes"].(map[string]any)
-			kind := strings.ToLower(fmt.Sprint(item["kinds"]))
-			isComputer := strings.Contains(kind, "computer") || hasKey(item, attributes, "dNSHostName") || hasKey(item, attributes, "dnsHostName")
-			isUser := hasKey(item, attributes, "sAMAccountName") && !isComputer
+			attributes, _ := mapValue(item, "attributes")
+			properties, _ := mapValue(item, "properties")
+			kind := strings.ToLower(fmt.Sprint(mapValueValue(item, "kinds")))
+			objectFields := mergeInventoryFields(attributes, properties)
+			samAccountName := fieldText(item, objectFields, "sAMAccountName", "samaccountname")
+			isComputer := strings.Contains(kind, "computer") || strings.HasSuffix(samAccountName, "$") || hasKey(item, objectFields, "dNSHostName", "dnsHostName")
+			isUser := samAccountName != "" && !isComputer
 			if isComputer || isUser {
 				found = true
 				addInventoryRecord(item, domain, records, isComputer, isUser)
 			}
 			for key, child := range item {
-				if key == "attributes" || key == "properties" {
+				if strings.EqualFold(key, "attributes") || strings.EqualFold(key, "properties") {
 					continue
 				}
 				visit(child)
@@ -519,10 +522,10 @@ func extractInventoryJSON(data []byte, domain string, records map[string]*invent
 
 func addInventoryRecord(item map[string]any, domain string, records map[string]*inventoryRecord, isComputer, isUser bool) {
 	props := item
-	if nested, ok := item["properties"].(map[string]any); ok {
+	if nested, ok := mapValue(item, "properties"); ok {
 		props = nested
 	}
-	if attrs, ok := item["attributes"].(map[string]any); ok {
+	if attrs, ok := mapValue(item, "attributes"); ok {
 		for key, value := range attrs {
 			if _, exists := props[key]; !exists {
 				props[key] = value
@@ -532,7 +535,7 @@ func addInventoryRecord(item map[string]any, domain string, records map[string]*
 	if !inventoryObjectInDomain(item, props, domain) {
 		return
 	}
-	sid := fieldText(item, props, "objectid", "objectSid", "objectSID", "sid")
+	sid := fieldText(item, props, "objectid", "objectidentifier", "objectSid", "objectSID", "sid", "id")
 	key := strings.ToLower(sid)
 	if key == "" {
 		key = "anon:" + strings.ToLower(fieldText(item, props, "dNSHostName", "dnsHostName", "hostname", "name", "sAMAccountName"))
@@ -546,7 +549,7 @@ func addInventoryRecord(item map[string]any, domain string, records map[string]*
 		records[key] = record
 	}
 	if isComputer {
-		if hostname := validInventoryHostname(fieldText(item, props, "dNSHostName", "dnsHostName", "hostname"), domain); hostname != "" {
+		if hostname := validInventoryHostname(fieldText(item, props, "dNSHostName", "dnsHostName", "hostname", "name"), domain); hostname != "" {
 			record.Hostname = hostname
 		}
 	}
@@ -562,17 +565,21 @@ func addInventoryRecord(item map[string]any, domain string, records map[string]*
 	}
 }
 
-func hasKey(item, attributes map[string]any, key string) bool {
-	if _, ok := item[key]; ok {
-		return true
+func hasKey(item, attributes map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := mapValueValue(item, key).(interface{}); ok {
+			return true
+		}
+		if _, ok := mapValueValue(attributes, key).(interface{}); ok {
+			return true
+		}
 	}
-	_, ok := attributes[key]
-	return ok
+	return false
 }
 func fieldText(item, attributes map[string]any, keys ...string) string {
 	for _, key := range keys {
 		for _, source := range []map[string]any{item, attributes} {
-			if value, ok := source[key]; ok {
+			if value, ok := mapValueValue(source, key).(interface{}); ok {
 				if text := scalarText(value); text != "" {
 					return text
 				}
@@ -580,6 +587,38 @@ func fieldText(item, attributes map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func mapValue(item map[string]any, key string) (map[string]any, bool) {
+	value, ok := mapValueValue(item, key).(map[string]any)
+	return value, ok
+}
+
+func mapValueValue(item map[string]any, key string) any {
+	if item == nil {
+		return nil
+	}
+	if value, ok := item[key]; ok {
+		return value
+	}
+	for candidate, value := range item {
+		if strings.EqualFold(candidate, key) {
+			return value
+		}
+	}
+	return nil
+}
+
+func mergeInventoryFields(values ...map[string]any) map[string]any {
+	merged := map[string]any{}
+	for _, value := range values {
+		for key, item := range value {
+			if _, exists := merged[key]; !exists {
+				merged[key] = item
+			}
+		}
+	}
+	return merged
 }
 
 func inventoryObjectInDomain(item, attributes map[string]any, domain string) bool {
@@ -636,7 +675,7 @@ func valuesFromAny(value any) []string {
 }
 func validInventoryIP(value string) string {
 	ip := net.ParseIP(strings.TrimSpace(value))
-	if ip == nil || ip.To4() == nil || ip.To4().String() == "255.255.255.255" {
+	if ip == nil || ip.To4() == nil || ip.Equal(net.IPv4(255, 255, 255, 255)) {
 		return ""
 	}
 	four := ip.To4()
@@ -679,12 +718,24 @@ func formatPublicationManifest(domain string, assessmentID int64, ids []int64, a
 	}
 	b.WriteString("\nInventory:\n")
 	completeness := map[bool]string{true: "complete", false: "partial"}
-	fmt.Fprintf(&b, "- DNS_NAMES.txt: %d\n- DNS_NAME_IP.txt: %d\n- IP_ADDRESSES.txt: %d\n- AD_USERS.txt: %d\n- AD_USERS.txt completeness: %s\n", len(inventory.Names), len(inventory.Pairs), len(inventory.IPs), len(inventory.Users), completeness[inventory.UserEvidence])
+	fmt.Fprintf(&b, "- AD_USERS.txt: %d entries | %s\n- DNS_NAMES.txt: %d entries | %s\n- DNS_NAME_IP.txt: %d mappings | %s\n- IP_ADDRESSES.txt: %d entries | %s\n", len(inventory.Users), inventoryStatus(len(inventory.Users), inventory.Complete && inventory.UserEvidence, "no supported user objects"), len(inventory.Names), inventoryStatus(len(inventory.Names), inventory.Complete, "no matching computer objects"), len(inventory.Pairs), inventoryStatus(len(inventory.Pairs), inventory.Complete, "no supported hostname/IP correlation"), len(inventory.IPs), inventoryStatus(len(inventory.IPs), inventory.Complete, "no supported computer IPs"))
+	fmt.Fprintf(&b, "- AD_USERS.txt completeness: %s\n", completeness[inventory.Complete && inventory.UserEvidence])
 	if len(tools) == 0 {
 		b.WriteString("- No completed tool outputs were available.\n")
 	}
 	return b.String()
 }
+
+func inventoryStatus(count int, complete bool, emptyReason string) string {
+	if count == 0 {
+		return "partial | " + emptyReason
+	}
+	if !complete {
+		return "partial | collection incomplete"
+	}
+	return "supported"
+}
+
 func joinInt64(values []int64) string {
 	var out []string
 	for _, value := range values {
