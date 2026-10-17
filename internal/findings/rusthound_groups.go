@@ -131,6 +131,9 @@ func AnalyzeRustHoundGroups(ctx context.Context, inputPath string, assessmentID,
 		item := PrivilegedGroup{ID: group.ID, Name: principalName(group), Domain: group.Domain, Privilege: privilege, Artifact: group.Artifact, ArtifactRef: group.Ref + "/Members"}
 		for _, edge := range groupMembers[groupIdentity(group.ID)] {
 			principal := resolveGroupPrincipal(objects, edge.Member)
+			if foreignReference(principal.ID, group.DomainSID) {
+				principal.Type = "foreign"
+			}
 			if principal.Domain != "" && group.Domain != "" && !strings.EqualFold(principal.Domain, group.Domain) {
 				principal.Type = "foreign"
 			}
@@ -277,6 +280,9 @@ func walkNested(root groupObject, groupID string, path []string, members map[str
 	defer delete(visiting, key)
 	for _, edge := range members[key] {
 		principal := resolveGroupPrincipal(objects, edge.Member)
+		if foreignReference(principal.ID, root.DomainSID) {
+			principal.Type = "foreign"
+		}
 		if principal.Domain != "" && root.Domain != "" && !strings.EqualFold(principal.Domain, root.Domain) {
 			principal.Type = "foreign"
 		}
@@ -302,6 +308,12 @@ func containsPrincipal(values []GroupPrincipal, id string) bool {
 		}
 	}
 	return false
+}
+
+func foreignReference(id, domainSID string) bool {
+	id = strings.ToUpper(strings.TrimSpace(id))
+	domainSID = strings.ToUpper(strings.TrimSpace(domainSID))
+	return strings.HasPrefix(id, "S-1-5-21-") && domainSID != "" && !strings.HasPrefix(id, domainSID+"-")
 }
 
 func privilegedGroupName(group groupObject) (string, bool) {
