@@ -42,6 +42,7 @@ func main() {
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
+	auto := flag.Bool("auto", false, "run Default Enumeration headlessly without launching the TUI")
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
 	flushDB := flag.Bool("flushdb", false, "Clear previous database assessment records before starting; preserve raw evidence")
 	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
@@ -61,6 +62,10 @@ func main() {
 	defer stopSignals()
 	if *flushDB && (*resetFindings || *reanalyzeLatest) {
 		fail(errors.New("--flushdb cannot be combined with --reset-findings or --reanalyze-latest"))
+	}
+	if *auto && (*flushDB || *resetFindings || *reanalyzeLatest) {
+		fmt.Fprintln(os.Stderr, "pwnflow: --auto cannot be combined with --flushdb, --reset-findings, or --reanalyze-latest")
+		os.Exit(2)
 	}
 	if *flushDB {
 		root, err := config.ProjectRoot()
@@ -210,6 +215,17 @@ func main() {
 	defer db.Close()
 	if err := db.UpsertTarget(ctx, cfg.Domain, cfg.Target); err != nil {
 		fail(err)
+	}
+	if *auto {
+		err := tui.RunAuto(ctx, cfg, db, version, os.Stdout, dependencyReasons)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			fmt.Fprintln(os.Stderr, "headless assessment interrupted")
+			os.Exit(130)
+		}
+		if err != nil {
+			fail(err)
+		}
+		return
 	}
 	if err := tui.Run(ctx, cfg, db, version, dependencyReasons); err != nil && !errors.Is(err, tui.ErrQuit) {
 		fail(err)

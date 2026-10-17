@@ -2,11 +2,17 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
@@ -18,10 +24,40 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/modules/specialized"
 	"github.com/pwnflow/pwnflow/internal/modules/trustinventory"
+	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string, dependencyReasons ...map[string]string) error {
+	registry := buildRegistry()
+	registered := registry.All()
+	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
+		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
+	}
+	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
+	if err != nil {
+		return err
+	}
+	moduleIDs := make([]int64, len(registered))
+	for i, module := range registered {
+		id, err := db.RegisterModule(ctx, module.Name(), module.Tool(), string(module.Protocol()), module.Description(), module.OutputFile())
+		if err != nil {
+			return err
+		}
+		moduleIDs[i] = id
+	}
+	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
+	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
+	if model.batch != nil {
+		model.cancelBatch()
+		waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = model.batch.Wait(waitContext)
+		cancel()
+	}
+	return err
+}
+
+func buildRegistry() *modules.Registry {
 	registry := &modules.Registry{}
 	for _, module := range netexec.EnumerationModules() {
 		registry.Register(module)
@@ -58,9 +94,20 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		registry.Register(module)
 	}
 	registry.Register(masscan.Module{})
+	return registry
+}
+
+// RunAuto executes the same explicit Default Enumeration plan as Ctrl+A without
+// constructing a Bubble Tea program. It intentionally reuses model.runBatch,
+// model.syncBatch, and the established post-analysis exporters.
+func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version string, out io.Writer, dependencyReasons ...map[string]string) error {
+	if out == nil {
+		out = io.Discard
+	}
+	registry := buildRegistry()
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
-		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
+		fmt.Fprintln(out, "[warning] module option: "+safeAutoText(warning))
 	}
 	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
 	if err != nil {
@@ -74,13 +121,165 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		}
 		moduleIDs[i] = id
 	}
-	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
-	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
-	if model.batch != nil {
-		model.cancelBatch()
-		waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = model.batch.Wait(waitContext)
-		cancel()
+	m := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
+	defer func() {
+		if m.findings != nil {
+			m.findings.Close()
+		}
+	}()
+	plan := m.globalPlan()
+	if len(plan.approvals) > 0 {
+		var names []string
+		for _, approval := range plan.approvals {
+			if approval.index >= 0 && approval.index < len(m.allModules) {
+				names = append(names, m.allModules[approval.index].ID())
+			}
+		}
+		for _, approval := range plan.approvals {
+			if err := headlessAuthorize(ctx, m, approval); err != nil {
+				return fmt.Errorf("--auto cannot authorize local privileges for %s: %w", safeAutoText(strings.Join(names, ", ")), err)
+			}
+		}
 	}
-	return err
+	if len(plan.indices) == 0 {
+		return fmt.Errorf("Default Enumeration has no available modules")
+	}
+	fmt.Fprintf(out, "PwnFlow — Headless Default Enumeration\n\nDomain: %s\nModules selected: %d\n", safeAutoText(cfg.Domain), len(plan.indices))
+	if len(plan.skipped) > 0 {
+		fmt.Fprintf(out, "Modules skipped by the existing plan: %d\n", len(plan.skipped))
+	}
+	if cmd := m.runBatch(plan.indices, plan.name); cmd != nil {
+		return fmt.Errorf("headless batch did not start")
+	}
+	if err := reportAutoProgress(ctx, out, m); err != nil {
+		if ctx.Err() != nil {
+			_ = m.syncBatchError()
+		}
+		return err
+	}
+	if err := m.syncBatchError(); err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var findingsErr error
+	if m.findings != nil {
+		fmt.Fprintln(out, "Findings analysis ... running")
+		findingsErr = m.findings.Wait(ctx)
+		if findingsErr != nil {
+			fmt.Fprintln(out, "Findings analysis ... failed (see saved analysis status)")
+		} else {
+			fmt.Fprintln(out, "Findings analysis ... completed")
+		}
+	}
+	ids := uniqueInt64Values(m.batchExecutionIDs)
+	generatedAt := time.Now().UTC()
+	if err := writeFindingsSummary(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
+		return fmt.Errorf("findings summary export: %w", err)
+	}
+	fmt.Fprintln(out, "Findings summary ... generated")
+	if err := publishDefaultResults(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
+		return fmt.Errorf("flat results publication: %w", err)
+	}
+	fmt.Fprintln(out, "Flat tool results and inventories ... published")
+	if err := writeCollectionQuality(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
+		return fmt.Errorf("collection quality export: %w", err)
+	}
+	fmt.Fprintln(out, "Collection quality report ... generated")
+	if err := writeADPrivilegedAccess(ctx, db, cfg.ResultsRoot(), cfg.Domain, targetID, ids, generatedAt); err != nil {
+		return fmt.Errorf("privileged access report: %w", err)
+	}
+	fmt.Fprintln(out, "Privileged access inventory ... generated")
+	for _, label := range []string{"findings_summary.txt", "collection_completeness.txt", "AD_PRIVILEGED_ACCESS.txt", "AD_USERS.txt", "DNS_NAMES.txt", "DNS_NAME_IP.txt", "IP_ADDRESSES.txt", "published_results_manifest.txt"} {
+		if _, statErr := os.Stat(filepath.Join(cfg.ResultsRoot(), label)); statErr != nil {
+			return fmt.Errorf("required report %s was not generated", label)
+		}
+	}
+	if batchHasFailure(m.batch) {
+		return errors.New("one or more Default Enumeration modules failed or did not complete")
+	}
+	if findingsErr != nil {
+		return errors.New("findings analysis reported one or more failures")
+	}
+	fmt.Fprintf(out, "Assessment completed.\nResults: %s\n", safeAutoText(cfg.ResultsRoot()))
+	return nil
+}
+
+func headlessAuthorize(ctx context.Context, m *model, approval approval) error {
+	if approval.index < 0 || approval.index >= len(m.allModules) {
+		return errors.New("invalid module authorization request")
+	}
+	if err := exec.CommandContext(ctx, "sudo", "-n", "-v").Run(); err != nil {
+		return errors.New("sudo authorization is not already available; run --auto from an authorized privileged session")
+	}
+	m.batchElevation[m.allModules[approval.index].ID()] = true
+	return nil
+}
+
+func reportAutoProgress(ctx context.Context, out io.Writer, m *model) error {
+	seen := make(map[int]string)
+	for {
+		states, _, _, _ := m.batch.Snapshot()
+		for index, state := range states {
+			if state.Status == "queued" || state.Status == "running" || seen[index] == state.Status {
+				continue
+			}
+			seen[index] = state.Status
+			fmt.Fprintf(out, "[%02d/%02d] %s ... %s\n", index+1, len(states), safeAutoText(state.Module.Name()), safeAutoText(state.Status))
+		}
+		select {
+		case <-m.batch.Done():
+			states, _, _, _ = m.batch.Snapshot()
+			for index, state := range states {
+				if seen[index] == state.Status || state.Status == "queued" || state.Status == "running" {
+					continue
+				}
+				seen[index] = state.Status
+				fmt.Fprintf(out, "[%02d/%02d] %s ... %s\n", index+1, len(states), safeAutoText(state.Module.Name()), safeAutoText(state.Status))
+			}
+			return nil
+		case <-ctx.Done():
+			m.cancelBatch()
+			_ = m.batch.Wait(context.Background())
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func (m *model) syncBatchError() error {
+	if m.batch == nil {
+		return errors.New("headless batch is unavailable")
+	}
+	if cmd := m.syncBatch(); cmd != nil {
+		// The command returned here only waits for Findings; headless mode waits
+		// directly on the manager so no Bubble Tea message loop is needed.
+	}
+	states, _, _, _ := m.batch.Snapshot()
+	if !m.batchRecorded || len(m.batchExecutionIDs) != len(states) {
+		return errors.New("execution records were not persisted for every batch item")
+	}
+	return nil
+}
+
+func batchHasFailure(batch *runner.BatchRun) bool {
+	states, _, _, _ := batch.Snapshot()
+	for _, state := range states {
+		if !strings.EqualFold(state.Status, "completed") {
+			return true
+		}
+	}
+	return false
+}
+
+func safeAutoText(value string) string {
+	value = ansi.Strip(value)
+	value = summarySafeText(value)
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, value)
 }

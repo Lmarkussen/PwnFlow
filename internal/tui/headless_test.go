@@ -1,0 +1,52 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/runner"
+)
+
+func TestHeadlessProgressTextIsPlainAndSanitized(t *testing.T) {
+	value := safeAutoText("\x1b[31mpassword: hidden\x1b[0m")
+	if strings.ContainsAny(value, "\x1b") || strings.Contains(value, "hidden") || strings.Contains(value, "31m") {
+		t.Fatalf("unsafe progress text: %q", value)
+	}
+}
+
+func TestHeadlessUsesTheCuratedDefaultPlanSource(t *testing.T) {
+	registry := buildRegistry().All()
+	byID := make(map[string]modules.Module, len(registry))
+	for _, module := range registry {
+		byID[module.ID()] = module
+	}
+	if len(defaultEnumerationModuleIDs) != 39 {
+		t.Fatalf("default profile changed: %d modules", len(defaultEnumerationModuleIDs))
+	}
+	for _, id := range defaultEnumerationModuleIDs {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("default profile module %q is absent from the shared registry", id)
+		}
+	}
+	if _, ok := byID["masscan"]; ok && containsHeadlessString(defaultEnumerationModuleIDs, "masscan") {
+		t.Fatal("masscan entered the default profile")
+	}
+}
+
+func containsHeadlessString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBatchHasFailureOnlyAcceptsCompletedStates(t *testing.T) {
+	item := runner.BatchItem{Index: 0, Module: nil, ModuleID: 1}
+	batch := runner.NewBatchRun([]runner.BatchItem{item})
+	if !batchHasFailure(batch) {
+		t.Fatal("queued batch was treated as successful")
+	}
+}
