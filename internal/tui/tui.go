@@ -135,12 +135,6 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	approvals := append([]approval(nil), plan.approvals...)
 	approvals = append(approvals, headlessElevationApprovals(m, plan.indices)...)
 	if len(approvals) > 0 {
-		var names []string
-		for _, approval := range approvals {
-			if approval.index >= 0 && approval.index < len(m.allModules) {
-				names = append(names, m.allModules[approval.index].ID())
-			}
-		}
 		for _, approval := range approvals {
 			if approval.index < 0 || approval.index >= len(m.allModules) {
 				continue
@@ -149,7 +143,7 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 				continue
 			}
 			if err := headlessAuthorize(ctx, m, approval); err != nil {
-				return fmt.Errorf("--auto cannot authorize local privileges for %s: %w", safeAutoText(strings.Join(names, ", ")), err)
+				fmt.Fprintf(out, "%s\n", colors.yellow(fmt.Sprintf("Local privilege unavailable for %s: %s; the affected module will be recorded unavailable", safeAutoText(m.allModules[approval.index].ID()), safeAutoText(err.Error()))))
 			}
 		}
 	}
