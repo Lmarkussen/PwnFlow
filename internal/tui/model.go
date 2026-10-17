@@ -112,8 +112,9 @@ type model struct {
 	batchRequested    int
 	batchSkipped      []string
 
-	batchSummaryExported bool
-	batchExecutionIDs    []int64
+	batchSummaryExported  bool
+	batchExecutionIDs     []int64
+	batchResultsPublished bool
 
 	watcherSelected   int
 	watcherListCursor int

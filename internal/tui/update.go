@@ -100,6 +100,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		if !m.running && m.batchRecorded && !m.analysisPending && m.batchName == "Default Enumeration" && !m.batchResultsPublished {
+			m.publishDefaultEnumerationResults()
+		}
 		m.refreshWatcher()
 		m.refreshOutput()
 		// A privileged module waiting for renewed authorization is picked up here,
@@ -133,6 +136,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.batchName == "Default Enumeration" {
 			m.exportDefaultEnumerationSummary()
+			m.publishDefaultEnumerationResults()
 		}
 		return m, nil
 	case findingsReanalysisMsg:
@@ -1012,6 +1016,7 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.batchSummaryShown = false
 	m.batchSummaryExported = false
 	m.batchExecutionIDs = nil
+	m.batchResultsPublished = false
 	m.analysisPending = false
 	m.batchName = name
 	m.running = true
