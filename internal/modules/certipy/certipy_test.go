@@ -110,9 +110,8 @@ func TestModulesAreRegisteredUnderADCSCertipy(t *testing.T) {
 	}
 }
 
-// The argument vector follows the operator-supplied configuration, pins DC-only
-// collection and LDAPS, and never selects a collection mode the module does not
-// advertise.
+// The argument vector follows the operator-supplied configuration, preserves
+// LDAPS, and leaves CA-level checks enabled for Web Enrollment evidence.
 func TestCommandArgumentsFollowTheRuntimeConfiguration(t *testing.T) {
 	installedExecutable(t)
 	runtime := testRuntime(t)
@@ -125,7 +124,6 @@ func TestCommandArgumentsFollowTheRuntimeConfiguration(t *testing.T) {
 		"-dc-ip " + runtime.Target,
 		"-u audituser@corp.example",
 		"-p " + runtime.Password,
-		"-dc-only",
 		"-ldap-scheme ldaps",
 		"-ldap-port 636",
 		"-json",
@@ -139,7 +137,7 @@ func TestCommandArgumentsFollowTheRuntimeConfiguration(t *testing.T) {
 	if args[0] != "find" || args[1] != "-dc-ip" {
 		t.Errorf("unexpected argument order: %#v", args)
 	}
-	for _, forbidden := range []string{"All", "DCOnly", "-csv"} {
+	for _, forbidden := range []string{"All", "DCOnly", "-csv", "-dc-only"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("arguments contain %q: %s", forbidden, joined)
 		}
@@ -174,7 +172,7 @@ func TestModuleFiltersAreExplicit(t *testing.T) {
 	for id, option := range cases {
 		module := moduleFor(t, id)
 		joined := strings.Join(module.CommandArgs(runtime), " ")
-		if !strings.Contains(joined, "-dc-only") || !strings.Contains(joined, option) {
+		if strings.Contains(joined, "-dc-only") || !strings.Contains(joined, option) {
 			t.Errorf("%s does not pass its documented filter %s: %s", id, option, joined)
 		}
 	}

@@ -83,7 +83,7 @@ func TestCertipyModuleInformationShowsConfiguration(t *testing.T) {
 		"Tool: Certipy",
 		"Protocol: LDAP",
 		"Execution: enabled",
-		"Collection scope: -dc-only",
+		"Collection scope: configured DC LDAP plus CA registry/Web Enrollment",
 		"Transport: LDAPS (explicit -ldap-scheme ldaps -ldap-port 636",
 		"Output directory: ",
 		"Availability: AVAILABLE",

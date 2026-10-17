@@ -112,6 +112,29 @@ Certificate Templates
 	}
 }
 
+func TestCertipyPartialTextDoesNotInventCAConditions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial-certipy.txt")
+	text := `[*] Finding certificate authorities
+[*] Collection interrupted before CA vulnerability analysis
+Certificate Authorities
+  0
+    CA Name : SCCM-LAB-CA
+    Web Enrollment
+      HTTP
+        Enabled : True
+`
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := AnalyzeCertipy(context.Background(), path, 4, 9, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("partial inventory became an unsupported finding: %+v", findings)
+	}
+}
+
 func TestExtractESCIdentifiersDeduplicatesAndNormalizes(t *testing.T) {
 	identifiers := extractESCIdentifiers(map[string]any{"ESC4": "ESC1: condition", "details": []any{"esc4"}})
 	if len(identifiers) != 2 || identifiers[0] != "ESC1" || identifiers[1] != "ESC4" {

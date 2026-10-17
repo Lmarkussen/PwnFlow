@@ -14,6 +14,8 @@ RustHound findings are direct exported ACE observations. PwnFlow does not expand
 
 Certipy findings require an explicit vulnerability classification. RelayKing findings require an explicit classified relay path. Informational inventory output is not automatically a vulnerability. LDAP signing and channel-binding findings remain unsupported until an artifact explicitly proves the policy condition; a successful LDAPS connection is not evidence of signing enforcement.
 
+Certipy reports are associated with the module-specific native artifact nearest the execution log timestamp, rather than the newest JSON anywhere under the shared artifacts directory. This preserves CA-level evidence from broad discovery runs and prevents a template-only report from being reused for another execution. A CA Web Enrollment observation without an explicit Certipy ESC classification remains an observation, not an ESC8 finding.
+
 NetExec's existing `LDAP_password_policy.txt` and `LDAP_machine_account_quota.txt` artifacts also support domain-default policy observations. The engine recognizes the reported minimum password length, a zero/non-expiring `maxPwdAge`, and positive `ms-DS-MachineAccountQuota` values. These findings require an attributable domain identity, use stable assessment/domain/detector keys, and preserve the source line as evidence. Domain defaults are not asserted to apply to every account; fine-grained password policy scope is a stated limitation rather than an inferred override.
 
 ## Operator view

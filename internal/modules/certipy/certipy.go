@@ -1,9 +1,8 @@
 // Package certipy integrates Certipy's read-oriented AD CS enumeration.
 //
-// Only the `find` action is used, and every module in this package pins
-// Certipy's DC-only mode: `-dc-only` keeps the collection to LDAP against the
-// configured domain controller and skips CA registry retrieval and Web
-// Enrollment checks, so nothing is asked of hosts the operator did not name.
+// Only the `find` action is used. Certipy is pointed at the configured domain
+// controller for LDAP, while its CA-level checks remain enabled so explicit
+// Web Enrollment conditions such as ESC8 are collected.
 // Certipy still performs its own DNS resolution and LDAP referral handling, so
 // the pinned arguments express the intended collection scope rather than a
 // network boundary, and the module says so instead of implying one.
@@ -57,7 +56,7 @@ const (
 // that renames or drops one is reported instead of producing a different command
 // than the module advertises.
 var baseOptions = []string{
-	"-dc-ip", "-u", "-p", "-dc-only", "-ldap-scheme", "-ldap-port", "-stdout", "-json", "-text", "-output",
+	"-dc-ip", "-u", "-p", "-ldap-scheme", "-ldap-port", "-stdout", "-json", "-text", "-output",
 }
 
 // secretOptions carry a value that must never reach a display, a log, or the
@@ -78,9 +77,9 @@ var secretOptions = map[string]bool{
 // passed to the tool but is never displayed, logged, or recorded.
 const authNote = "native AD credentials (-u/-p; accepted for this single-operator lab, redacted in previews, logs, and history)"
 
-// scopeNote is the informational line shown in Module Information. DC-only mode
-// narrows what Certipy asks for; it does not confine where Certipy may connect.
-const scopeNote = "Network scope: DC-only LDAP against the supplied target; not kernel-enforced"
+// scopeNote is the informational line shown in Module Information. Certipy's
+// CA checks may contact the CA host reported by the directory.
+const scopeNote = "Network scope: LDAP against the supplied DC plus Certipy CA checks; not kernel-enforced"
 
 // Definition describes one Certipy enumeration module.
 type Definition struct {
@@ -103,7 +102,7 @@ func EnumerationModules() []Module {
 			NameValue:   "AD CS Discovery",
 			SlugValue:   "adcs-discovery",
 			FilterValue: "no template filter (all discovered AD CS objects)",
-			DescriptionValue: "Discovers Active Directory Certificate Services objects with Certipy find in DC-only mode: " +
+			DescriptionValue: "Discovers Active Directory Certificate Services objects with Certipy find: " +
 				"certificate authorities, templates, and their configuration, collected over LDAP against the configured domain controller. " +
 				"Vulnerability scoring for nested group membership is not requested here.",
 		}},
@@ -113,7 +112,7 @@ func EnumerationModules() []Module {
 			SlugValue:   "enabled-templates",
 			FilterValue: "-enabled (enabled certificate templates only)",
 			Options:     []string{"-enabled"},
-			DescriptionValue: "Enumerates enabled Active Directory certificate templates with Certipy find in DC-only mode, " +
+			DescriptionValue: "Enumerates enabled Active Directory certificate templates with Certipy find, " +
 				"reporting template permissions and issuance settings published by the configured domain controller.",
 		}},
 		{definition: Definition{
@@ -123,7 +122,7 @@ func EnumerationModules() []Module {
 			FilterValue: "-vulnerable (templates flagged by nested group membership)",
 			Options:     []string{"-vulnerable"},
 			DescriptionValue: "Enumerates certificate templates Certipy flags as vulnerable from nested group memberships, " +
-				"in DC-only mode, so potential certificate-based privilege escalation is visible before any request is made. " +
+				"so potential certificate-based privilege escalation is visible before any request is made. " +
 				"The flags are Certipy's assessment of published template settings, not a validated exploitation path.",
 		}},
 	}
@@ -156,7 +155,7 @@ func (m Module) Sensitivity() modules.Sensitivity { return modules.SensitivitySe
 func (m Module) ReadOnly() bool { return true }
 
 func (m Module) SecondaryConnections() []string {
-	return []string{"none expected: -dc-only keeps the collection to LDAP against the configured domain controller and skips CA registry, Web Enrollment, and member-machine checks"}
+	return []string{"Certipy may contact the CA host reported by LDAP for CA registry and Web Enrollment checks; no member-machine collection is requested"}
 }
 
 // DetailLines reports the fixed configuration for the Module Information pane,
@@ -165,7 +164,7 @@ func (m Module) DetailLines(runtime *modules.Runtime) []string {
 	return []string{
 		"Execution: enabled",
 		"Authentication: " + authNote,
-		"Collection scope: -dc-only (LDAP only; no CA registry, Web Enrollment, or member-machine contact)",
+		"Collection scope: configured DC LDAP plus CA registry/Web Enrollment checks; no member-machine collection",
 		fmt.Sprintf("Transport: %s (explicit -ldap-scheme %s -ldap-port %s; never downgraded to unsigned LDAP)", strings.ToUpper(ldapScheme), ldapScheme, ldapPort),
 		"Filter: " + m.definition.FilterValue,
 		"Output directory: " + outputDirectory(runtime),
@@ -287,7 +286,7 @@ func (m Module) commandArgs(runtime *modules.Runtime, prefix string) []string {
 			args = append(args, "-p", runtime.Password)
 		}
 	}
-	args = append(args, "-dc-only", "-stdout")
+	args = append(args, "-stdout")
 	args = append(args, m.definition.Options...)
 	args = append(args, "-ldap-scheme", ldapScheme, "-ldap-port", ldapPort, "-json", "-text", "-output", prefix)
 	return args

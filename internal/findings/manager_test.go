@@ -124,6 +124,58 @@ func TestDiscoverArtifactUsesFinalizedPXEAndKerberosOutputs(t *testing.T) {
 	}
 }
 
+func TestDiscoverArtifactAssociatesCertipyModuleWithExecutionLog(t *testing.T) {
+	root := t.TempDir()
+	certipyRoot := filepath.Join(root, "Enumeration", "Certipy")
+	artifacts := filepath.Join(certipyRoot, "artifacts")
+	oldDir := filepath.Join(artifacts, "20261017-100000")
+	newDir := filepath.Join(artifacts, "20261017-110000")
+	if err := os.MkdirAll(oldDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(newDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	oldDiscovery := filepath.Join(oldDir, "20261017-100000_adcs-discovery_Certipy.json")
+	newDiscovery := filepath.Join(newDir, "20261017-110000_adcs-discovery_Certipy.json")
+	newVulnerable := filepath.Join(newDir, "20261017-110000_vulnerable-templates_Certipy.json")
+	for _, path := range []string{oldDiscovery, newDiscovery, newVulnerable} {
+		if err := os.WriteFile(path, []byte(`{"Certificate Authorities":{}}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Date(2026, time.October, 17, 10, 0, 0, 0, time.UTC)
+	newTime := oldTime.Add(time.Hour)
+	if err := os.Chtimes(oldDiscovery, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newDiscovery, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newVulnerable, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	discoveryLog := filepath.Join(certipyRoot, "adcs-discovery.log")
+	vulnerableLog := filepath.Join(certipyRoot, "vulnerable-templates.log")
+	for _, item := range []struct {
+		path string
+		when time.Time
+	}{{discoveryLog, oldTime.Add(time.Minute)}, {vulnerableLog, newTime.Add(time.Minute)}} {
+		if err := os.WriteFile(item.path, []byte("complete"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(item.path, item.when, item.when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := DiscoverArtifact("Certipy", discoveryLog); got != oldDiscovery {
+		t.Fatalf("discovery artifact=%q, want %q", got, oldDiscovery)
+	}
+	if got := DiscoverArtifact("Certipy", vulnerableLog); got != newVulnerable {
+		t.Fatalf("vulnerable artifact=%q, want %q", got, newVulnerable)
+	}
+}
+
 func TestManagerRecoversPendingJobFromExecutionOutputPath(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

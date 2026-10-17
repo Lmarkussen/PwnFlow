@@ -417,9 +417,7 @@ func DiscoverArtifact(tool, outputPath string) string {
 		case "rusthound-ce", "rusthound":
 			return dir
 		case "certipy":
-			if path := newestMatching(dir, ".json"); path != "" {
-				return path
-			}
+			return certipyArtifactForOutput(outputPath)
 		case "relayking":
 			if path := newestMatching(dir, "relayking-scan.json"); path != "" {
 				return path
@@ -444,6 +442,61 @@ func DiscoverArtifact(tool, outputPath string) string {
 		}
 	}
 	return ""
+}
+
+// certipyArtifactForOutput selects the native report for the producing module
+// and the execution that updated its terminal log. Certipy writes all module
+// reports under one artifacts root, so choosing the newest JSON globally can
+// associate a discovery execution with a later vulnerable-template report.
+func certipyArtifactForOutput(outputPath string) string {
+	baseName := strings.ToLower(filepath.Base(outputPath))
+	if strings.HasSuffix(baseName, ".json") || strings.HasSuffix(baseName, ".txt") {
+		if fileExists(outputPath) {
+			return outputPath
+		}
+	}
+	slug := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	artifactRoot := filepath.Join(filepath.Dir(outputPath), "artifacts")
+	entries, err := os.ReadDir(artifactRoot)
+	if err != nil {
+		return ""
+	}
+	outputInfo, _ := os.Stat(outputPath)
+	var outputTime time.Time
+	if outputInfo != nil {
+		outputTime = outputInfo.ModTime()
+	}
+	bestPath := ""
+	var bestDistance time.Duration
+	var bestModTime time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(artifactRoot, entry.Name())
+		for _, candidate := range []string{".json", ".txt"} {
+			path := newestMatching(dir, "_"+slug+"_certipy"+candidate)
+			if path == "" {
+				continue
+			}
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				continue
+			}
+			modTime := info.ModTime()
+			distance := time.Duration(0)
+			if !outputTime.IsZero() {
+				distance = outputTime.Sub(modTime)
+				if distance < 0 {
+					distance = -distance
+				}
+			}
+			if bestPath == "" || distance < bestDistance || (distance == bestDistance && modTime.After(bestModTime)) {
+				bestPath, bestDistance, bestModTime = path, distance, modTime
+			}
+		}
+	}
+	return bestPath
 }
 
 func fileExists(path string) bool {

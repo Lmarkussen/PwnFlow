@@ -386,16 +386,16 @@ transaction and asks for confirmation before applying it, never upgrades or
 replaces a Certipy that is already installed but unusable, and reports the
 result in the installation summary.
 
-Every module passes `-dc-only` together with the target, domain, and credentials
-supplied to PwnFlow at startup, so the collection stays on the configured domain
-controller: certificate authorities, templates, and their configuration are read
-over LDAP, and CA registry retrieval, Web Enrollment checks, and member-machine
-contact are skipped. The transport is pinned to LDAPS (`-ldap-scheme ldaps
+Every module passes the target, domain, and credentials supplied to PwnFlow at
+startup. Certificate authorities, templates, and their configuration are read
+over LDAP, while Certipy's CA registry and Web Enrollment checks remain enabled
+so explicit CA-level conditions such as ESC8 are preserved. No member-machine
+collection is requested. The transport is pinned to LDAPS (`-ldap-scheme ldaps
 -ldap-port 636`) and is never downgraded to unsigned LDAP, which is the
-condition a signing-requiring controller would otherwise reject. `-dc-only` and
-the pinned flags express the intended scope; DNS resolution and LDAP referral
-handling remain Certipy's own behaviour, and Module Information states that they
-are not a network boundary.
+condition a signing-requiring controller would otherwise reject. The pinned flags
+express the intended scope; DNS resolution and LDAP referral handling remain
+Certipy's own behaviour, and Module Information states that they are not a
+network boundary.
 
 Certipy's native `-u`/`-p` credentials are used for this private
 single-operator lab, by operator decision, so the password exists briefly in the
