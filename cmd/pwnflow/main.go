@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -18,7 +17,6 @@ import (
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/ldaptransport"
-	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/password"
 	"github.com/pwnflow/pwnflow/internal/preflight"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -44,8 +42,6 @@ func main() {
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
-	auto := flag.Bool("auto", false, "run Default Enumeration headlessly without launching the TUI")
-	networkCIDR := flag.String("network-cidr", "", "NetworkHound IPv4 scope for headless validation")
 	insecureSkipVerify := flag.Bool("insecure-skip-verify", false, "skip LDAPS/StartTLS certificate verification (only when the target certificate cannot be validated)")
 	flushDB := flag.Bool("flushdb", false, "Clear previous database assessment records before starting; preserve raw evidence")
 	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
@@ -65,10 +61,6 @@ func main() {
 	defer stopSignals()
 	if *flushDB && (*resetFindings || *reanalyzeLatest) {
 		fail(errors.New("--flushdb cannot be combined with --reset-findings or --reanalyze-latest"))
-	}
-	if *auto && (*flushDB || *resetFindings || *reanalyzeLatest) {
-		fmt.Fprintln(os.Stderr, "pwnflow: --auto cannot be combined with --flushdb, --reset-findings, or --reanalyze-latest")
-		os.Exit(2)
 	}
 	if *flushDB {
 		root, err := config.ProjectRoot()
@@ -154,12 +146,6 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if moduleOptions == nil {
-		moduleOptions = make(map[string]map[string]string)
-	}
-	if err := configureAutoNetworkScope(*auto, *networkCIDR, moduleOptions); err != nil {
-		fail(err)
-	}
 
 	root, err := config.ProjectRoot()
 	if err != nil {
@@ -225,70 +211,9 @@ func main() {
 	if err := db.UpsertTarget(ctx, cfg.Domain, cfg.Target); err != nil {
 		fail(err)
 	}
-	if *auto {
-		err := tui.RunAuto(ctx, cfg, db, version, os.Stdout, dependencyReasons)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			fmt.Fprintln(os.Stderr, "headless assessment interrupted")
-			os.Exit(130)
-		}
-		if err != nil {
-			fail(err)
-		}
-		return
-	}
 	if err := tui.Run(ctx, cfg, db, version, dependencyReasons); err != nil && !errors.Is(err, tui.ErrQuit) {
 		fail(err)
 	}
-}
-
-func configureAutoNetworkScope(auto bool, cidr string, options map[string]map[string]string) error {
-	const moduleID = "networkhound-scope-validation"
-	if strings.TrimSpace(cidr) != "" {
-		if !auto {
-			return errors.New("--network-cidr requires --auto")
-		}
-		if err := networkhound.ValidateCIDR(cidr); err != nil {
-			return fmt.Errorf("--network-cidr: %w", err)
-		}
-		if options == nil {
-			options = make(map[string]map[string]string)
-		}
-		if options[moduleID] == nil {
-			options[moduleID] = make(map[string]string)
-		}
-		options[moduleID]["NETWORKS"] = strings.TrimSpace(cidr)
-		return nil
-	}
-	configured := ""
-	if options != nil && options[moduleID] != nil {
-		configured = strings.TrimSpace(options[moduleID]["NETWORKS"])
-	}
-	if configured != "" {
-		if err := networkhound.ValidateScope(configured); err != nil {
-			return fmt.Errorf("networkhound-scope-validation.NETWORKS: %w", err)
-		}
-		return nil
-	}
-	if !auto || !term.IsTerminal(int(os.Stdin.Fd())) {
-		return nil
-	}
-	fmt.Fprint(os.Stdout, "NetworkHound scope CIDR (optional): ")
-	value, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && len(value) == 0 {
-		return fmt.Errorf("reading NetworkHound scope: %w", err)
-	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	if err := networkhound.ValidateCIDR(value); err != nil {
-		return fmt.Errorf("NetworkHound scope: %w", err)
-	}
-	if options[moduleID] == nil {
-		options[moduleID] = make(map[string]string)
-	}
-	options[moduleID]["NETWORKS"] = value
-	return nil
 }
 
 // trustOptions builds the verification options for the LDAP preflight: the

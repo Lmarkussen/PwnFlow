@@ -20,9 +20,6 @@ type plan struct {
 	requested             int
 	authorizationRequired int
 	indices               []int
-	// unavailable records profile entries that remain selected but are expected
-	// to report an unavailable result when their batch check runs.
-	unavailable []string
 	// approvals are the modules the plan will not start without an explicit
 	// decision: the credential-access categories, and any module that asks for one
 	// because its own operation is wider than the run it is part of.
@@ -99,12 +96,12 @@ func (m *model) globalPlan() plan {
 			continue
 		}
 		if reason := m.moduleAvailability(module); reason != "" {
-			result.unavailable = append(result.unavailable, module.Name()+" (unavailable: "+reason+")")
-		} else if status, statusReason := m.moduleStatus(module); status == "UNAVAILABLE" {
-			if statusReason == "" {
-				statusReason = "unsupported by the installed build"
-			}
-			result.unavailable = append(result.unavailable, module.Name()+" (unavailable: "+statusReason+")")
+			result.skipped = append(result.skipped, module.Name()+" (unavailable: "+reason+")")
+			continue
+		}
+		if status, _ := m.moduleStatus(module); status == "UNAVAILABLE" {
+			result.skipped = append(result.skipped, module.Name()+" (unsupported by the installed build)")
+			continue
 		}
 		if policy, ok := module.(modules.GlobalExecutionPolicy); ok {
 			if include, reason := policy.IncludeInGlobalPlan(); !include {

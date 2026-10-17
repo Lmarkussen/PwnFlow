@@ -133,16 +133,6 @@ func (m Module) RequiredPrivileges() []string     { return nil }
 func (m Module) SecondaryConnections() []string   { return m.secondaryConnections() }
 func (m Module) DependencyKey() string            { return string(dependencies.NetworkHound) }
 
-// OptionKeys declares the options consumed by the scoped validation module.
-// Keeping this contract next to the runtime option reads prevents startup from
-// reporting a valid NETWORKS value as ignored.
-func (m Module) OptionKeys() []string {
-	if !m.scoped() {
-		return nil
-	}
-	return []string{"NETWORKS", "PORTS", "SCAN_TIMEOUT", "SCAN_THREADS", "VALIDATE_HTTP", "VALIDATE_SMB", "SSL_CERTIFICATES"}
-}
-
 func (m Module) Prerequisites() []string {
 	return []string{"NetworkHound checkout with its own virtual environment (install.sh)"}
 }
@@ -389,25 +379,6 @@ func validateScope(scope string) error {
 		if net.ParseIP(base) == nil {
 			return fmt.Errorf("the network scope %q is not an IP address", base)
 		}
-	}
-	return nil
-}
-
-// ValidateScope exposes the existing scope contract to non-TUI entry points.
-// It validates configuration only; it does not expand, resolve, or probe hosts.
-func ValidateScope(scope string) error { return validateScope(scope) }
-
-// ValidateCIDR validates the narrower --network-cidr CLI form. NetworkHound's
-// existing module still receives the original CIDR and retains its command
-// semantics; this helper only rejects malformed and management-network input.
-func ValidateCIDR(value string) error {
-	ip, network, err := net.ParseCIDR(strings.TrimSpace(value))
-	if err != nil || ip.To4() == nil || !ip.Equal(network.IP) {
-		return fmt.Errorf("network CIDR must be a valid IPv4 network")
-	}
-	tailscale := &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
-	if tailscale.Contains(network.IP) || network.Contains(tailscale.IP) {
-		return fmt.Errorf("network CIDR overlaps the prohibited Tailscale range")
 	}
 	return nil
 }

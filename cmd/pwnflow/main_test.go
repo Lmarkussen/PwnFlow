@@ -12,10 +12,17 @@ import (
 	"github.com/pwnflow/pwnflow/internal/trust"
 )
 
+// trustOptionsWithoutTerminal builds the preflight options for a run whose input
+// is not a keyboard: it can never accept a certificate by itself, which is what
+// the fail-closed cases below assert.
 func trustOptionsWithoutTerminal(cfg config.Config) ldaptransport.Options {
 	return trustOptions(cfg, strings.NewReader(""), io.Discard)
 }
 
+// A certificate authority the host does not know is decided by the operator, so
+// the decision has to be installed even when the approval store cannot be read.
+// Removing the decision in that case is what turns an internal CA into a bare
+// "certificate signed by unknown authority" failure with no prompt at all.
 func TestTrustOptionsKeepTheDecisionWhenTheStoreCannotBeLoaded(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home-is-a-file")
 	if err := os.WriteFile(home, []byte("not a directory\n"), 0o600); err != nil {
@@ -38,6 +45,9 @@ func TestTrustOptionsKeepTheDecisionWhenTheStoreCannotBeLoaded(t *testing.T) {
 	}
 }
 
+// Startup must offer a certificate decision that consults the local approval
+// store, so an already-approved internal CA does not prompt again, and an
+// unapproved certificate cannot be accepted without the operator.
 func TestTrustOptionsConsultTheApprovalStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -74,38 +84,3 @@ func TestTrustOptionsConsultTheApprovalStore(t *testing.T) {
 		t.Fatalf("a stored approval was not honoured: %v %v", decision, err)
 	}
 }
-
-func TestConfigureAutoNetworkScopeOverrideAndNoExpansion(t *testing.T) {
-	options := map[string]map[string]string{
-		"networkhound-scope-validation": {"NETWORKS": "198.51.100.40-198.51.100.43"},
-	}
-	if err := configureAutoNetworkScope(true, "198.51.100.0/24", options); err != nil {
-		t.Fatal(err)
-	}
-	if got := options["networkhound-scope-validation"]["NETWORKS"]; got != "198.51.100.0/24" {
-		t.Fatalf("scope=%q", got)
-	}
-	if strings.Contains(gotTargetList(options), "198.51.100.1") {
-		t.Fatal("CIDR was expanded into scan targets")
-	}
-}
-
-func TestConfigureAutoNetworkScopeRejectsInvalidInput(t *testing.T) {
-	for _, value := range []string{"198.51.100.0/33", "2001:db8::/64", tailscaleRange()} {
-		if err := configureAutoNetworkScope(true, value, map[string]map[string]string{}); err == nil {
-			t.Fatalf("accepted %q", value)
-		}
-	}
-}
-
-func TestConfigureAutoNetworkScopeIsHeadlessOnly(t *testing.T) {
-	if err := configureAutoNetworkScope(false, "198.51.100.0/24", map[string]map[string]string{}); err == nil {
-		t.Fatal("accepted --network-cidr without --auto")
-	}
-}
-
-func gotTargetList(options map[string]map[string]string) string {
-	return options["networkhound-scope-validation"]["NETWORKS"]
-}
-
-func tailscaleRange() string { return strings.Join([]string{"100", "64", "0", "0/10"}, ".") }
