@@ -112,9 +112,20 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "user info") && strings.HasSuffix(path, "ldap_get_users_info.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "password policy") && strings.HasSuffix(path, "ldap_password_policy.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "fine-grained password policy") && strings.HasSuffix(path, "ldap_fine_grained_password_policy.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "machine account quota") && strings.HasSuffix(path, "ldap_machine_account_quota.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	default:
 		return ""
 	}
+}
+
+func isNetExecDomainPolicyArtifact(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	return base == "ldap_password_policy.txt" || base == "ldap_machine_account_quota.txt"
 }
 
 type queuedJob struct {
@@ -262,6 +273,14 @@ func (m *Manager) analyze(queued queuedJob) {
 			inputs, err = nil, securityErr
 			break
 		}
+		var policyInputs []storage.FindingInput
+		if isNetExecDomainPolicyArtifact(job.ArtifactPath) {
+			policyInputs, err = AnalyzeNetExecDomainPolicy(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+			if err != nil {
+				inputs = nil
+				break
+			}
+		}
 		var parserInputs []storage.FindingInput
 		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
@@ -269,6 +288,7 @@ func (m *Manager) analyze(queued queuedJob) {
 			parserInputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		}
 		inputs = append(authInputs, securityInputs...)
+		inputs = append(inputs, policyInputs...)
 		inputs = append(inputs, parserInputs...)
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
