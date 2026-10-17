@@ -321,6 +321,9 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 	if err != nil {
 		return nil, err
 	}
+	if _, groupInputs, groupErr := AnalyzeRustHoundGroups(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt); groupErr == nil {
+		inputs = append(inputs, groupInputs...)
+	}
 	return inputs, nil
 }
 
