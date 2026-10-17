@@ -13,6 +13,10 @@ type Config struct {
 	// InsecureSkipVerify skips LDAPS/StartTLS certificate verification. It is set
 	// only by the explicit operator flag and is never enabled by default.
 	InsecureSkipVerify bool
+	// LDAPOptions carries the already-approved transport policy into modules
+	// that perform a focused LDAP read after preflight. It is intentionally
+	// opaque here to keep config independent from the LDAP transport package.
+	LDAPOptions any
 	// ModuleOptions carries values only the operator can supply, such as the
 	// registry path a query module must read or the search text another module
 	// looks for. They are keyed by module ID and option key, and a module that

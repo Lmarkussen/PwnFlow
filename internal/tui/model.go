@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
 	findingengine "github.com/pwnflow/pwnflow/internal/findings"
+	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
@@ -197,7 +198,7 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 // moduleRuntime is the configuration modules run and report with: the operator's
 // target, domain, and credentials, and the assessment's discovery store.
 func (m *model) moduleRuntime() *modules.Runtime {
-	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot()}
+	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot(), LDAPOptions: ldapOptions(m.cfg.LDAPOptions)}
 	// The command line wins where it supplies a value; values the operator typed
 	// in this session fill in the rest.
 	options := make(map[string]map[string]string, len(m.cfg.ModuleOptions)+len(m.moduleInputs))
@@ -220,6 +221,13 @@ func (m *model) moduleRuntime() *modules.Runtime {
 	}
 	runtime.Elevation = m
 	return runtime
+}
+
+func ldapOptions(value any) ldaptransport.Options {
+	if options, ok := value.(ldaptransport.Options); ok {
+		return options
+	}
+	return ldaptransport.Options{}
 }
 
 // ElevationApproved implements modules.ElevationPolicy: only a module the operator

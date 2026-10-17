@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 )
 
 type ToolFamily string
@@ -296,6 +298,9 @@ type Runtime struct {
 	// Elevation carries the operator's approval for a module that needs elevated
 	// execution. It is optional: a runtime without it means no module may elevate.
 	Elevation ElevationPolicy
+	// LDAPOptions is populated by the application after LDAP preflight. Modules
+	// may use it for focused LDAP reads.
+	LDAPOptions ldaptransport.Options
 }
 
 type OutputSink interface{ Write([]byte) (int, error) }

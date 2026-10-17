@@ -186,7 +186,9 @@ func main() {
 		return
 	}
 	trustIn, trustOut := trustTerminal()
-	connection, err := preflight.Run(ctx, cfg, trustOptions(cfg, trustIn, trustOut))
+	ldapOptions := trustOptions(cfg, trustIn, trustOut)
+	cfg.LDAPOptions = ldapOptions
+	connection, err := preflight.Run(ctx, cfg, ldapOptions)
 	if err != nil {
 		fail(err)
 	}

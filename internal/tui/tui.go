@@ -17,6 +17,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/modules/specialized"
+	"github.com/pwnflow/pwnflow/internal/modules/trustinventory"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
@@ -35,6 +36,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		registry.Register(module)
 	}
 	registry.Register(rusthound.Module{})
+	registry.Register(trustinventory.Module{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)
 	}

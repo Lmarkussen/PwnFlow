@@ -174,6 +174,97 @@ type Connector struct {
 	Resolver Resolver
 }
 
+// Search opens a connection using the same transport policy as preflight,
+// binds it with the configured identity, and performs one bounded LDAP search.
+// The returned session contains only connection metadata; the connection is
+// always closed before this function returns. This is intended for focused
+// read-only modules, not general directory collection.
+func Search(ctx context.Context, cfg config.Config, options Options, request *ldap.SearchRequest) (*ldap.SearchResult, Session, error) {
+	if request == nil {
+		return nil, Session{}, fmt.Errorf("LDAP search request is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, Session{}, err
+	}
+	identity := Identity{ServerName: options.TLSServerName, Source: SourceTarget, Detail: "supplied by the caller"}
+	if identity.ServerName == "" {
+		identity = ResolveIdentity(ctx, cfg.Target, cfg.Domain, nil)
+	}
+	verification := newTLSVerification(cfg, options)
+	timeout := 5 * time.Second
+	attempts := make([]Attempt, 0, 3)
+	var lastErr error
+	for _, transport := range []Transport{LDAP, LDAPS, StartTLS} {
+		if transport == StartTLS && lastErr != nil && Classify(lastErr) != KindConnectivity {
+			break
+		}
+		endpoint := net.JoinHostPort(cfg.Target, transport.PortFor(options))
+		client, err := openClient(ctx, cfg, options, verification, transport, timeout)
+		if err != nil {
+			lastErr = err
+			attempts = append(attempts, Attempt{Transport: transport, Endpoint: endpoint, Kind: Classify(err), Err: err})
+			if Classify(err) == KindAuthentication || Classify(err) == KindTLS || Classify(err) == KindProtocol {
+				break
+			}
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			client.Close()
+			return nil, Session{}, err
+		}
+		client.SetTimeout(timeout)
+		result, err := client.SearchWithPaging(request, 500)
+		client.Close()
+		if err == nil {
+			return result, Session{Transport: transport, Endpoint: endpoint, Insecure: options.InsecureSkipVerify, Identity: identity}, nil
+		}
+		lastErr = err
+		attempts = append(attempts, Attempt{Transport: transport, Endpoint: endpoint, Kind: Classify(err), Err: err})
+		if Classify(err) == KindAuthentication || Classify(err) == KindTLS || Classify(err) == KindProtocol || Classify(err) == KindSigning {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("LDAP search did not run")
+	}
+	return nil, Session{}, &Error{Attempts: attempts, Kind: Classify(lastErr), Identity: identity}
+}
+
+func openClient(ctx context.Context, cfg config.Config, options Options, verification tlsVerification, transport Transport, timeout time.Duration) (*ldap.Conn, error) {
+	address := net.JoinHostPort(cfg.Target, transport.PortFor(options))
+	var (
+		client *ldap.Conn
+		err    error
+	)
+	if transport == LDAPS {
+		client, err = dialLDAPS(ctx, address, timeout, verification.config, options)
+	} else {
+		client, err = ldap.DialURL("ldap://"+address, ldap.DialWithDialer(&net.Dialer{Timeout: timeout}))
+	}
+	if err != nil {
+		return nil, wrapTLSFailure(err, verification.serverName, cfg.Target)
+	}
+	client.SetTimeout(timeout)
+	if transport == StartTLS {
+		if err := client.StartTLS(verification.config); err != nil {
+			client.Close()
+			return nil, wrapTLSFailure(err, verification.serverName, cfg.Target)
+		}
+	}
+	if transport == LDAP {
+		if err := client.NTLMBind(cfg.Domain, cfg.Username, cfg.Password); err != nil {
+			client.Close()
+			return nil, err
+		}
+		return client, nil
+	}
+	if err := bindOverTLS(client, cfg); err != nil {
+		client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
 // Connect binds with the configured credentials, following the fallback policy.
 // It stops as soon as a transport succeeds, and it never retries credentials the
 // server refused.
