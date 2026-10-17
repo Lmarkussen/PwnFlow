@@ -132,14 +132,16 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 		}
 	}()
 	plan := m.globalPlan()
-	if len(plan.approvals) > 0 {
+	approvals := append([]approval(nil), plan.approvals...)
+	approvals = append(approvals, headlessElevationApprovals(m, plan.indices)...)
+	if len(approvals) > 0 {
 		var names []string
-		for _, approval := range plan.approvals {
+		for _, approval := range approvals {
 			if approval.index >= 0 && approval.index < len(m.allModules) {
 				names = append(names, m.allModules[approval.index].ID())
 			}
 		}
-		for _, approval := range plan.approvals {
+		for _, approval := range approvals {
 			if approval.index < 0 || approval.index >= len(m.allModules) {
 				continue
 			}
@@ -219,6 +221,24 @@ func RunAuto(ctx context.Context, cfg config.Config, db *storage.DB, version str
 	}
 	fmt.Fprintln(out, colors.green("Assessment completed."))
 	return nil
+}
+
+func headlessElevationApprovals(m *model, indices []int) []approval {
+	needed, _ := m.elevationNeeded(indices)
+	if len(needed) == 0 {
+		return nil
+	}
+	byID := make(map[string]int, len(m.allModules))
+	for index, module := range m.allModules {
+		byID[module.ID()] = index
+	}
+	approvals := make([]approval, 0, len(needed))
+	for _, id := range needed {
+		if index, ok := byID[id]; ok {
+			approvals = append(approvals, approval{index: index, reason: "headless local privilege preflight"})
+		}
+	}
+	return approvals
 }
 
 func headlessAuthorize(ctx context.Context, m *model, approval approval) error {

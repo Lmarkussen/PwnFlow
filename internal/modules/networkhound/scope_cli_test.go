@@ -3,6 +3,8 @@ package networkhound
 import (
 	"strings"
 	"testing"
+
+	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
 func TestValidateCIDRRejectsInvalidAndManagementRanges(t *testing.T) {
@@ -15,6 +17,15 @@ func TestValidateCIDRRejectsInvalidAndManagementRanges(t *testing.T) {
 		if err := ValidateCIDR(value); err == nil {
 			t.Fatalf("ValidateCIDR(%q) accepted prohibited input", value)
 		}
+	}
+}
+
+func TestScopedModuleDeclaresItsRuntimeOptions(t *testing.T) {
+	options := map[string]map[string]string{
+		"networkhound-scope-validation": {"NETWORKS": "198.51.100.0/24"},
+	}
+	if warnings := modules.OptionWarnings([]modules.Module{EnumerationModules()[1]}, options); len(warnings) != 0 {
+		t.Fatalf("valid NetworkHound options reported as ignored: %v", warnings)
 	}
 }
 

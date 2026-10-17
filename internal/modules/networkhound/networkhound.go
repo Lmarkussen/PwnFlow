@@ -133,6 +133,16 @@ func (m Module) RequiredPrivileges() []string     { return nil }
 func (m Module) SecondaryConnections() []string   { return m.secondaryConnections() }
 func (m Module) DependencyKey() string            { return string(dependencies.NetworkHound) }
 
+// OptionKeys declares the options consumed by the scoped validation module.
+// Keeping this contract next to the runtime option reads prevents startup from
+// reporting a valid NETWORKS value as ignored.
+func (m Module) OptionKeys() []string {
+	if !m.scoped() {
+		return nil
+	}
+	return []string{"NETWORKS", "PORTS", "SCAN_TIMEOUT", "SCAN_THREADS", "VALIDATE_HTTP", "VALIDATE_SMB", "SSL_CERTIFICATES"}
+}
+
 func (m Module) Prerequisites() []string {
 	return []string{"NetworkHound checkout with its own virtual environment (install.sh)"}
 }

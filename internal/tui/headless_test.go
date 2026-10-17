@@ -2,9 +2,11 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/runner"
 )
@@ -56,5 +58,17 @@ func TestBatchHasFailureOnlyAcceptsCompletedStates(t *testing.T) {
 	batch := runner.NewBatchRun([]runner.BatchItem{item})
 	if !batchHasFailure(batch) {
 		t.Fatal("queued batch was treated as successful")
+	}
+}
+
+func TestHeadlessPreflightsElevationForRequestedModules(t *testing.T) {
+	module := elevatingModule{
+		selectionModule: selectionModule{id: "needs-privileges", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA},
+		required:        true,
+	}
+	m := newModel(context.Background(), config.Config{}, nil, []modules.Module{module}, []int64{1}, 1, "test")
+	approvals := headlessElevationApprovals(m, []int{0})
+	if len(approvals) != 1 || approvals[0].index != 0 {
+		t.Fatalf("headless elevation preflight=%v, want module 0", approvals)
 	}
 }
