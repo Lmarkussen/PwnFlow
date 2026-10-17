@@ -43,6 +43,16 @@ func TestParseEntriesPreservesRawValuesAndNormalizesTrustMetadata(t *testing.T) 
 	}
 }
 
+func TestParseEntriesHandlesSignedHighTrustAttributeBit(t *testing.T) {
+	entry := ldap.NewEntry("CN=primary.example.test,CN=System,DC=example,DC=test", map[string][]string{
+		"trustAttributes": {"-2147483648"},
+	})
+	parsed := ParseEntries([]*ldap.Entry{entry})
+	if len(parsed) != 1 || len(parsed[0].AttributeFlags) != 1 || parsed[0].AttributeFlags[0] != "primary" || len(parsed[0].UnknownAttributeBits) != 0 {
+		t.Fatalf("signed high bit was not decoded as a 32-bit trust mask: %#v", parsed)
+	}
+}
+
 func TestParseEntriesDoesNotExportSecrets(t *testing.T) {
 	entry := ldap.NewEntry("CN=secret.example.test,CN=System,DC=example,DC=test", map[string][]string{
 		"trustPartner": {"secret.example.test"}, "trustAuthIncoming": {"synthetic-secret"}, "trustAuthOutgoing": {"synthetic-secret"},

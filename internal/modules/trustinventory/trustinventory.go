@@ -143,7 +143,7 @@ func ParseEntries(entries []*ldap.Entry) []Trust {
 		}
 		if value, ok := intAttribute(entry, "trustAttributes"); ok {
 			trust.AttributesRaw = &value
-			trust.AttributeFlags, trust.UnknownAttributeBits = attributeFlags(uint64(value))
+			trust.AttributeFlags, trust.UnknownAttributeBits = attributeFlags(value)
 		}
 		result = append(result, trust)
 	}
@@ -212,7 +212,11 @@ var trustFlags = []struct {
 	{0x100, "uses_aes_keys"}, {0x400, "pim_trust"}, {0x800, "cross_organization_no_tgt_delegation"}, {0x80000000, "primary"},
 }
 
-func attributeFlags(value uint64) ([]string, []string) {
+func attributeFlags(raw int64) ([]string, []string) {
+	value := uint64(raw)
+	if raw < 0 {
+		value = uint64(uint32(raw))
+	}
 	var flags []string
 	known := uint64(0)
 	for _, flag := range trustFlags {
