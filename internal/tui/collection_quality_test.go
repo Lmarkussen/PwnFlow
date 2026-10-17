@@ -19,6 +19,10 @@ func TestAssessCollectionQualitySeparatesExecutionAndCollection(t *testing.T) {
 	if err := os.WriteFile(partialPath, []byte("partial evidence"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	emptyPath := filepath.Join(root, "empty.txt")
+	if err := os.WriteFile(emptyPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name, module, tool, status, path, wantExecution, wantCollection, wantConfidence string
 	}{
@@ -29,6 +33,11 @@ func TestAssessCollectionQualitySeparatesExecutionAndCollection(t *testing.T) {
 		{"failed", "LDAP query", "NetExec", "failed", filepath.Join(root, "missing"), "failed", "failed", "explicit"},
 		{"permission denied", "LDAP query", "NetExec", "failed", filepath.Join(root, "missing"), "failed", "permission_denied", "explicit"},
 		{"internal timeout", "LDAP query", "NetExec", "failed", filepath.Join(root, "missing"), "failed", "timeout", "explicit"},
+		{"empty FTP result", "FTP Authentication Check", "NetExec (nxc)", "completed", emptyPath, "completed", "unknown", "unknown"},
+		{"explicit FTP failure", "FTP Authentication Check", "NetExec (nxc)", "completed", emptyPath, "completed", "failed", "explicit"},
+		{"aborted no evidence", "NetworkHound", "NetworkHound", "aborted", filepath.Join(root, "missing"), "aborted", "unknown", "explicit"},
+		{"aborted partial", "NetworkHound", "NetworkHound", "aborted", partialPath, "aborted", "partial", "explicit"},
+		{"aborted failure", "NetworkHound", "NetworkHound", "aborted", filepath.Join(root, "missing"), "aborted", "failed", "explicit"},
 		{"unsupported", "Unsupported", "Tool", "unsupported", "", "unsupported", "unsupported", "explicit"},
 	}
 	for _, test := range cases {
@@ -40,6 +49,12 @@ func TestAssessCollectionQualitySeparatesExecutionAndCollection(t *testing.T) {
 			if test.name == "internal timeout" {
 				errorText = "operation timed out"
 			}
+			if test.name == "explicit FTP failure" {
+				errorText = "FTP connection failed"
+			}
+			if test.name == "aborted failure" {
+				errorText = "collection failed before completion"
+			}
 			if test.name == "invalid structured output" {
 				if err := os.WriteFile(test.path, []byte("not-json"), 0600); err != nil {
 					t.Fatal(err)
@@ -50,6 +65,21 @@ func TestAssessCollectionQualitySeparatesExecutionAndCollection(t *testing.T) {
 				t.Fatalf("got execution=%q collection=%q confidence=%q, want %q/%q/%q", row.Execution, row.Collection, row.Confidence, test.wantExecution, test.wantCollection, test.wantConfidence)
 			}
 		})
+	}
+}
+
+func TestCollectionQualityReportReconcilesAbortedExecutions(t *testing.T) {
+	report := formatCollectionQuality("example.test", collectionQualityReport{
+		GeneratedAt: time.Unix(1, 0),
+		Rows: []collectionQualityRow{
+			{ExecutionID: 1, Module: "FTP Authentication Check", Tool: "NetExec", Execution: "completed", Collection: "unknown", Confidence: "unknown", Reason: "no usable output recorded"},
+			{ExecutionID: 2, Module: "NetworkHound", Tool: "NetworkHound", Execution: "aborted", Collection: "unknown", Confidence: "explicit", Reason: "execution was aborted; collection coverage could not be established"},
+		},
+	})
+	for _, want := range []string{"Executions completed:             1", "Executions aborted:                1", "Unknown:", "COMPLETED WITH COLLECTION LIMITATIONS"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
 	}
 }
 

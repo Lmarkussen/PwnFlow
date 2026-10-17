@@ -145,9 +145,20 @@ func assessCollectionQuality(execution collectionQualityExecution, resultsRoot s
 		row.Collection, row.Confidence, row.Reason = "not_assessed", "explicit", "the module was not assessed in this batch"
 		return row
 	case "cancelled", "canceled", "timeout", "timed out":
-		row.Execution = "timeout"
-		row.Collection, row.Confidence = collectionFromInterrupted(usable, empty), "explicit"
-		row.Reason = interruptedReason(execution.Error, usable, empty)
+		if lowerStatus == "cancelled" || lowerStatus == "canceled" {
+			row.Execution = "aborted"
+			row.Collection, row.Confidence = collectionFromAborted(usable, execution.Error), "explicit"
+			row.Reason = abortedReason(execution.Error, usable)
+		} else {
+			row.Execution = "timeout"
+			row.Collection, row.Confidence = collectionFromInterrupted(usable, empty), "explicit"
+			row.Reason = interruptedReason(execution.Error, usable, empty)
+		}
+		return row
+	case "aborted":
+		row.Execution = "aborted"
+		row.Collection, row.Confidence = collectionFromAborted(usable, execution.Error), "explicit"
+		row.Reason = abortedReason(execution.Error, usable)
 		return row
 	case "failed", "error":
 		row.Execution = "failed"
@@ -175,6 +186,10 @@ func assessCollectionQuality(execution collectionQualityExecution, resultsRoot s
 		return row
 	}
 	if !usable {
+		if isOptionalAuthenticationCheck(execution.Module) && execution.Error == "" {
+			row.Collection, row.Confidence, row.Reason = "unknown", "unknown", "no usable output recorded; the available evidence does not establish the collection outcome"
+			return row
+		}
 		row.Collection, row.Confidence = "failed", "explicit"
 		if empty {
 			row.Reason = "execution completed but its expected output artifact is empty"
@@ -203,6 +218,10 @@ func assessCollectionQuality(execution collectionQualityExecution, resultsRoot s
 	}
 	if specific := explicitFailureCollectionStatus(execution.Error); specific != "" {
 		row.Collection, row.Confidence, row.Reason = specific, "explicit", safeQualityText(execution.Error)
+		return row
+	}
+	if isOptionalAuthenticationCheck(execution.Module) && hasExplicitError(execution.Error) {
+		row.Collection, row.Confidence, row.Reason = "failed", "explicit", safeQualityText(execution.Error)
 		return row
 	}
 	if hasExplicitError(execution.Error) {
@@ -320,7 +339,7 @@ func isKnownStructuredCollector(tool string) bool {
 
 func hasExplicitError(value string) bool {
 	text := strings.ToLower(strings.TrimSpace(value))
-	return text != "" && (strings.Contains(text, "permission") || strings.Contains(text, "denied") || strings.Contains(text, "timeout") || strings.Contains(text, "timed out") || strings.Contains(text, "partial") || strings.Contains(text, "incomplete") || strings.Contains(text, "error"))
+	return text != "" && (strings.Contains(text, "permission") || strings.Contains(text, "denied") || strings.Contains(text, "timeout") || strings.Contains(text, "timed out") || strings.Contains(text, "partial") || strings.Contains(text, "incomplete") || strings.Contains(text, "error") || strings.Contains(text, "failed"))
 }
 
 func explicitFailureCollectionStatus(value string) string {
@@ -345,6 +364,26 @@ func collectionFromInterrupted(usable, empty bool) string {
 	return "timeout"
 }
 
+func collectionFromAborted(usable bool, err string) string {
+	if usable {
+		return "partial"
+	}
+	if explicitFailureCollectionStatus(err) != "" || hasExplicitError(err) {
+		return "failed"
+	}
+	return "unknown"
+}
+
+func abortedReason(err string, usable bool) string {
+	if usable {
+		return "execution was aborted after usable evidence was written; collection coverage could not be established"
+	}
+	if safe := safeQualityText(err); safe != "" {
+		return safe
+	}
+	return "execution was aborted; collection coverage could not be established"
+}
+
 func interruptedReason(err string, usable, empty bool) string {
 	if usable {
 		return "execution ended before completion after partial evidence was written"
@@ -362,13 +401,19 @@ func normalizeExecutionStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "completed", "complete", "success", "succeeded":
 		return "completed"
-	case "cancelled", "canceled", "timeout", "timed out":
+	case "cancelled", "canceled":
+		return "aborted"
+	case "timeout", "timed out":
 		return "timeout"
 	case "skipped", "not assessed":
 		return "not_assessed"
 	default:
 		return strings.ToLower(strings.TrimSpace(status))
 	}
+}
+
+func isOptionalAuthenticationCheck(module string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(module)), " authentication check")
 }
 
 func safeQualityText(value string) string {
@@ -399,7 +444,11 @@ func formatCollectionQuality(domain string, report collectionQualityReport) stri
 	for _, row := range report.Rows {
 		executionCounts[row.Execution]++
 	}
-	fmt.Fprintf(&b, "Modules selected:                  %d\nExecutions completed:             %d\nExecutions failed:                 %d\nExecutions timed out:              %d\n\n", len(report.Rows), executionCounts["completed"], executionCounts["failed"], executionCounts["timeout"])
+	otherTerminal := len(report.Rows) - executionCounts["completed"] - executionCounts["failed"] - executionCounts["timeout"] - executionCounts["aborted"]
+	if otherTerminal < 0 {
+		otherTerminal = 0
+	}
+	fmt.Fprintf(&b, "Modules selected:                  %d\nExecutions completed:             %d\nExecutions failed:                 %d\nExecutions timed out:              %d\nExecutions aborted:                %d\nOther terminal states:            %d\n\n", len(report.Rows), executionCounts["completed"], executionCounts["failed"], executionCounts["timeout"], executionCounts["aborted"], otherTerminal)
 	b.WriteString("----------------------------------------------------------------------\nCOLLECTION QUALITY\n----------------------------------------------------------------------\n\n")
 	for _, statusName := range []string{"complete", "partial", "unknown", "permission_denied", "timeout", "unsupported", "failed", "not_assessed"} {
 		fmt.Fprintf(&b, "%-34s %d\n", strings.Title(strings.ReplaceAll(statusName, "_", " "))+":", counts[statusName])
