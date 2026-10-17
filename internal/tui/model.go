@@ -111,6 +111,10 @@ type model struct {
 	batchName         string
 	batchRequested    int
 	batchSkipped      []string
+
+	batchSummaryExported bool
+	batchExecutionIDs    []int64
+
 	watcherSelected   int
 	watcherListCursor int
 	// watcherAbort holds the execution an operator asked to abort, captured when

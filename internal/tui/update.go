@@ -89,6 +89,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		quit := m.syncBatch()
 		m.refreshFindings()
+		if !m.running && m.batchRecorded && !m.analysisPending && m.batchName == "Default Enumeration" && !m.batchSummaryExported {
+			m.exportDefaultEnumerationSummary()
+		}
 		if !m.running && m.batchRecorded && !m.analysisPending && !m.batchSummaryShown && m.findings != nil {
 			if summary, err := m.findings.Summary(m.ctx, m.targetID); err == nil && summary != "" {
 				m.status = summary
@@ -127,6 +130,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if summary, err := m.findings.Summary(m.ctx, m.targetID); err == nil {
 				m.status = summary
 			}
+		}
+		if m.batchName == "Default Enumeration" {
+			m.exportDefaultEnumerationSummary()
 		}
 		return m, nil
 	case findingsReanalysisMsg:
@@ -1004,6 +1010,8 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.batch = runner.NewBatchRun(items)
 	m.batchRecorded = false
 	m.batchSummaryShown = false
+	m.batchSummaryExported = false
+	m.batchExecutionIDs = nil
 	m.analysisPending = false
 	m.batchName = name
 	m.running = true
@@ -1072,6 +1080,9 @@ func (m *model) syncBatch() tea.Cmd {
 				for _, state := range states {
 					if state.Index >= 0 && state.Index < len(m.allModuleIDs) {
 						executionID, err := m.db.RecordExecutionID(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
+						if err == nil {
+							m.batchExecutionIDs = append(m.batchExecutionIDs, executionID)
+						}
 						if err == nil && m.findings != nil {
 							module := state.Module
 							artifact := findingengine.DiscoverArtifact(module.Tool(), state.Result.OutputPath)
