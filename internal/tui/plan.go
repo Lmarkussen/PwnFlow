@@ -59,6 +59,7 @@ var defaultEnumerationModuleIDs = []string{
 	"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates",
 	"rusthound-ce", "sccmhunter", "pxethief",
 	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit",
+	"gpoparser-remote",
 	// Authentication checks are deliberately additive to the fixed profile. The
 	// SMB server check and LDAP whoami check above already perform their
 	// protocol authentication and must not be duplicated here.

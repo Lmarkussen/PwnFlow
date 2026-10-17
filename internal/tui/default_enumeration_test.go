@@ -8,8 +8,8 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 38 {
-		t.Fatalf("Default Enumeration has %d entries, want 38", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 39 {
+		t.Fatalf("Default Enumeration has %d entries, want 39", len(defaultEnumerationModuleIDs))
 	}
 	base := defaultEnumerationModuleIDs[:32]
 	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
@@ -17,14 +17,22 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	}
 	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check"}
 	for index, id := range wantAuth {
-		if defaultEnumerationModuleIDs[32+index] != id {
-			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[32+index], id)
+		if defaultEnumerationModuleIDs[33+index] != id {
+			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[33+index], id)
 		}
 	}
 	for _, id := range defaultEnumerationModuleIDs {
 		if id == "mssql-auth-check" || id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" {
 			t.Fatalf("excluded module %q entered Default Enumeration", id)
 		}
+	}
+	for _, id := range defaultEnumerationModuleIDs {
+		if id == "gpoparser-local" {
+			t.Fatal("path-prompting offline gpoParser entered Default Enumeration")
+		}
+	}
+	if defaultEnumerationModuleIDs[32] != "gpoparser-remote" {
+		t.Fatalf("GPO remote analysis is not after the existing Default Enumeration prefix: %q", defaultEnumerationModuleIDs[32])
 	}
 }
 
