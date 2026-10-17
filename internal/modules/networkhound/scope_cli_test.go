@@ -29,6 +29,20 @@ func TestScopedModuleDeclaresItsRuntimeOptions(t *testing.T) {
 	}
 }
 
+func TestScopedModuleCommandReceivesConfiguredNetworkScope(t *testing.T) {
+	module := EnumerationModules()[1]
+	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{
+		module.ID(): {"NETWORKS": "198.51.100.0/24"},
+	}}
+	args := module.CommandArgs(runtime)
+	for index, arg := range args {
+		if arg == "--networks" && index+1 < len(args) && args[index+1] == "198.51.100.0/24" {
+			return
+		}
+	}
+	t.Fatalf("command arguments did not receive NETWORKS: %v", args)
+}
+
 func TestValidateScopePreservesExistingModuleContract(t *testing.T) {
 	for _, value := range []string{"198.51.100.0/24", "198.51.100.40", "198.51.100.40-198.51.100.43"} {
 		if err := ValidateScope(value); err != nil {
