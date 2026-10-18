@@ -341,6 +341,21 @@ func TestGlobalVisibleFindingsGroupsACLRecordsOnly(t *testing.T) {
 	}
 }
 
+func TestRawACLsRouteToEvidenceInventory(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{
+		FindingType: "ad_acl_genericall", Title: "Direct ACL GenericAll", Severity: "informational", SourceTool: "RustHound-CE",
+	}}}
+	subcategories := buildFindingSubcategories("acl", rows)
+	for _, item := range subcategories {
+		if item.Key == "acl" && item.Findings+item.Observations != 0 {
+			t.Fatalf("raw ACL evidence remained in Vulnerable ACLs: %#v", item)
+		}
+		if item.Key == "acl_inventory" && item.Observations != 1 {
+			t.Fatalf("raw ACL evidence did not route to inventory: %#v", item)
+		}
+	}
+}
+
 func TestOriginalEvidenceViewerPreservesSyntheticSecretAndRejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")

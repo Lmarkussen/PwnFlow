@@ -132,6 +132,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl_replication_rights"
+	case strings.HasPrefix(typ, "ad_acl_"):
+		return "acl_inventory"
 	case strings.HasPrefix(typ, "adcs_"):
 		if strings.Contains(strings.ToLower(finding.EvidenceJSON), `"object_type":"ca"`) {
 			return "adcs_ca"
@@ -414,7 +416,7 @@ func groupACLFindings(rows []storage.Finding) []storage.Finding {
 		finding := entry.finding
 		principal := displayFindingObject(finding.RelatedObject, finding.RelatedObjectID)
 		target := displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)
-		finding.Title = fmt.Sprintf("AD control: %s → %s", principal, target)
+		finding.Title = fmt.Sprintf("AD ACL: %s → %s (%s)", principal, target, strings.Join(entry.rights, ", "))
 		finding.Description = fmt.Sprintf("Direct ACL relationship. Observed rights: %s. Grouped %d stored ACE record(s); this presentation does not establish effective access or an attack path.", strings.Join(entry.rights, ", "), len(entry.rights))
 		finding.FindingType = "ad_acl_group"
 		result = append(result, finding)

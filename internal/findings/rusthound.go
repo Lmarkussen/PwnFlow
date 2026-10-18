@@ -208,15 +208,8 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		if principalID != "" && principalName == "" {
 			principalName = "unresolved principal"
 		}
-		broad := rightKey == "genericall" || rightKey == "writedacl" || rightKey == "writeowner"
 		severity := "informational"
 		confidence := "observed-direct-ace"
-		if broad {
-			severity = "medium"
-		}
-		if ace.Object.HighValue && broad {
-			severity = "high"
-		}
 		if rightKey == "addkeycredentiallink" {
 			confidence = "potential-condition"
 		}
@@ -230,7 +223,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		if rightKey == "writedacl" && ace.Object.HighValue {
 			title = "WriteDacl over privileged AD object: " + objectLabel(ace.Object)
 		}
-		description := fmt.Sprintf("RustHound collected a direct %s ACE from %s to %s. This is an observed relationship, not an effective-access or attack-path conclusion.", right, principalName, objectLabel(ace.Object))
+		description := fmt.Sprintf("RustHound collected a direct %s ACE from %s to %s. This is informational ACL evidence, not an effective-access or vulnerability conclusion; allow/deny, inheritance applicability and object-specific effective semantics remain unverified.", right, principalName, objectLabel(ace.Object))
 		if rightKey == "addkeycredentiallink" {
 			description += " This indicates a potential key-credential modification condition; no shadow credential was added by PwnFlow."
 		}

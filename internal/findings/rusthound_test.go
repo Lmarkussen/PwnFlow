@@ -33,8 +33,13 @@ func TestAnalyzeRustHoundACLsAndZIP(t *testing.T) {
 	if report.SchemaVersion != 6 || report.CollectorVersion != "RustHound-CE v2.5.25" || report.Objects != 2 || report.ACLs != 2 || len(findings) != 2 {
 		t.Fatalf("unexpected report: %+v findings=%d", report, len(findings))
 	}
-	if findings[0].Severity != "high" || findings[0].Confidence != "observed-direct-ace" {
-		t.Fatalf("broad control was not conservatively classified: %+v", findings[0])
+	for _, finding := range findings {
+		if finding.Severity != "informational" {
+			t.Fatalf("raw ACL evidence was promoted to vulnerability severity: %+v", finding)
+		}
+	}
+	if findings[0].Confidence != "observed-direct-ace" {
+		t.Fatalf("raw ACL evidence confidence changed: %+v", findings[0])
 	}
 	if findings[1].RelatedObject != "Domain Admins" || findings[1].ArtifactRef != "/data/0/Aces/0" {
 		t.Fatalf("principal or evidence reference was not resolved: %+v", findings[1])
