@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-ldap/ldap/v3"
 )
 
 func TestManualOnlyAndBoundedMetadata(t *testing.T) {
@@ -51,8 +54,40 @@ func TestValidatedPolicyRelativePathRejectsRedirectedRoot(t *testing.T) {
 		t.Fatal("accepted redirected SYSVOL path")
 	}
 	gpo.Attributes["gPCFileSysPath"] = attributeValue{Status: "present", Values: []string{`\\example.test\SYSVOL\example.test\Policies\{11111111-2222-3333-4444-555555555555}`}}
-	if _, err := validatedPolicyRelativePath(gpo, "example.test"); err != nil {
+	path, err := validatedPolicyRelativePath(gpo, "example.test")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if path != "example.test/Policies/{11111111-2222-3333-4444-555555555555}" {
+		t.Fatalf("unexpected share-relative path %q", path)
+	}
+}
+
+func TestFormatGUIDUsesActiveDirectoryMixedEndianEncoding(t *testing.T) {
+	raw := []byte{0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}
+	if got := formatGUID(raw); got != "00112233-4455-6677-8899-AABBCCDDEEFF" {
+		t.Fatalf("GUID=%s", got)
+	}
+}
+
+func TestParseGPOUsesPolicyCNNotDirectoryObjectGUID(t *testing.T) {
+	entry := ldap.NewEntry("CN={00112233-4455-6677-8899-AABBCCDDEEFF},CN=Policies,DC=example,DC=test", map[string][]string{
+		"cn":         {"{00112233-4455-6677-8899-AABBCCDDEEFF}"},
+		"objectGUID": {"not-the-policy-guid"},
+	})
+	gpo := parseGPO(entry, []string{"cn", "objectGUID"})
+	if gpo.GUID != "00112233-4455-6677-8899-AABBCCDDEEFF" {
+		t.Fatalf("policy GUID=%s", gpo.GUID)
+	}
+	if gpo.OriginalGUID != "{00112233-4455-6677-8899-AABBCCDDEEFF}" {
+		t.Fatalf("original policy GUID=%s", gpo.OriginalGUID)
+	}
+}
+
+func TestRetrievalDiagnosticClassifiesMissingDirectory(t *testing.T) {
+	stage, category, summary, listed := retrievalDiagnostic(context.Background(), errors.New("exit status 1"), []byte("NT_STATUS_OBJECT_NAME_NOT_FOUND listing path"))
+	if stage != "directory_lookup" || category != "directory_not_found" || listed || !strings.Contains(summary, "OBJECT_NAME_NOT_FOUND") {
+		t.Fatalf("diagnostic=%q %q %q %v", stage, category, summary, listed)
 	}
 }
 

@@ -79,6 +79,7 @@ type attributeValue struct {
 
 type GPO struct {
 	GUID         string                    `json:"guid"`
+	ObjectGUID   string                    `json:"object_guid,omitempty"`
 	OriginalGUID string                    `json:"original_guid,omitempty"`
 	DN           string                    `json:"distinguished_name"`
 	Attributes   map[string]attributeValue `json:"attributes"`
@@ -145,15 +146,21 @@ type ManifestFile struct {
 }
 
 type GPOSummary struct {
-	GPOGUID      string `json:"gpo_guid"`
-	ExpectedPath string `json:"expected_directory"`
-	Listed       int    `json:"listed_files"`
-	Retrieved    int    `json:"retrieved_files"`
-	Denied       int    `json:"denied_files"`
-	Missing      int    `json:"missing_files"`
-	Failed       int    `json:"failed_files"`
-	Limited      int    `json:"limited_files"`
-	Status       string `json:"status"`
+	GPOGUID            string `json:"gpo_guid"`
+	ExpectedPath       string `json:"expected_directory"`
+	Listed             int    `json:"listed_files"`
+	Retrieved          int    `json:"retrieved_files"`
+	Denied             int    `json:"denied_files"`
+	Missing            int    `json:"missing_files"`
+	Failed             int    `json:"failed_files"`
+	Limited            int    `json:"limited_files"`
+	Status             string `json:"status"`
+	Stage              string `json:"stage,omitempty"`
+	ErrorCategory      string `json:"error_category,omitempty"`
+	ErrorSummary       string `json:"error_summary,omitempty"`
+	SourcePath         string `json:"source_path,omitempty"`
+	RetrievalAttempted bool   `json:"retrieval_attempted"`
+	ListingCompleted   bool   `json:"listing_completed"`
 }
 
 type Manifest struct {
@@ -192,7 +199,12 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if err := writeJSON(filepath.Join(root, "GPO_evidence_manifest.json"), manifest); err != nil {
 		return err
 	}
-	log := fmt.Sprintf("GPO evidence collection: LDAP=%s GPOs=%d files=%d status=%s\n", metadata.Collection.Status, len(gpos), len(manifest.Files), manifestStatus(manifest))
+	var logBuilder strings.Builder
+	fmt.Fprintf(&logBuilder, "GPO evidence collection: LDAP=%s GPOs=%d files=%d status=%s\n", metadata.Collection.Status, len(gpos), len(manifest.Files), manifestStatus(manifest))
+	for _, summary := range manifest.GPOs {
+		fmt.Fprintf(&logBuilder, "GPO %s:\n  LDAP metadata: collected\n  SYSVOL listing: %s\n  Stage: %s\n  Reason: %s\n  Files retrieved: %d\n", summary.GPOGUID, listingOutcome(summary), valueOrUnknown(summary.Stage), valueOrUnknown(summary.ErrorSummary), summary.Retrieved)
+	}
+	log := logBuilder.String()
 	if err := os.WriteFile(filepath.Join(root, "collection.log"), []byte(log), 0o600); err != nil {
 		return err
 	}
@@ -288,11 +300,14 @@ func collectLDAP(ctx context.Context, runtime *modules.Runtime) (Metadata, Links
 }
 
 func parseGPO(entry *ldap.Entry, attrs []string) GPO {
-	guid := entry.GetAttributeValue("objectGUID")
+	// objectGUID identifies the directory object that stores the GPC. The
+	// policy/SYSVOL GUID is the textual CN and must be used for the policy path.
+	guid := normalizeGUID(entry.GetAttributeValue("cn"))
+	objectGUID := entry.GetAttributeValue("objectGUID")
 	if raw := entry.GetRawAttributeValue("objectGUID"); len(raw) > 0 {
-		guid = formatGUID(raw)
+		objectGUID = formatGUID(raw)
 	}
-	gpo := GPO{GUID: normalizeGUID(guid), OriginalGUID: entry.GetAttributeValue("objectGUID"), DN: entry.DN, Attributes: map[string]attributeValue{}}
+	gpo := GPO{GUID: guid, ObjectGUID: objectGUID, OriginalGUID: entry.GetAttributeValue("cn"), DN: entry.DN, Attributes: map[string]attributeValue{}}
 	for _, name := range attrs {
 		values := entry.GetAttributeValues(name)
 		status := "missing"
@@ -373,14 +388,14 @@ func parseLinks(raw string) []Link {
 func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, gpos []GPO, manifest *Manifest) {
 	if !validDomain(runtime.Domain) {
 		for _, gpo := range gpos {
-			manifest.GPOs = append(manifest.GPOs, GPOSummary{GPOGUID: gpo.GUID, Status: "failed"})
+			manifest.GPOs = append(manifest.GPOs, failedSummary(gpo.GUID, "validation", "invalid domain", "", false, false))
 		}
 		return
 	}
 	authPath, err := writeAuthFile(runtime)
 	if err != nil {
 		for _, gpo := range gpos {
-			manifest.GPOs = append(manifest.GPOs, GPOSummary{GPOGUID: gpo.GUID, Status: "failed"})
+			manifest.GPOs = append(manifest.GPOs, failedSummary(gpo.GUID, "authentication", safeError(err), "", false, false))
 		}
 		return
 	}
@@ -388,24 +403,24 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 	var totalFiles, totalBytes int
 	for _, gpo := range gpos {
 		if err := ctx.Err(); err != nil {
-			manifest.GPOs = append(manifest.GPOs, GPOSummary{GPOGUID: gpo.GUID, Status: "timed_out"})
+			manifest.GPOs = append(manifest.GPOs, failedSummary(gpo.GUID, "cancellation", "collection cancelled", "", false, false))
 			return
 		}
-		summary := GPOSummary{GPOGUID: gpo.GUID, ExpectedPath: `SYSVOL/` + runtime.Domain + `/Policies/` + gpo.GUID}
+		summary := GPOSummary{GPOGUID: gpo.GUID, ExpectedPath: `SYSVOL/` + runtime.Domain + `/Policies/` + bracedGUID(gpo.GUID)}
 		if !guidPattern.MatchString(gpo.GUID) {
-			summary.Status = "failed"
+			summary.Status, summary.Stage, summary.ErrorCategory, summary.ErrorSummary = "failed", "guid_validation", "invalid_gpo_guid", "LDAP GPO identifier is not a valid GUID"
 			manifest.GPOs = append(manifest.GPOs, summary)
 			continue
 		}
 		remotePath, pathErr := validatedPolicyRelativePath(gpo, runtime.Domain)
 		if pathErr != nil {
-			summary.Status = "failed"
+			summary.Status, summary.Stage, summary.ErrorCategory, summary.ErrorSummary = "failed", "path_validation", "invalid_or_mismatched_gpo_path", safeError(pathErr)
 			manifest.GPOs = append(manifest.GPOs, summary)
 			continue
 		}
 		tempRoot, tempErr := os.MkdirTemp("", "pwnflow-gpo-")
 		if tempErr != nil {
-			summary.Status = "failed"
+			summary.Status, summary.Stage, summary.ErrorCategory, summary.ErrorSummary = "failed", "staging", "process_execution_failure", safeError(tempErr)
 			manifest.GPOs = append(manifest.GPOs, summary)
 			continue
 		}
@@ -413,7 +428,9 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 		command := fmt.Sprintf("cd %s; recurse; prompt OFF; mget *", remotePath)
 		cmd := exec.CommandContext(operationCtx, "smbclient", "//"+runtime.Target+"/SYSVOL", "-A", authPath, "-c", command)
 		cmd.Dir = tempRoot
-		_, runErr := cmd.CombinedOutput()
+		output, runErr := cmd.CombinedOutput()
+		summary.RetrievalAttempted, summary.SourcePath = true, remotePath
+		summary.Stage, summary.ErrorCategory, summary.ErrorSummary, summary.ListingCompleted = retrievalDiagnostic(operationCtx, runErr, output)
 		gpoRoot := filepath.Join(tempRoot, runtime.Domain, "Policies", gpo.GUID)
 		if _, statErr := os.Stat(gpoRoot); os.IsNotExist(statErr) {
 			gpoRoot = tempRoot
@@ -430,11 +447,12 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 		if errors.Is(operationCtx.Err(), context.DeadlineExceeded) {
 			summary.Status = "timed_out"
 		} else if runErr != nil && summary.Retrieved == 0 {
-			summary.Status = statusFor(runErr)
+			summary.Status = "failed"
 		} else if walkErr != nil || summary.Limited > 0 || runErr != nil {
 			summary.Status = "partial"
 		} else if summary.Retrieved == 0 {
-			summary.Status = "unknown"
+			summary.Status = "partial"
+			summary.Stage, summary.ErrorCategory, summary.ErrorSummary, summary.ListingCompleted = "directory_listing", "empty_directory_listing", "directory listing completed with no files", true
 		} else {
 			summary.Status = "complete"
 		}
@@ -443,7 +461,7 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 }
 
 func validatedPolicyRelativePath(gpo GPO, domain string) (string, error) {
-	expected := domain + "/Policies/" + gpo.GUID
+	expected := domain + "/Policies/" + bracedGUID(gpo.GUID)
 	attribute, ok := gpo.Attributes["gPCFileSysPath"]
 	if !ok || len(attribute.Values) == 0 || strings.TrimSpace(attribute.Values[0]) == "" {
 		return expected, nil
@@ -455,6 +473,71 @@ func validatedPolicyRelativePath(gpo GPO, domain string) (string, error) {
 		return "", fmt.Errorf("gPCFileSysPath is outside the domain SYSVOL Policies root")
 	}
 	return expected, nil
+}
+
+func bracedGUID(value string) string {
+	return "{" + normalizeGUID(value) + "}"
+}
+
+func failedSummary(guid, stage, detail, sourcePath string, attempted, listed bool) GPOSummary {
+	return GPOSummary{GPOGUID: guid, ExpectedPath: "", Status: "failed", Stage: stage, ErrorCategory: classifyErrorCategory(detail), ErrorSummary: safeError(errors.New(detail)), SourcePath: sourcePath, RetrievalAttempted: attempted, ListingCompleted: listed}
+}
+
+func listingOutcome(summary GPOSummary) string {
+	if summary.ListingCompleted {
+		return "completed"
+	}
+	return "failed"
+}
+
+func valueOrUnknown(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func retrievalDiagnostic(operationCtx context.Context, runErr error, output []byte) (stage, category, summary string, listingCompleted bool) {
+	if errors.Is(operationCtx.Err(), context.DeadlineExceeded) {
+		return "directory_listing", "network_timeout", "SMB operation exceeded per-GPO timeout", false
+	}
+	if errors.Is(operationCtx.Err(), context.Canceled) {
+		return "directory_listing", "cancellation", "SMB operation cancelled", false
+	}
+	diagnostic := safeError(errors.New(string(output)))
+	if runErr == nil {
+		return "directory_listing", "", "directory listing completed", true
+	}
+	category = classifyErrorCategory(diagnostic)
+	return "directory_lookup", category, diagnosticOrFallback(diagnostic, runErr), false
+}
+
+func diagnosticOrFallback(diagnostic string, err error) string {
+	if diagnostic != "" {
+		if len(diagnostic) > 500 {
+			return diagnostic[:500] + "..."
+		}
+		return diagnostic
+	}
+	return safeError(err)
+}
+
+func classifyErrorCategory(detail string) string {
+	text := strings.ToLower(detail)
+	switch {
+	case strings.Contains(text, "logon failure"), strings.Contains(text, "nt_status_logon_failure"), strings.Contains(text, "authentication"):
+		return "authentication_rejected"
+	case strings.Contains(text, "access denied"), strings.Contains(text, "permission denied"), strings.Contains(text, "nt_status_access_denied"):
+		return "permission_denied"
+	case strings.Contains(text, "bad network name"), strings.Contains(text, "connection failed"), strings.Contains(text, "no route"):
+		return "share_unavailable"
+	case strings.Contains(text, "object name not found"), strings.Contains(text, "does not exist"), strings.Contains(text, "nt_status_object_name_not_found"):
+		return "directory_not_found"
+	case strings.Contains(text, "timeout"), strings.Contains(text, "timed out"):
+		return "network_timeout"
+	default:
+		return "process_execution_failure"
+	}
 }
 
 func writeAuthFile(runtime *modules.Runtime) (string, error) {
@@ -611,7 +694,7 @@ func formatGUID(raw []byte) string {
 	if len(raw) != 16 {
 		return ""
 	}
-	return fmt.Sprintf("%08X-%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X", uint32(raw[0])|uint32(raw[1])<<8|uint32(raw[2])<<16|uint32(raw[3])<<24, raw[4], raw[5], raw[6], raw[7], raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15])
+	return fmt.Sprintf("%08X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X", uint32(raw[0])|uint32(raw[1])<<8|uint32(raw[2])<<16|uint32(raw[3])<<24, raw[5], raw[4], raw[7], raw[6], raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15])
 }
 func intPtr(value int) *int { return &value }
 func domainDN(domain string) string {

@@ -76,11 +76,14 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 	}
 	var manifest struct {
 		GPOs []struct {
-			GPOGUID   string `json:"gpo_guid"`
-			Status    string `json:"status"`
-			Retrieved int    `json:"retrieved_files"`
-			Failed    int    `json:"failed_files"`
-			Limited   int    `json:"limited_files"`
+			GPOGUID       string `json:"gpo_guid"`
+			Status        string `json:"status"`
+			Retrieved     int    `json:"retrieved_files"`
+			Failed        int    `json:"failed_files"`
+			Limited       int    `json:"limited_files"`
+			Stage         string `json:"stage"`
+			ErrorCategory string `json:"error_category"`
+			ErrorSummary  string `json:"error_summary"`
 		} `json:"gpos"`
 		Files []struct {
 			Status string `json:"status"`
@@ -114,8 +117,14 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 			limited++
 		}
 	}
-	evidence, _ := json.Marshal(map[string]any{"execution_id": executionID, "gpos_discovered": len(manifest.GPOs), "gpos_complete": complete, "gpos_partial": partial, "sysvol_files": len(manifest.Files), "file_failures": failed, "file_limits": limited, "metadata": metadataPath, "links": linksPath, "manifest": manifestPath, "applicability": "not_verified", "wmi_filters": "references preserved; runtime results not evaluated", "security_filtering": "raw evidence only; effective rights not calculated"})
-	description := fmt.Sprintf("Collected %d GPO(s) and %d preserved SYSVOL file record(s) from execution %d. Complete GPOs: %d; partial/limited GPOs: %d; file failures: %d; file limits: %d. Authoritative artifacts: %s, %s, %s, and %sSYSVOL/. Configured links are not proof of applicability; WMI runtime results, effective security filtering and client-side policy application were not verified.", len(manifest.GPOs), len(manifest.Files), executionID, complete, partial, failed, limited, filepath.Base(metadataPath), filepath.Base(linksPath), filepath.Base(manifestPath), filepath.Base(directory)+string(os.PathSeparator))
+	limitations := make([]string, 0)
+	for _, gpo := range manifest.GPOs {
+		if gpo.ErrorSummary != "" {
+			limitations = append(limitations, fmt.Sprintf("%s: %s (%s)", gpo.GPOGUID, gpo.ErrorSummary, gpo.Stage))
+		}
+	}
+	evidence, _ := json.Marshal(map[string]any{"execution_id": executionID, "gpos_discovered": len(manifest.GPOs), "gpos_complete": complete, "gpos_partial": partial, "sysvol_files": len(manifest.Files), "file_failures": failed, "file_limits": limited, "metadata": metadataPath, "links": linksPath, "manifest": manifestPath, "applicability": "not_verified", "wmi_filters": "references preserved; runtime results not evaluated", "security_filtering": "raw evidence only; effective rights not calculated", "retrieval_limitations": limitations})
+	description := fmt.Sprintf("Collected %d GPO(s) and %d preserved SYSVOL file record(s) from execution %d. Complete GPOs: %d; partial/limited GPOs: %d; file failures: %d; file limits: %d. Retrieval limitations: %s. Authoritative artifacts: %s, %s, %s, and %sSYSVOL/. Configured links are not proof of applicability; WMI runtime results, effective security filtering and client-side policy application were not verified.", len(manifest.GPOs), len(manifest.Files), executionID, complete, partial, failed, limited, strings.Join(limitations, "; "), filepath.Base(metadataPath), filepath.Base(linksPath), filepath.Base(manifestPath), filepath.Base(directory)+string(os.PathSeparator))
 	return []storage.FindingInput{specializedFinding(assessmentID, executionID, "gpo_evidence_inventory", "AD Group Policy Evidence Inventory", description, "informational", "", string(evidence), metadataPath, "GPO_metadata.json; GPO_links.json; GPO_evidence_manifest.json; SYSVOL/<GPO-GUID>/", now)}, nil
 }
 
