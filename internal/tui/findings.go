@@ -232,6 +232,9 @@ func (m *model) refreshFindings() {
 		m.findingCategories = buildFindingCategories(m.findingAllRows)
 		m.findingsLoaded = true
 	}
+	if m.findingCategories == nil {
+		m.findingCategories = buildFindingCategories(m.findingAllRows)
+	}
 	rows := m.findingAllRows
 	m.findingViewMode = "all"
 	m.findingSearch = ""
@@ -266,6 +269,96 @@ func (m *model) refreshFindings() {
 	if !m.findingCategoryView {
 		m.keepFindingVisible()
 	}
+}
+
+func (m *model) ensureFindingNavigationMemory() {
+	if m.findingSubcategorySelections == nil {
+		m.findingSubcategorySelections = make(map[string]string)
+	}
+	if m.findingSubcategoryTops == nil {
+		m.findingSubcategoryTops = make(map[string]int)
+	}
+	if m.findingRowSelections == nil {
+		m.findingRowSelections = make(map[string]string)
+	}
+	if m.findingRowTops == nil {
+		m.findingRowTops = make(map[string]int)
+	}
+}
+
+func findingRowIdentity(finding storage.Finding) string {
+	if finding.ID > 0 {
+		return fmt.Sprintf("id:%d", finding.ID)
+	}
+	if finding.FindingKey != "" {
+		return "key:" + finding.FindingKey
+	}
+	return strings.Join([]string{finding.FindingType, fmt.Sprint(finding.SourceExecution), finding.ArtifactPath, finding.ArtifactRef, finding.AffectedObjectID, finding.AffectedObject}, "\x00")
+}
+
+func findingSubcategoryPath(category, subcategory string) string {
+	return category + "\x00" + subcategory
+}
+
+func (m *model) restoreFindingCategorySelection() {
+	if m.findingCategorySelection != "" {
+		for index, category := range m.findingCategories {
+			if category.Key == m.findingCategorySelection {
+				m.findingCursor = index
+				return
+			}
+		}
+	}
+	m.findingCursor = min(max(0, m.findingCursor), max(0, len(m.findingCategories)-1))
+}
+
+func (m *model) restoreFindingSubcategorySelection() {
+	m.ensureFindingNavigationMemory()
+	selection := m.findingSubcategorySelections[m.findingCategory]
+	if selection != "" {
+		for index, subcategory := range m.findingSubcategories {
+			if subcategory.Key == selection {
+				m.findingCursor = index
+				m.findingTop = m.findingSubcategoryTops[m.findingCategory]
+				return
+			}
+		}
+	}
+	m.findingCursor = min(max(0, m.findingCursor), max(0, len(m.findingSubcategories)-1))
+}
+
+func (m *model) restoreFindingRowSelection() {
+	m.ensureFindingNavigationMemory()
+	selection := m.findingRowSelections[findingSubcategoryPath(m.findingCategory, m.findingSubcategory)]
+	if selection != "" {
+		for index, finding := range m.findingRows {
+			if findingRowIdentity(finding) == selection {
+				m.findingCursor = index
+				m.findingTop = m.findingRowTops[findingSubcategoryPath(m.findingCategory, m.findingSubcategory)]
+				return
+			}
+		}
+	}
+	m.findingCursor = min(max(0, m.findingCursor), max(0, len(m.findingRows)-1))
+}
+
+func (m *model) rememberFindingSubcategorySelection() {
+	m.ensureFindingNavigationMemory()
+	if m.findingCategory == "" || len(m.findingSubcategories) == 0 || m.findingCursor < 0 || m.findingCursor >= len(m.findingSubcategories) {
+		return
+	}
+	m.findingSubcategorySelections[m.findingCategory] = m.findingSubcategories[m.findingCursor].Key
+	m.findingSubcategoryTops[m.findingCategory] = m.findingTop
+}
+
+func (m *model) rememberFindingRowSelection() {
+	m.ensureFindingNavigationMemory()
+	if m.findingCategory == "" || m.findingSubcategory == "" || len(m.findingRows) == 0 || m.findingCursor < 0 || m.findingCursor >= len(m.findingRows) {
+		return
+	}
+	path := findingSubcategoryPath(m.findingCategory, m.findingSubcategory)
+	m.findingRowSelections[path] = findingRowIdentity(m.findingRows[m.findingCursor])
+	m.findingRowTops[path] = m.findingTop
 }
 
 func groupVisibleFindings(rows []storage.Finding) []storage.Finding {

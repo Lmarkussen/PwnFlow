@@ -871,3 +871,110 @@ func TestCertipyHistoricalRecordWithoutStructuredMetadataRemainsUseful(t *testin
 		t.Fatal("historical source execution was not preserved")
 	}
 }
+
+func TestFindingsNavigationRestoresADCSSiblingSelection(t *testing.T) {
+	rows := []storage.Finding{
+		{ID: 1, FindingInput: storage.FindingInput{FindingKey: "ca", FindingType: "adcs_esc_esc7", Title: "CA finding", Severity: "high"}},
+		{ID: 2, FindingInput: storage.FindingInput{FindingKey: "template", FindingType: "adcs_esc_esc1", Title: "Template finding", Severity: "high"}},
+		{ID: 3, FindingInput: storage.FindingInput{FindingKey: "kerb", FindingType: "kerberoastable_account", Title: "Kerberos finding", Severity: "medium"}},
+	}
+	m := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{
+		{Key: "adcs", Name: "AD CS"}, {Key: "kerberos", Name: "Kerberos"},
+	}, findingAllRows: rows, findingViewMode: "all", findingsLoaded: true, width: 120, height: 40}
+
+	m.findingCursor = 0
+	m.handleFindingsKey("enter")
+	if !m.findingCategoryView || !m.findingSubcategoryView || m.findingCategory != "adcs" {
+		t.Fatalf("AD CS did not open its subcategory list: category=%t subcategory=%t key=%q", m.findingCategoryView, m.findingSubcategoryView, m.findingCategory)
+	}
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "adcs_ca" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("enter")
+	if m.findingCategoryView || m.findingSubcategoryView || m.findingSubcategory != "adcs_ca" {
+		t.Fatalf("CA subcategory did not open findings: category=%t subcategory=%t key=%q", m.findingCategoryView, m.findingSubcategoryView, m.findingSubcategory)
+	}
+	m.findingRows = []storage.Finding{rows[0]}
+	m.handleFindingsKey("enter")
+	if !m.findingDetail || m.findingRows[m.findingCursor].FindingKey != "ca" {
+		t.Fatalf("CA finding detail did not open: detail=%t cursor=%d", m.findingDetail, m.findingCursor)
+	}
+	m.handleFindingsKey("esc")
+	if m.findingDetail || m.findingRows[m.findingCursor].FindingKey != "ca" {
+		t.Fatalf("detail Esc did not restore CA finding: detail=%t cursor=%d", m.findingDetail, m.findingCursor)
+	}
+	m.handleFindingsKey("esc")
+	if !m.findingCategoryView || !m.findingSubcategoryView || m.findingSubcategory != "" {
+		t.Fatalf("finding-list Esc did not return to subcategories: category=%t subcategory=%t key=%q", m.findingCategoryView, m.findingSubcategoryView, m.findingSubcategory)
+	}
+	if m.findingSubcategories[m.findingCursor].Key != "adcs_ca" {
+		t.Fatalf("finding-list Esc selected sibling subcategory %q", m.findingSubcategories[m.findingCursor].Key)
+	}
+	m.handleFindingsKey("esc")
+	if !m.findingCategoryView || m.findingSubcategoryView || m.findingCategory != "" {
+		t.Fatalf("subcategory Esc did not return to root: category=%t subcategory=%t key=%q", m.findingCategoryView, m.findingSubcategoryView, m.findingCategory)
+	}
+	if m.findingCategories[m.findingCursor].Key != "adcs" {
+		t.Fatalf("subcategory Esc selected sibling category %q", m.findingCategories[m.findingCursor].Key)
+	}
+
+	m.findingCursor = 1
+	m.handleFindingsKey("enter")
+	if m.findingCategory != "kerberos" || !m.findingSubcategoryView {
+		t.Fatalf("sibling category did not open: category=%q", m.findingCategory)
+	}
+	m.handleFindingsKey("esc")
+	if m.findingCategories[m.findingCursor].Key != "kerberos" {
+		t.Fatalf("root selection was not restored after sibling category: %q", m.findingCategories[m.findingCursor].Key)
+	}
+}
+
+func TestFindingsNavigationRestoresScrolledRowByIdentity(t *testing.T) {
+	rows := make([]storage.Finding, 0, 30)
+	for index := 0; index < 30; index++ {
+		rows = append(rows, storage.Finding{ID: int64(index + 1), FindingInput: storage.FindingInput{FindingKey: fmt.Sprintf("row-%d", index), FindingType: "adcs_esc_esc1", Title: fmt.Sprintf("Template %02d", index), Severity: "high"}})
+	}
+	m := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{{Key: "adcs", Name: "AD CS"}}, findingAllRows: rows, findingViewMode: "all", findingsLoaded: true, width: 80, height: 12}
+	m.handleFindingsKey("enter")
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "adcs_template" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("enter")
+	m.findingRows = append([]storage.Finding(nil), rows...)
+	m.findingCursor = 20
+	m.findingTop = 12
+	selected := m.findingRows[m.findingCursor].FindingKey
+	m.handleFindingsKey("esc")
+	m.handleFindingsKey("enter")
+	if m.findingRows[m.findingCursor].FindingKey != selected || m.findingCursor != 20 {
+		t.Fatalf("row identity/scroll was not restored: key=%q cursor=%d", m.findingRows[m.findingCursor].FindingKey, m.findingCursor)
+	}
+	if m.findingTop != 12 {
+		t.Fatalf("row viewport was not restored: top=%d", m.findingTop)
+	}
+}
+
+func TestFindingsNavigationFallsBackWhenSelectionDisappears(t *testing.T) {
+	rows := []storage.Finding{{ID: 1, FindingInput: storage.FindingInput{FindingKey: "one", FindingType: "adcs_esc_esc1", Title: "One", Severity: "high"}}, {ID: 2, FindingInput: storage.FindingInput{FindingKey: "two", FindingType: "adcs_esc_esc1", Title: "Two", Severity: "high"}}}
+	m := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{{Key: "adcs", Name: "AD CS"}}, findingAllRows: rows, findingViewMode: "all", findingsLoaded: true, width: 100, height: 20}
+	m.handleFindingsKey("enter")
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "adcs_template" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("enter")
+	m.findingRows = append([]storage.Finding(nil), rows...)
+	m.findingCursor = 1
+	m.handleFindingsKey("esc")
+	m.findingAllRows = m.findingAllRows[:1]
+	m.findingRows = m.findingAllRows
+	m.handleFindingsKey("enter")
+	if len(m.findingRows) != 1 || m.findingCursor != 0 {
+		t.Fatalf("disappearing selection did not fall back safely: rows=%d cursor=%d", len(m.findingRows), m.findingCursor)
+	}
+}

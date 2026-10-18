@@ -563,9 +563,12 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			}
 			m.findingsFromWatcher = false
 		case "esc":
+			m.rememberFindingSubcategorySelection()
+			m.findingCategory = ""
 			m.findingSubcategoryView = false
 			m.findingSubcategory = ""
-			m.findingCursor = 0
+			m.restoreFindingCategorySelection()
+			m.findingTop = m.findingCategoryTop
 		case "up", "k":
 			m.findingCursor--
 		case "down", "j":
@@ -581,10 +584,15 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.findingSubcategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingSubcategories) {
 				selected := m.findingSubcategories[m.findingCursor]
+				m.ensureFindingNavigationMemory()
+				m.findingSubcategorySelections[m.findingCategory] = selected.Key
 				m.findingSubcategory = selected.Key
 				m.findingCategoryView = false
 				m.findingSubcategoryView = false
 				m.findingCursor, m.findingTop = 0, 0
+				m.refreshFindings()
+				m.restoreFindingRowSelection()
+				return m, nil
 			}
 		}
 		if m.findingCursor < 0 {
@@ -632,11 +640,14 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.findingCursor += 5
 		case "enter":
 			if len(m.findingCategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingCategories) {
-				m.findingCategory = m.findingCategories[m.findingCursor].Key
+				selected := m.findingCategories[m.findingCursor]
+				m.findingCategorySelection = selected.Key
+				m.findingCategory = selected.Key
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
 				m.findingSubcategoryView = true
 				m.findingCursor = 0
 				m.findingTop = 0
+				m.restoreFindingSubcategorySelection()
 				m.refreshFindings()
 			}
 		}
@@ -694,18 +705,22 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.findingCategory != "" {
 			if m.findingSubcategory != "" {
+				m.rememberFindingRowSelection()
 				m.findingSubcategory = ""
+				m.findingCategoryView = true
 				m.findingSubcategoryView = true
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
-				m.findingCursor = 0
+				m.restoreFindingSubcategorySelection()
 				m.refreshFindings()
 				return m, nil
 			}
+			m.rememberFindingSubcategorySelection()
 			m.findingCategory = ""
 			m.findingSubcategory = ""
 			m.findingSubcategoryView = false
 			m.findingCategoryView = true
-			m.findingCursor = 0
+			m.restoreFindingCategorySelection()
+			m.findingTop = m.findingCategoryTop
 			m.findingDetail = false
 			m.refreshFindings()
 			return m, nil
