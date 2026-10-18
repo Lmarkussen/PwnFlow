@@ -237,7 +237,6 @@ func (m *model) refreshFindings() {
 	}
 	rows := m.findingAllRows
 	m.findingViewMode = "all"
-	m.findingSearch = ""
 	m.findingSeverity = ""
 	filtered := make([]storage.Finding, 0, len(rows))
 	for _, finding := range rows {
@@ -461,9 +460,6 @@ func severityRank(value string) int {
 
 func (m *model) findingsViewRender() string {
 	width := max(40, m.width-4)
-	if m.searchMode && m.searchKind == "findings" {
-		return m.searchViewRender(width)
-	}
 	if m.evidenceView {
 		return m.evidenceViewRender(width)
 	}
@@ -503,7 +499,7 @@ func (m *model) findingsViewRender() string {
 		content.WriteString(findingSection("RECOMMENDED ACTION", findingRemediation(finding), width-4))
 		content.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
 		content.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
-		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Up/Down Change finding"))
+		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Q Quit   Up/Down Change finding"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
 	if len(m.findingRows) == 0 {
@@ -522,136 +518,7 @@ func (m *model) findingsViewRender() string {
 		}
 	}
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
-	content.WriteString(dim.Render("\n\nEnter = Open    Ctrl+S = Search    Esc = Back"))
-	return paneStyle(false).Width(width).Render(content.String())
-}
-
-func (m *model) startSearch(kind string) {
-	m.searchMode = true
-	m.searchKind = kind
-	m.searchCursor = 0
-	m.searchFindingReturn = false
-	m.searchInput = newSearchInput()
-	m.searchInput.Focus()
-	if kind == "findings" {
-		if !m.findingsLoaded && m.db != nil {
-			m.refreshFindings()
-		}
-		m.searchFindingRows = append([]storage.Finding(nil), m.findingRows...)
-		m.searchFindingCursor = m.findingCursor
-		m.searchFindingTop = m.findingTop
-		m.searchFindingCategoryView = m.findingCategoryView
-		m.searchFindingSubcategoryView = m.findingSubcategoryView
-		m.searchFindingCategory = m.findingCategory
-		m.searchFindingSubcategory = m.findingSubcategory
-		m.searchFindingCategories = append([]findingCategory(nil), m.findingCategories...)
-		m.searchFindingSubcategories = append([]findingSubcategory(nil), m.findingSubcategories...)
-		m.searchFindingSource = append([]storage.Finding(nil), m.findingAllRows...)
-		if len(m.searchFindingSource) == 0 {
-			m.searchFindingSource = append([]storage.Finding(nil), m.findingRows...)
-		}
-		m.searchFindingResults = append([]storage.Finding(nil), m.searchFindingSource...)
-	}
-	m.refreshSearchResults()
-}
-
-func (m *model) refreshSearchResults() {
-	query := strings.ToLower(strings.TrimSpace(m.searchInput.Value()))
-	if m.searchKind == "modules" {
-		m.searchModuleResults = m.searchModuleResults[:0]
-		for index, module := range m.modules {
-			text := strings.ToLower(strings.Join([]string{module.Name(), module.ID(), string(module.Category()), module.Description()}, "\x00"))
-			if query == "" || strings.Contains(text, query) {
-				m.searchModuleResults = append(m.searchModuleResults, index)
-			}
-		}
-		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchModuleResults)-1))
-		return
-	}
-	m.searchFindingResults = filterFindingSearchResults(m.searchFindingSource, query)
-	m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchFindingResults)-1))
-}
-
-func filterFindingSearchResults(rows []storage.Finding, query string) []storage.Finding {
-	if query == "" {
-		return append([]storage.Finding(nil), rows...)
-	}
-	result := make([]storage.Finding, 0, len(rows))
-	for _, finding := range rows {
-		text := strings.ToLower(strings.Join([]string{
-			finding.Title, finding.FindingType, finding.SourceTool,
-			finding.AffectedObject, finding.AffectedObjectID,
-			finding.RelatedObject, finding.RelatedObjectID,
-			findingCategoryKey(finding), findingSubcategoryKey(finding),
-		}, "\x00"))
-		if strings.Contains(text, query) {
-			result = append(result, finding)
-		}
-	}
-	return result
-}
-
-func (m *model) restoreSearchFindingContext() {
-	m.findingRows = append([]storage.Finding(nil), m.searchFindingRows...)
-	m.findingCursor = m.searchFindingCursor
-	m.findingTop = m.searchFindingTop
-	m.findingCategoryView = m.searchFindingCategoryView
-	m.findingSubcategoryView = m.searchFindingSubcategoryView
-	m.findingCategory = m.searchFindingCategory
-	m.findingSubcategory = m.searchFindingSubcategory
-	m.findingCategories = append([]findingCategory(nil), m.searchFindingCategories...)
-	m.findingSubcategories = append([]findingSubcategory(nil), m.searchFindingSubcategories...)
-	m.searchFindingRows = nil
-	m.searchFindingResults = nil
-	m.searchFindingSource = nil
-	m.searchFindingCategories = nil
-	m.searchFindingSubcategories = nil
-}
-
-func (m *model) closeSearch() {
-	if m.searchKind == "findings" {
-		m.restoreSearchFindingContext()
-	}
-	m.searchMode = false
-	m.searchKind = ""
-	m.searchCursor = 0
-	m.searchModuleResults = nil
-	m.searchFindingReturn = false
-}
-
-func (m *model) searchViewRender(width int) string {
-	var content strings.Builder
-	content.WriteString(title.Render("PwnFlow // SEARCH") + "\n\n")
-	content.WriteString(m.searchInput.View() + "\n")
-	content.WriteString(dim.Render("Enter open/select   Esc cancel   Up/Down move") + "\n\n")
-	if m.searchKind == "modules" {
-		if len(m.searchModuleResults) == 0 {
-			content.WriteString(warn.Render("No matching modules.") + "\n")
-		} else {
-			for resultIndex, moduleIndex := range m.searchModuleResults {
-				selected := resultIndex == m.searchCursor
-				module := m.modules[moduleIndex]
-				content.WriteString(fmt.Sprintf("%s%s  %s\n", selectionPrefix(selected), selectionLabel(module.Name(), selected), dim.Render(string(module.Category()))))
-			}
-		}
-	} else if len(m.searchFindingResults) == 0 {
-		content.WriteString(warn.Render("No matching findings.") + "\n")
-	} else {
-		limit := max(1, m.findingPageSize())
-		start := 0
-		if m.searchCursor >= limit {
-			start = m.searchCursor - limit + 1
-		}
-		end := min(len(m.searchFindingResults), start+limit)
-		for index := start; index < end; index++ {
-			finding := m.searchFindingResults[index]
-			selected := index == m.searchCursor
-			object := displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)
-			severityText := strings.ToUpper(finding.Severity)
-			severityField := severityStyle(finding.Severity).Render(severityText) + strings.Repeat(" ", max(1, 9-ansi.StringWidthWc(severityText)))
-			content.WriteString(fmt.Sprintf("%s%s  %s  %s\n", selectionPrefix(selected), severityField, selectionLabel(truncateFinding(finding.Title, max(20, width-65)), selected), dim.Render(truncateFinding(object, 28))))
-		}
-	}
+	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -1268,7 +1135,7 @@ func (m *model) evidenceViewRender(width int) string {
 		}
 		content.WriteString(fmt.Sprintf("\nLines %d-%d of %d", min(m.evidenceTop+1, len(m.evidenceLines)), end, len(m.evidenceLines)))
 	}
-	content.WriteString(dim.Render("\n\nUp/Down PageUp/PageDown   Esc Back to Finding"))
+	content.WriteString(dim.Render("\n\nUp/Down PageUp/PageDown   Esc Back to Finding   Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -1321,18 +1188,22 @@ func (m *model) findingSubcategoryOverview(width int) string {
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Select a security condition group; evidence remains in its findings.") + "\n")
 	if width >= 80 {
-		content.WriteString(dim.Render(fmt.Sprintf("%-34s %8s  %8s", "SUBCATEGORY", "FINDINGS", "OBSERVED")) + "\n\n")
+		content.WriteString(dim.Render(fmt.Sprintf("%-34s %10s", "SUBCATEGORY", "FINDINGS")) + "\n\n")
 	} else {
-		content.WriteString(dim.Render("SUBCATEGORY                         F/O") + "\n\n")
+		content.WriteString(dim.Render("SUBCATEGORY                    FINDINGS") + "\n\n")
 	}
 	for index, subcategory := range m.findingSubcategories {
 		selected := index == m.findingCursor
 		var line string
+		count := subcategory.Findings + subcategory.Observations
 		if width >= 80 {
-			line = fmt.Sprintf("%s%-30s %8d findings  %8d observations", selectionPrefix(selected), selectionLabel(subcategory.Name, selected), subcategory.Findings, subcategory.Observations)
+			name := truncateFinding(subcategory.Name, 34)
+			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, 34-ansi.StringWidthWc(name)))
+			line = fmt.Sprintf("%s%s %10d", selectionPrefix(selected), nameField, count)
 		} else {
-			nameWidth := max(12, width-18)
-			line = fmt.Sprintf("%s%-*s %d/%d", selectionPrefix(selected), nameWidth, selectionLabel(truncateFinding(subcategory.Name, nameWidth), selected), subcategory.Findings, subcategory.Observations)
+			nameWidth := max(12, width-14)
+			name := truncateFinding(subcategory.Name, nameWidth)
+			line = fmt.Sprintf("%s%-*s %d", selectionPrefix(selected), nameWidth, selectionLabel(name, selected)+strings.Repeat(" ", max(0, nameWidth-ansi.StringWidthWc(name))), count)
 		}
 		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
@@ -1348,7 +1219,7 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		}
 		content.WriteString(warn.Render(message) + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open    Ctrl+S = Search    Esc = Back"))
+	content.WriteString(dim.Render("\nEnter = Open    Esc = Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -1357,19 +1228,24 @@ func (m *model) findingCategoryOverview(width int) string {
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
 	if width >= 80 {
-		content.WriteString(dim.Render(fmt.Sprintf("%-31s %8s  %8s  %-12s", "CATEGORY", "FINDINGS", "OBSERVED", "HIGHEST")) + "\n")
+		content.WriteString(dim.Render(fmt.Sprintf("%-34s %10s  %-12s", "CATEGORY", "FINDINGS", "SEVERITY")) + "\n")
 		content.WriteString(dim.Render("────────────────────────────────────────────────────────────────────────") + "\n\n")
 	} else {
-		content.WriteString(dim.Render("CATEGORY                         F/O  HIGH") + "\n\n")
+		content.WriteString(dim.Render("CATEGORY                    FINDINGS  SEVERITY") + "\n\n")
 	}
 	for index, category := range m.findingCategories {
 		selected := index == m.findingCursor
 		var line string
+		count := category.Findings + category.Observations
 		if width >= 80 {
-			line = fmt.Sprintf("%s%-27s %8d findings  %8d observations  %s", selectionPrefix(selected), selectionLabel(category.Name, selected), category.Findings, category.Observations, severityStyle(category.Highest).Render(fmt.Sprintf("%-12s", category.Highest)))
+			name := truncateFinding(category.Name, 34)
+			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, 34-ansi.StringWidthWc(name)))
+			line = fmt.Sprintf("%s%s %10d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%-12s", category.Highest)))
 		} else {
-			nameWidth := max(12, width-18)
-			line = fmt.Sprintf("%s%-*s %d/%d %s", selectionPrefix(selected), nameWidth, selectionLabel(truncateFinding(category.Name, nameWidth), selected), category.Findings, category.Observations, severityStyle(category.Highest).Render(category.Highest))
+			nameWidth := max(12, width-22)
+			name := truncateFinding(category.Name, nameWidth)
+			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, nameWidth-ansi.StringWidthWc(name)))
+			line = fmt.Sprintf("%s%s %6d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(category.Highest))
 		}
 		content.WriteString(line + "\n")
 		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(20, width-7))) + "\n")
@@ -1377,7 +1253,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close    Ctrl+S = Search"))
+	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

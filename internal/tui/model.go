@@ -26,8 +26,6 @@ type model struct {
 	findingRows                  []storage.Finding
 	findingCursor                int
 	findingTop                   int
-	findingSearch                string
-	findingSearchMode            bool
 	findingSeverity              string
 	findingViewMode              string
 	findingCategoryView          bool
@@ -44,23 +42,6 @@ type model struct {
 	findingCategories            []findingCategory
 	findingAllRows               []storage.Finding
 	findingsLoaded               bool
-	searchMode                   bool
-	searchKind                   string
-	searchInput                  textinput.Model
-	searchCursor                 int
-	searchModuleResults          []int
-	searchFindingResults         []storage.Finding
-	searchFindingSource          []storage.Finding
-	searchFindingReturn          bool
-	searchFindingRows            []storage.Finding
-	searchFindingCursor          int
-	searchFindingTop             int
-	searchFindingCategoryView    bool
-	searchFindingSubcategoryView bool
-	searchFindingCategory        string
-	searchFindingSubcategory     string
-	searchFindingCategories      []findingCategory
-	searchFindingSubcategories   []findingSubcategory
 	inlineEvidence               inlineEvidence
 	inlineEvidenceTop            int
 	inlineEvidenceLoading        bool
@@ -193,14 +174,6 @@ func newTextInput() textinput.Model {
 	input.Prompt = "> "
 	input.CharLimit = 256
 	input.Placeholder = "type a value, then press Enter"
-	return input
-}
-
-func newSearchInput() textinput.Model {
-	input := textinput.New()
-	input.Prompt = "Search: "
-	input.CharLimit = 256
-	input.Placeholder = "type a name, category or affected object"
 	return input
 }
 

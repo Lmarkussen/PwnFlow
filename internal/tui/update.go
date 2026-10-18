@@ -15,7 +15,6 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/gpoanalysis"
 	"github.com/pwnflow/pwnflow/internal/modules/gpoevidence"
 	"github.com/pwnflow/pwnflow/internal/runner"
-	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 var ErrQuit = errors.New("quit")
@@ -207,12 +206,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if m.searchMode {
-		return m.handleSearchKey(msg)
-	}
-	if m.findingsView {
-		return m.handleFindingsKey(key)
-	}
 	if m.quitConfirm {
 		switch key {
 		case "y", "Y":
@@ -231,6 +224,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "running"
 		}
 		return m, nil
+	}
+	if m.findingsView {
+		return m.handleFindingsKey(key)
 	}
 
 	// A module that needs privileges the process does not have asks here, before
@@ -370,9 +366,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshFindings()
 			return m, nil
 		}
-	case "ctrl+s":
-		m.startSearch("modules")
-		return m, nil
 	}
 
 	if m.watcher {
@@ -526,8 +519,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.findingsView = true
 		m.findingsFromWatcher = false
 		m.findingDetail = false
-		m.findingSearchMode = false
-		m.findingSearch = ""
 		m.findingViewMode = "all"
 		m.findingCategoryView = true
 		m.findingCategory = ""
@@ -536,55 +527,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshFindings()
 	}
 	return m, nil
-}
-
-func (m *model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
-	case "esc":
-		m.closeSearch()
-		return m, nil
-	case "up", "k":
-		m.searchCursor--
-	case "down", "j":
-		m.searchCursor++
-	case "home":
-		m.searchCursor = 0
-	case "end":
-		if m.searchKind == "modules" {
-			m.searchCursor = len(m.searchModuleResults) - 1
-		} else {
-			m.searchCursor = len(m.searchFindingResults) - 1
-		}
-	case "enter":
-		if m.searchKind == "modules" && len(m.searchModuleResults) > 0 {
-			m.cursor = m.searchModuleResults[m.searchCursor]
-			m.closeSearch()
-			m.scrollModuleList()
-			return m, nil
-		}
-		if m.searchKind == "findings" && len(m.searchFindingResults) > 0 {
-			m.findingRows = append([]storage.Finding(nil), m.searchFindingResults...)
-			m.findingCursor = m.searchCursor
-			m.findingTop = 0
-			m.findingCategoryView = false
-			m.findingSubcategoryView = false
-			m.findingDetail = true
-			m.searchFindingReturn = true
-			m.searchMode = false
-			return m, m.beginFindingInlineEvidence()
-		}
-		return m, nil
-	}
-	var command tea.Cmd
-	m.searchInput, command = m.searchInput.Update(msg)
-	m.refreshSearchResults()
-	if m.searchKind == "modules" {
-		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchModuleResults)-1))
-	} else {
-		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchFindingResults)-1))
-	}
-	return m, command
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
@@ -596,10 +538,6 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.running = false
 		return m, tea.Quit
-	}
-	if key == "ctrl+s" && !m.evidenceView {
-		m.startSearch("findings")
-		return m, nil
 	}
 	if m.evidenceView {
 		switch key {
@@ -741,12 +679,6 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.inlineEvidence = inlineEvidence{}
 			m.inlineEvidenceTop = 0
 			m.inlineEvidenceLoading = false
-			if key == "esc" && m.searchFindingReturn {
-				m.searchMode = true
-				m.searchKind = "findings"
-				m.searchInput.Focus()
-				return m, nil
-			}
 			return m, nil
 		case "up", "k":
 			m.findingCursor--

@@ -182,14 +182,19 @@ func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
 	}
 }
 
-func TestFindingsFooterUsesOnlyOpenAndClose(t *testing.T) {
+func TestFindingsFooterUsesOpenBackAndQuit(t *testing.T) {
 	model := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
 	frame := ansi.Strip(model.View())
 	if !strings.Contains(frame, "Enter = Open Category    Esc = Close") {
 		t.Fatalf("root footer missing: %s", frame)
 	}
-	if !strings.Contains(frame, "Ctrl+S = Search") {
-		t.Fatalf("findings footer does not advertise search: %s", frame)
+	if !strings.Contains(frame, "Q Quit") {
+		t.Fatalf("root footer missing Q Quit: %s", frame)
+	}
+	for _, unwanted := range []string{"Search", "OBSERVED", "All"} {
+		if strings.Contains(frame, unwanted) {
+			t.Fatalf("findings footer still advertises %q: %s", unwanted, frame)
+		}
 	}
 }
 

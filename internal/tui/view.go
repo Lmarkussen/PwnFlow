@@ -10,9 +10,6 @@ import (
 )
 
 func (m *model) View() string {
-	if m.searchMode && m.searchKind == "modules" {
-		return m.searchViewRender(max(40, m.width-4))
-	}
 	if m.watcher {
 		return m.watcherView()
 	}
@@ -47,7 +44,7 @@ func (m *model) View() string {
 	}
 	for i := windowTop; i < len(m.modules) && i < windowTop+windowRows; i++ {
 		module := m.modules[i]
-		selected := i == m.cursor
+		selected := i == m.cursor && m.focus == focusModules
 		mark := "[ ]"
 		if m.selectedModules[m.modules[i].ID()] {
 			mark = lipgloss.NewStyle().Foreground(green).Bold(true).Render("[x]")
@@ -56,10 +53,15 @@ func (m *model) View() string {
 		// An available module carries no suffix: a label that says "fine" on
 		// every row is noise, and the two labels that do appear - ADMIN-REQ and
 		// UNAVAILABLE - have to stand out from the names beside them.
-		nameWidth := max(12, width-16)
+		stateDisplay := state
+		if width < 52 && stateDisplay != "" {
+			stateDisplay = strings.Fields(stateDisplay)[0]
+		}
+		stateWidth := ansi.StringWidthWc(stateDisplay)
+		nameWidth := max(10, width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(mark)-stateWidth-3)
 		name := ansi.TruncateWc(module.Name(), nameWidth, "…")
 		nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(1, nameWidth-ansi.StringWidthWc(name)))
-		left.WriteString(strings.TrimRight(fmt.Sprintf("%s%s %s %s", selectionPrefix(selected), mark, nameField, lifecycleStyle(state).Render(state)), " ") + "\n")
+		left.WriteString(fmt.Sprintf("%s%s %s %s\n", selectionPrefix(selected), mark, nameField, lifecycleStyle(state).Render(stateDisplay)))
 	}
 	if !compact {
 		left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
@@ -109,11 +111,8 @@ func (m *model) navigationView() string {
 		)
 	}
 	for index, row := range rows {
-		selected := index == m.navigationRow
+		selected := index == m.navigationRow && m.focus == focusNavigation
 		line := fmt.Sprintf("%s%-14s  ◀ %s ▶", selectionPrefix(selected), row.label, selectionLabel(row.value, selected))
-		if index == m.navigationRow && m.focus == focusNavigation {
-			line = title.Render(line)
-		}
 		content.WriteString(line + "\n")
 	}
 	content.WriteString(dim.Render("↑↓ Select row   ←→ Change value   Tab Next"))

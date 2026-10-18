@@ -74,7 +74,7 @@ func (m *model) refreshWatcherList() {
 	var content strings.Builder
 	nameWidth := max(16, m.watcherListViewport.Width-34)
 	for index, state := range states {
-		selected := index == m.watcherListCursor
+		selected := index == m.watcherListCursor && m.watcherFocus == focusModules
 		name := ansi.TruncateWc(state.Module.Name(), nameWidth, "…")
 		status := watcherStatus(state)
 		statusWidth := ansi.StringWidthWc(status)
@@ -270,7 +270,7 @@ func (m *model) watcherFooter() string {
 	if ansi.StringWidthWc(short)+2 <= max(1, m.width) {
 		return short
 	}
-	return "x abort selected"
+	return "x abort selected · Q quit"
 }
 
 func (m *model) batchSummary() string {

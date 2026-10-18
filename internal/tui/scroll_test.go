@@ -246,8 +246,8 @@ func TestScopeChangeResetsTheWindow(t *testing.T) {
 	if m.cursor != 0 {
 		t.Fatalf("the new scope kept the previous cursor: %d", m.cursor)
 	}
-	if _, highlighted := renderedRows(m.View()); highlighted == "" {
-		t.Fatal("the new scope rendered no highlighted row")
+	if _, highlighted := renderedRows(m.View()); highlighted != "" {
+		t.Fatal("module list displayed an active arrow while navigation had focus")
 	}
 }
 
