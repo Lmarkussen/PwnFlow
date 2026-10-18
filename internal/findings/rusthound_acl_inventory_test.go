@@ -58,6 +58,9 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 	if !ok || len(overview) == 0 {
 		t.Fatalf("finding did not retain a relationship overview: %+v", evidence)
 	}
+	if got, _ := evidence["structured_artifact"].(string); got != "Enumeration/ActiveDirectory/ACL/execution-435/AD_privileged_acl_inventory.json" {
+		t.Fatalf("structured artifact path was not execution-specific: %q", got)
+	}
 	overviewJSON, _ := json.Marshal(overview)
 	for _, expected := range []string{"alice", "WriteDacl", "S-1-5-21-100-512"} {
 		if !strings.Contains(string(overviewJSON), expected) {

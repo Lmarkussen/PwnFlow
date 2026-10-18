@@ -476,30 +476,37 @@ func (m *model) findingsViewRender() string {
 	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
 	if m.findingDetail && len(m.findingRows) > 0 {
 		finding := m.hydrateHistoricalACLInventory(m.findingRows[m.findingCursor])
-		content.WriteString(findingDetailHeader(finding, width-4) + "\n\n")
-		content.WriteString(wrapPaneText(findingCondition(finding), width-4) + "\n\n")
-		content.WriteString(findingAttributes(finding, width-4))
+		var detail strings.Builder
+		detail.WriteString(findingDetailHeader(finding, width-4) + "\n\n")
+		detail.WriteString(wrapPaneText(findingCondition(finding), width-4) + "\n\n")
+		detail.WriteString(findingAttributes(finding, width-4))
 		if m.inlineEvidenceLoading {
-			content.WriteString("\n" + dim.Render("Loading recovered evidence…") + "\n")
+			detail.WriteString("\n" + dim.Render("Loading recovered evidence…") + "\n")
 		} else if m.inlineEvidence.section != "" {
-			content.WriteString("\n" + lipgloss.NewStyle().Bold(true).Render(m.inlineEvidence.section) + "\n")
-			content.WriteString(dim.Render("────────────────────────────────────────────") + "\n")
+			detail.WriteString("\n" + lipgloss.NewStyle().Bold(true).Render(m.inlineEvidence.section) + "\n")
+			detail.WriteString(dim.Render("────────────────────────────────────────────") + "\n")
 			if m.inlineEvidence.error != "" {
-				content.WriteString(warn.Render(m.inlineEvidence.error) + "\n")
+				detail.WriteString(warn.Render(m.inlineEvidence.error) + "\n")
 			} else {
 				page := max(1, m.findingPageSize()-10)
 				endEvidence := min(len(m.inlineEvidence.lines), m.inlineEvidenceTop+page)
 				for index := m.inlineEvidenceTop; index < endEvidence; index++ {
-					content.WriteString(m.inlineEvidence.lines[index] + "\n")
+					detail.WriteString(m.inlineEvidence.lines[index] + "\n")
 				}
-				content.WriteString(dim.Render(fmt.Sprintf("Evidence lines %d-%d of %d\n", min(m.inlineEvidenceTop+1, len(m.inlineEvidence.lines)), endEvidence, len(m.inlineEvidence.lines))))
+				detail.WriteString(dim.Render(fmt.Sprintf("Evidence lines %d-%d of %d\n", min(m.inlineEvidenceTop+1, len(m.inlineEvidence.lines)), endEvidence, len(m.inlineEvidence.lines))))
 			}
 		}
-		content.WriteString("\n" + findingSection("SECURITY IMPACT", findingImpact(finding), width-4))
-		content.WriteString(findingSection("RECOMMENDED ACTION", findingRemediation(finding), width-4))
-		content.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
-		content.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
-		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Q Quit   Up/Down Change finding"))
+		detail.WriteString("\n" + findingSection("SECURITY IMPACT", findingImpact(finding), width-4))
+		detail.WriteString(findingSection("RECOMMENDED ACTION", findingRemediation(finding), width-4))
+		detail.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
+		detail.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
+		detailLines := strings.Split(detail.String(), "\n")
+		detailPageSize := max(1, m.findingPageSize()-4)
+		maxDetailTop := max(0, len(detailLines)-detailPageSize)
+		m.findingDetailTop = min(max(0, m.findingDetailTop), maxDetailTop)
+		endDetail := min(len(detailLines), m.findingDetailTop+detailPageSize)
+		content.WriteString(strings.Join(detailLines[m.findingDetailTop:endDetail], "\n"))
+		content.WriteString(dim.Render("\n↑/↓ Scroll    PgUp/PgDn Change Finding    E Evidence    Esc Back    Q Quit"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
 	if len(m.findingRows) == 0 {
@@ -645,8 +652,14 @@ func findingEvidenceSummary(finding storage.Finding) string {
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		structured := metadataString(metadata, "structured_artifact")
+		if strings.Contains(structured, "<execution-id>") {
+			structured = ""
+		}
 		if structured == "" {
 			structured = shortEvidencePath(finding.ArtifactPath)
+			if strings.EqualFold(structured, shortEvidencePath(metadataString(metadata, "source_artifact"))) {
+				structured = ""
+			}
 		}
 		return fmt.Sprintf("%s — Execution %d\nSource artifacts: %s\nFull report: %s\nStructured inventory: %s", finding.SourceTool, finding.SourceExecution, aclEvidenceNames(metadata), fallbackText(metadataString(metadata, "human_report"), "AD_PRIVILEGED_ACL_EVIDENCE.txt"), fallbackText(structured, "execution-associated ACL inventory JSON"))
 	}
@@ -845,13 +858,14 @@ func formatACLInventoryOverview(finding storage.Finding) string {
 		return false
 	})
 	totalMembershipPaths := metadataInt(metadata, "direct_membership_paths") + metadataInt(metadata, "nested_membership_paths")
-	membershipAdditional := totalMembershipPaths - len(membership)
+	omittedMembershipPaths := metadataInt(metadata, "omitted_membership_paths")
+	membershipAdditional := totalMembershipPaths - omittedMembershipPaths - len(membership)
 	if membershipAdditional < 0 {
 		membershipAdditional = 0
 	}
-	fmt.Fprintf(&b, "\nOBSERVED MEMBERSHIP CONTEXT\nShowing %d grouped relationships; %d additional paths remain in the full report.\n", len(ordered), membershipAdditional)
-	if omitted := metadataInt(metadata, "omitted_membership_paths"); omitted > 0 {
-		fmt.Fprintf(&b, "Bounded processing omitted %d paths; retained evidence is not exhaustive.\n", omitted)
+	fmt.Fprintf(&b, "\nOBSERVED MEMBERSHIP CONTEXT\nShowing %d grouped relationships; %d additional retained paths remain in the full report.\n", len(ordered), membershipAdditional)
+	if omittedMembershipPaths > 0 {
+		fmt.Fprintf(&b, "Bounded processing omitted %d paths before materialization; those paths are not available in the report.\n", omittedMembershipPaths)
 	}
 	for _, group := range ordered {
 		fmt.Fprintf(&b, "\nTarget: %s [%s]\n", fallbackText(group.targetName, group.targetID), group.targetID)

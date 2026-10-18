@@ -676,30 +676,37 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "esc", "enter":
 			m.findingDetail = false
+			m.findingDetailTop = 0
 			m.inlineEvidence = inlineEvidence{}
 			m.inlineEvidenceTop = 0
 			m.inlineEvidenceLoading = false
 			return m, nil
 		case "up", "k":
-			m.findingCursor--
+			m.findingDetailTop--
 		case "down", "j":
-			m.findingCursor++
+			m.findingDetailTop++
 		case "pgup":
-			m.inlineEvidenceTop -= max(1, m.findingPageSize()-10)
-			m.inlineEvidenceTop = max(0, m.inlineEvidenceTop)
-			return m, nil
+			if m.findingCursor > 0 {
+				m.findingCursor--
+				m.findingDetailTop = 0
+				m.inlineEvidenceTop = 0
+				m.keepFindingVisible()
+				return m, m.beginFindingInlineEvidence()
+			}
 		case "pgdown":
-			m.inlineEvidenceTop += max(1, m.findingPageSize()-10)
-			m.inlineEvidenceTop = min(m.inlineEvidenceTop, max(0, len(m.inlineEvidence.lines)-max(1, m.findingPageSize()-10)))
-			return m, nil
+			if m.findingCursor+1 < len(m.findingRows) {
+				m.findingCursor++
+				m.findingDetailTop = 0
+				m.inlineEvidenceTop = 0
+				m.keepFindingVisible()
+				return m, m.beginFindingInlineEvidence()
+			}
+		case "home":
+			m.findingDetailTop = 0
+		case "end":
+			m.findingDetailTop = len(m.findingRows) * 1000000
 		}
-		if m.findingCursor < 0 {
-			m.findingCursor = 0
-		}
-		if m.findingCursor >= len(m.findingRows) {
-			m.findingCursor = max(0, len(m.findingRows)-1)
-		}
-		return m, m.beginFindingInlineEvidence()
+		return m, nil
 	}
 	switch key {
 	case "ctrl+w":
@@ -753,6 +760,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.findingRows) > 0 {
 			m.findingDetail = true
+			m.findingDetailTop = 0
 			return m, m.beginFindingInlineEvidence()
 		}
 	case "p":

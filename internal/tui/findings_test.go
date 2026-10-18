@@ -31,8 +31,43 @@ func TestFindingsViewFiltersAndDoesNotRenderEvidenceSecrets(t *testing.T) {
 	if _, command := model.handleFindingsKey("enter"); command != nil || !model.findingDetail {
 		t.Fatal("detail view did not open")
 	}
+	for index := 0; index < 32 && !strings.Contains(ansi.Strip(model.View()), "restricted.json"); index++ {
+		model.handleFindingsKey("down")
+	}
 	if !strings.Contains(ansi.Strip(model.View()), "restricted.json") {
-		t.Fatal("detail omitted artifact reference")
+		t.Fatal("detail scrolling omitted artifact reference")
+	}
+}
+
+func TestFindingDetailScrollAndPageNavigation(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingKey: "first", Title: "First finding", Severity: "high", Description: strings.Repeat("long detail ", 40)}},
+		{FindingInput: storage.FindingInput{FindingKey: "second", Title: "Second finding", Severity: "medium", Description: strings.Repeat("other detail ", 40)}},
+	}
+	m := &model{findingsView: true, findingRows: rows, findingCursor: 0, findingDetail: true, width: 100, height: 24}
+	m.handleFindingsKey("down")
+	if m.findingCursor != 0 || m.findingDetailTop == 0 {
+		t.Fatalf("Down changed finding instead of scrolling: cursor=%d top=%d", m.findingCursor, m.findingDetailTop)
+	}
+	m.handleFindingsKey("pgdown")
+	if m.findingCursor != 1 || m.findingDetailTop != 0 {
+		t.Fatalf("Page Down did not change finding/reset detail: cursor=%d top=%d", m.findingCursor, m.findingDetailTop)
+	}
+	m.handleFindingsKey("pgdown")
+	if m.findingCursor != 1 {
+		t.Fatal("Page Down wrapped past the last finding")
+	}
+	m.handleFindingsKey("pgup")
+	if m.findingCursor != 0 || m.findingDetailTop != 0 {
+		t.Fatalf("Page Up did not select previous finding/reset detail: cursor=%d top=%d", m.findingCursor, m.findingDetailTop)
+	}
+	m.handleFindingsKey("pgup")
+	if m.findingCursor != 0 {
+		t.Fatal("Page Up wrapped before the first finding")
+	}
+	m.handleFindingsKey("esc")
+	if m.findingDetail || m.findingCursor != 0 {
+		t.Fatalf("Esc did not restore list selection: detail=%t cursor=%d", m.findingDetail, m.findingCursor)
 	}
 }
 
@@ -644,10 +679,10 @@ func TestPrivilegedACLInventoryDetailShowsMembershipContext(t *testing.T) {
 	finding := storage.Finding{FindingInput: storage.FindingInput{
 		FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Severity: "informational",
 		SourceTool: "RustHound-CE", SourceExecution: 477,
-		EvidenceJSON: `{"source_execution_id":477,"high_value_targets":1,"normalized_relationships":1,"membership_edges":2,"direct_membership_paths":0,"nested_membership_paths":1,"membership_coverage":"complete-observed","membership_context":[{"member_id":"S-1-5-21-100-1101","member_name":"alice","group_path":[{"id":"S-1-5-21-100-901","name":"Tier 1 Support"},{"id":"S-1-5-21-100-900","name":"Helpdesk Operators"}],"acl_principal_id":"S-1-5-21-100-900","acl_principal_name":"Helpdesk Operators","target_id":"S-1-5-21-100-512","target_name":"Domain Admins","permission":"WriteDacl","classification":"observed_nested_membership_context","effective_permission":"NOT VERIFIED","membership_refs":["/data/0/Members/0","/data/0/Members/0"],"acl_artifact":"groups.json","acl_artifact_ref":"/data/2/Aces/0"}]}`,
+		EvidenceJSON: `{"source_execution_id":477,"high_value_targets":1,"normalized_relationships":1,"membership_edges":2,"direct_membership_paths":0,"nested_membership_paths":1,"omitted_membership_paths":267,"membership_coverage":"partial","membership_context":[{"member_id":"S-1-5-21-100-1101","member_name":"alice","group_path":[{"id":"S-1-5-21-100-901","name":"Tier 1 Support"},{"id":"S-1-5-21-100-900","name":"Helpdesk Operators"}],"acl_principal_id":"S-1-5-21-100-900","acl_principal_name":"Helpdesk Operators","target_id":"S-1-5-21-100-512","target_name":"Domain Admins","permission":"WriteDacl","classification":"observed_nested_membership_context","effective_permission":"NOT VERIFIED","membership_refs":["/data/0/Members/0","/data/0/Members/0"],"acl_artifact":"groups.json","acl_artifact_ref":"/data/2/Aces/0"}]}`,
 	}}
 	condition := findingCondition(finding)
-	for _, expected := range []string{"OBSERVED MEMBERSHIP CONTEXT", "Observed members", "alice", "Tier 1 Support", "Helpdesk Operators", "WriteDacl", "Domain Admins", "NOT VERIFIED", "observed_nested_membership_context"} {
+	for _, expected := range []string{"OBSERVED MEMBERSHIP CONTEXT", "Observed members", "omitted 267 paths before materialization", "alice", "Tier 1 Support", "Helpdesk Operators", "WriteDacl", "Domain Admins", "NOT VERIFIED", "observed_nested_membership_context"} {
 		if !strings.Contains(condition, expected) {
 			t.Fatalf("membership context omitted %q: %s", expected, condition)
 		}
@@ -656,7 +691,7 @@ func TestPrivilegedACLInventoryDetailShowsMembershipContext(t *testing.T) {
 		t.Fatalf("bounded membership preview exposed raw JSON pointers: %s", condition)
 	}
 	limitations := findingLimitations(finding)
-	if !strings.Contains(limitations, "Membership context coverage: complete-observed") || !strings.Contains(limitations, "Effective permissions") {
+	if !strings.Contains(limitations, "Membership context coverage: partial") || !strings.Contains(limitations, "Effective permissions") {
 		t.Fatalf("membership limitations omitted: %s", limitations)
 	}
 	if strings.Contains(findingRemediation(finding), "source tool's recommended hardening") || !strings.Contains(findingRemediation(finding), "validate effective permissions") {

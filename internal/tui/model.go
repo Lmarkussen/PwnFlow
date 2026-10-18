@@ -23,6 +23,7 @@ type model struct {
 	findingsView                 bool
 	findingsFromWatcher          bool
 	findingDetail                bool
+	findingDetailTop             int
 	findingRows                  []storage.Finding
 	findingCursor                int
 	findingTop                   int
