@@ -102,3 +102,77 @@ func TestACLInventoryOutputIsProvenanceBoundAndSecretSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestACLInventoryAddsSameExecutionMembershipContext(t *testing.T) {
+	root := t.TempDir()
+	writeExport(t, filepath.Join(root, "groups.json"), "groups", []map[string]any{
+		{
+			"ObjectIdentifier": "S-1-5-21-100-900",
+			"Properties":       map[string]any{"name": "Helpdesk Operators", "domain": "EXAMPLE.TEST"},
+			"Members":          []any{map[string]any{"ObjectIdentifier": "S-1-5-21-100-901"}, "S-1-5-21-100-901"},
+		},
+		{
+			"ObjectIdentifier": "S-1-5-21-100-901",
+			"Properties":       map[string]any{"name": "Tier 1 Support", "domain": "EXAMPLE.TEST"},
+			"Members":          []string{"S-1-5-21-100-1101"},
+		},
+		{
+			"ObjectIdentifier": "S-1-5-21-100-512",
+			"Properties":       map[string]any{"name": "Domain Admins", "domain": "EXAMPLE.TEST", "highvalue": true},
+			"Aces":             []map[string]any{{"PrincipalSID": "S-1-5-21-100-900", "PrincipalType": "Group", "RightName": "WriteDacl", "IsInherited": false}},
+		},
+	})
+	writeExport(t, filepath.Join(root, "users.json"), "users", []map[string]any{
+		{"ObjectIdentifier": "S-1-5-21-100-1101", "Properties": map[string]any{"name": "alice", "domain": "EXAMPLE.TEST"}},
+	})
+
+	report, inputs, err := AnalyzeRustHoundACLInventory(context.Background(), root, 7, 477, time.Unix(2, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 || report.NormalizedRelations != 1 {
+		t.Fatalf("direct ACL evidence changed: report=%+v inputs=%d", report, len(inputs))
+	}
+	if report.MembershipEdges != 2 || report.DirectMembershipPaths != 0 || report.NestedMembershipPaths != 1 || report.MembershipContextualizedPrincipals != 1 {
+		t.Fatalf("unexpected membership counts: %+v", report)
+	}
+	if len(report.MembershipContext) != 1 {
+		t.Fatalf("expected one deduplicated nested path, got %+v", report.MembershipContext)
+	}
+	path := report.MembershipContext[0]
+	if path.MemberID != "S-1-5-21-100-1101" || path.Classification != "observed_nested_membership_context" || path.EffectivePermission != "NOT VERIFIED" {
+		t.Fatalf("unexpected context: %+v", path)
+	}
+	if len(path.GroupPath) != 2 || path.GroupPath[0].ID != "S-1-5-21-100-901" || path.GroupPath[1].ID != "S-1-5-21-100-900" {
+		t.Fatalf("membership path direction was not preserved: %+v", path.GroupPath)
+	}
+	if path.ACLArtifact == "" || len(path.MembershipRefs) != 2 || path.ACLArtifactRef == "" {
+		t.Fatalf("context lost evidence references: %+v", path)
+	}
+	if !strings.Contains(FormatACLInventoryReport(report), "Effective permission: NOT VERIFIED") {
+		t.Fatal("TXT report omitted the effective-right limitation")
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal([]byte(inputs[0].EvidenceJSON), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := evidence["membership_context"].([]any); !ok {
+		t.Fatalf("finding omitted membership context: %s", inputs[0].EvidenceJSON)
+	}
+}
+
+func TestACLInventoryMembershipCyclesDoNotExpandIndefinitely(t *testing.T) {
+	root := t.TempDir()
+	writeExport(t, filepath.Join(root, "groups.json"), "groups", []map[string]any{
+		{"ObjectIdentifier": "S-1-5-21-100-900", "Properties": map[string]any{"name": "ACL Group", "domain": "EXAMPLE.TEST"}, "Members": []string{"S-1-5-21-100-901"}},
+		{"ObjectIdentifier": "S-1-5-21-100-901", "Properties": map[string]any{"name": "Nested Group", "domain": "EXAMPLE.TEST"}, "Members": []string{"S-1-5-21-100-900"}},
+		{"ObjectIdentifier": "S-1-5-21-100-512", "Properties": map[string]any{"name": "Domain Admins", "highvalue": true}, "Aces": []map[string]any{{"PrincipalSID": "S-1-5-21-100-900", "RightName": "GenericAll"}}},
+	})
+	report, _, err := AnalyzeRustHoundACLInventory(context.Background(), root, 7, 478, time.Unix(2, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.MembershipContext) != 0 || !strings.Contains(strings.Join(report.MembershipLimitations, "\n"), "Cycle encountered") {
+		t.Fatalf("cycle was not safely bounded: %+v", report)
+	}
+}

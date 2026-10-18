@@ -20,11 +20,14 @@ const aclInventoryParserVersion = "rusthound-acl-inventory-v1"
 const aclInventoryObservationMaxRelationships = 12
 
 const (
-	aclInventoryMaxObjects       = 100000
-	aclInventoryMaxACEs          = 250000
-	aclInventoryMaxRelationships = 1000
-	aclInventoryMaxUnresolved    = 256
-	aclInventoryMaxArtifacts     = 512
+	aclInventoryMaxObjects         = 100000
+	aclInventoryMaxACEs            = 250000
+	aclInventoryMaxRelationships   = 1000
+	aclInventoryMaxUnresolved      = 256
+	aclInventoryMaxArtifacts       = 512
+	aclInventoryMaxMembershipDepth = 8
+	aclInventoryMaxMembershipPaths = 256
+	aclInventoryMaxPathsPerGroup   = 16
 )
 
 var inventoryRights = map[string]bool{
@@ -36,26 +39,71 @@ var inventoryRights = map[string]bool{
 }
 
 type ACLInventoryReport struct {
-	SchemaVersion       int                          `json:"schema_version"`
-	ParserVersion       string                       `json:"parser_version"`
-	Domain              string                       `json:"domain,omitempty"`
-	SourceExecutionID   int64                        `json:"source_execution_id"`
-	SourceArtifact      string                       `json:"source_artifact"`
-	AnalysisTimestamp   time.Time                    `json:"analysis_timestamp"`
-	Status              string                       `json:"status"`
-	ObjectsInspected    int                          `json:"objects_inspected"`
-	RawACLsInspected    int                          `json:"raw_acls_inspected"`
-	SupportedACLs       int                          `json:"supported_acls"`
-	NormalizedRelations int                          `json:"normalized_relationships"`
-	OmittedRelations    int                          `json:"omitted_relationships"`
-	HighValueTargets    []ACLInventoryTarget         `json:"high_value_targets"`
-	Relationships       []ACLInventoryRelationship   `json:"relationships"`
-	Unresolved          []ACLInventoryUnresolved     `json:"unresolved_identities"`
-	UnsupportedRights   map[string]int               `json:"unsupported_rights,omitempty"`
-	MalformedEntries    int                          `json:"malformed_entries"`
-	InputArtifacts      []ACLInventorySourceArtifact `json:"input_artifacts"`
-	Limits              ACLInventoryLimits           `json:"limits"`
-	Limitations         []string                     `json:"limitations"`
+	SchemaVersion                      int                          `json:"schema_version"`
+	ParserVersion                      string                       `json:"parser_version"`
+	Domain                             string                       `json:"domain,omitempty"`
+	SourceExecutionID                  int64                        `json:"source_execution_id"`
+	SourceArtifact                     string                       `json:"source_artifact"`
+	AnalysisTimestamp                  time.Time                    `json:"analysis_timestamp"`
+	Status                             string                       `json:"status"`
+	ObjectsInspected                   int                          `json:"objects_inspected"`
+	RawACLsInspected                   int                          `json:"raw_acls_inspected"`
+	SupportedACLs                      int                          `json:"supported_acls"`
+	NormalizedRelations                int                          `json:"normalized_relationships"`
+	OmittedRelations                   int                          `json:"omitted_relationships"`
+	HighValueTargets                   []ACLInventoryTarget         `json:"high_value_targets"`
+	Relationships                      []ACLInventoryRelationship   `json:"relationships"`
+	Unresolved                         []ACLInventoryUnresolved     `json:"unresolved_identities"`
+	UnsupportedRights                  map[string]int               `json:"unsupported_rights,omitempty"`
+	MalformedEntries                   int                          `json:"malformed_entries"`
+	InputArtifacts                     []ACLInventorySourceArtifact `json:"input_artifacts"`
+	Limits                             ACLInventoryLimits           `json:"limits"`
+	Limitations                        []string                     `json:"limitations"`
+	MembershipContext                  []ACLMembershipContext       `json:"membership_context,omitempty"`
+	MembershipEdges                    int                          `json:"membership_edges"`
+	MembershipContextualizedPrincipals int                          `json:"membership_contextualized_principals"`
+	DirectMembershipPaths              int                          `json:"direct_membership_paths"`
+	NestedMembershipPaths              int                          `json:"nested_membership_paths"`
+	UnresolvedMembershipPaths          int                          `json:"unresolved_membership_paths"`
+	OmittedMembershipPaths             int                          `json:"omitted_membership_paths"`
+	MembershipTruncated                bool                         `json:"membership_truncated"`
+	MembershipCoverage                 string                       `json:"membership_coverage"`
+	MembershipLimitations              []string                     `json:"membership_limitations,omitempty"`
+}
+
+type ACLMembershipHop struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Artifact    string `json:"artifact"`
+	ArtifactRef string `json:"artifact_ref"`
+}
+
+type ACLMembershipContext struct {
+	MemberID            string             `json:"member_id"`
+	MemberName          string             `json:"member_name,omitempty"`
+	MemberType          string             `json:"member_type,omitempty"`
+	GroupPath           []ACLMembershipHop `json:"group_path"`
+	ACLPrincipalID      string             `json:"acl_principal_id"`
+	ACLPrincipalName    string             `json:"acl_principal_name,omitempty"`
+	TargetID            string             `json:"target_id"`
+	TargetName          string             `json:"target_name,omitempty"`
+	TargetClass         string             `json:"target_class"`
+	Permission          string             `json:"permission"`
+	Decision            string             `json:"decision"`
+	Inheritance         string             `json:"inheritance"`
+	Classification      string             `json:"classification"`
+	EffectivePermission string             `json:"effective_permission"`
+	MembershipArtifacts []string           `json:"membership_artifacts,omitempty"`
+	MembershipRefs      []string           `json:"membership_refs,omitempty"`
+	ACLArtifact         string             `json:"acl_artifact"`
+	ACLArtifactRef      string             `json:"acl_artifact_ref"`
+}
+
+type aclMembershipEdge struct {
+	MemberID string
+	Artifact string
+	Ref      string
 }
 
 type ACLInventoryTarget struct {
@@ -204,6 +252,7 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 		Limitations: []string{"Observed direct ACL relationships do not establish effective access or exploitability.", "Deny precedence, group-expanded rights and object-specific effective semantics are not calculated."},
 	}
 	objects := map[string]aclInventoryObject{}
+	membershipEdges := map[string][]aclMembershipEdge{}
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return report, nil, err
@@ -235,12 +284,25 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 				report.MalformedEntries++
 				continue
 			}
+			object.Artifact = file
+			object.RefPrefix = fmt.Sprintf("/data/%d", index)
 			objects[strings.ToLower(strings.TrimSpace(object.ID))] = aclInventoryObject{collectedObject: object, Class: classifyACLTarget(object)}
 			if report.Domain == "" {
 				report.Domain = firstString(object.Properties, "domain", "distinguishedname")
 			}
 			report.ObjectsInspected++
-			_ = index
+			if strings.EqualFold(export.Meta.Type, "groups") {
+				var fields map[string]json.RawMessage
+				_ = json.Unmarshal(raw, &fields)
+				memberIDs, malformedMembers := rawMembershipIDs(fields)
+				report.MalformedEntries += malformedMembers
+				for memberIndex, memberID := range memberIDs {
+					if strings.TrimSpace(memberID) == "" {
+						continue
+					}
+					membershipEdges[strings.ToLower(strings.TrimSpace(object.ID))] = append(membershipEdges[strings.ToLower(strings.TrimSpace(object.ID))], aclMembershipEdge{MemberID: memberID, Artifact: file, Ref: fmt.Sprintf("/data/%d/Members/%d", index, memberIndex)})
+				}
+			}
 		}
 	}
 	for _, file := range files {
@@ -337,12 +399,19 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 	if report.Status == "complete" && (report.MalformedEntries > 0 || len(report.UnsupportedRights) > 0 || len(report.Unresolved) > 0) {
 		report.Status = "partial"
 	}
+	for groupID, values := range membershipEdges {
+		membershipEdges[groupID] = dedupeMembershipEdges(values)
+	}
+	report.MembershipEdges = membershipEdgeCount(membershipEdges)
+	enrichACLInventoryMembershipContext(&report, objects, membershipEdges)
 	if report.SupportedACLs == 0 {
 		return report, nil, nil
 	}
 	overview := ACLInventoryObservationRelationships(report)
-	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_artifact": inputPath, "structured_artifact": "Enumeration/ActiveDirectory/ACL/execution-<execution-id>/AD_privileged_acl_inventory.json", "human_report": "AD_PRIVILEGED_ACL_EVIDENCE.txt", "relationship_overview": overview, "relationship_overview_limit": aclInventoryObservationMaxRelationships, "high_value_targets": len(report.HighValueTargets), "normalized_relationships": report.NormalizedRelations, "unresolved_principals": len(report.Unresolved), "unsupported_relationships": unsupportedCount(report.UnsupportedRights), "omitted_relationships": report.OmittedRelations, "malformed_entries": report.MalformedEntries, "status": report.Status})
-	input := storage.FindingInput{FindingKey: aclInventoryFindingKey(assessmentID, executionID, inputPath), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Description: fmt.Sprintf("RustHound execution %d contains %d normalized direct ACL relationships affecting %d classified high-value targets. This is an informational evidence inventory; effective access and exploitability were not evaluated.", executionID, report.NormalizedRelations, len(report.HighValueTargets)), Severity: "informational", Confidence: "observed-direct-acl-coverage-partial", AffectedObjectID: inputPath, AffectedObject: "RustHound direct ACL inventory", EvidenceJSON: string(evidence), ArtifactPath: inputPath, ArtifactRef: "/", ObservedAt: now, Status: "open", ParserVersion: aclInventoryParserVersion}
+	membershipOverview := aclMembershipObservation(report)
+	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_artifact": inputPath, "structured_artifact": "Enumeration/ActiveDirectory/ACL/execution-<execution-id>/AD_privileged_acl_inventory.json", "human_report": "AD_PRIVILEGED_ACL_EVIDENCE.txt", "relationship_overview": overview, "relationship_overview_limit": aclInventoryObservationMaxRelationships, "membership_context": membershipOverview, "membership_context_limit": aclInventoryObservationMaxRelationships, "membership_edges": report.MembershipEdges, "membership_contextualized_principals": report.MembershipContextualizedPrincipals, "direct_membership_paths": report.DirectMembershipPaths, "nested_membership_paths": report.NestedMembershipPaths, "unresolved_membership_paths": report.UnresolvedMembershipPaths, "omitted_membership_paths": report.OmittedMembershipPaths, "membership_coverage": report.MembershipCoverage, "membership_limitations": report.MembershipLimitations, "high_value_targets": len(report.HighValueTargets), "normalized_relationships": report.NormalizedRelations, "unresolved_principals": len(report.Unresolved), "unsupported_relationships": unsupportedCount(report.UnsupportedRights), "omitted_relationships": report.OmittedRelations, "malformed_entries": report.MalformedEntries, "status": report.Status})
+	description := fmt.Sprintf("RustHound execution %d contains %d normalized direct ACL relationships affecting %d classified high-value targets and %d observed membership-context paths. These are informational directory relationships; effective permission and exploitability were not evaluated.", executionID, report.NormalizedRelations, len(report.HighValueTargets), len(report.MembershipContext))
+	input := storage.FindingInput{FindingKey: aclInventoryFindingKey(assessmentID, executionID, inputPath), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Description: description, Severity: "informational", Confidence: "observed-direct-acl-coverage-partial", AffectedObjectID: inputPath, AffectedObject: "RustHound direct ACL inventory", EvidenceJSON: string(evidence), ArtifactPath: inputPath, ArtifactRef: "/", ObservedAt: now, Status: "open", ParserVersion: aclInventoryParserVersion}
 	return report, []storage.FindingInput{input}, nil
 }
 
@@ -507,6 +576,20 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 			}
 		}
 	}
+	fmt.Fprintln(&b, "\n----------------------------------------------------------------------\nMEMBERSHIP CONTEXT\n----------------------------------------------------------------------")
+	fmt.Fprintf(&b, "Membership edges observed: %d\nContextualized ACL principals: %d\nDirect membership paths: %d\nNested membership paths: %d\nUnresolved membership paths: %d\nCoverage: %s\n", report.MembershipEdges, report.MembershipContextualizedPrincipals, report.DirectMembershipPaths, report.NestedMembershipPaths, report.UnresolvedMembershipPaths, fallbackReportText(report.MembershipCoverage, "unknown"))
+	if len(report.MembershipContext) == 0 {
+		fmt.Fprintln(&b, "No membership context observed in this collection.")
+	} else {
+		for _, context := range report.MembershipContext {
+			fmt.Fprintf(&b, "\nTarget: %s [%s]\nObserved ACL: %s -> %s\nACL principal: %s [%s]\n", context.TargetName, context.TargetID, fallbackReportText(context.ACLPrincipalName, context.ACLPrincipalID), context.Permission, fallbackReportText(context.ACLPrincipalName, context.ACLPrincipalID), context.ACLPrincipalID)
+			fmt.Fprintf(&b, "Member: %s [%s]\nPath: %s\nClassification: %s\nEffective permission: %s\n", fallbackReportText(context.MemberName, context.MemberID), context.MemberID, formatMembershipPath(context), context.Classification, context.EffectivePermission)
+			fmt.Fprintf(&b, "Membership evidence: %s\nACL evidence: %s#%s\n", formatMembershipEvidence(context), context.ACLArtifact, context.ACLArtifactRef)
+		}
+	}
+	for _, limitation := range report.MembershipLimitations {
+		fmt.Fprintf(&b, "- Membership limitation: %s\n", limitation)
+	}
 	if len(report.Unresolved) > 0 {
 		fmt.Fprintln(&b, "\n----------------------------------------------------------------------\nUNRESOLVED IDENTITIES\n----------------------------------------------------------------------")
 		for _, item := range report.Unresolved {
@@ -531,4 +614,289 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 	}
 	fmt.Fprintln(&b, "- This report contains observed ACL relationships only; it does not verify effective access, DCSync capability, an attack path or exploitability.")
 	return b.String()
+}
+
+func fallbackReportText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatMembershipPath(context ACLMembershipContext) string {
+	parts := []string{fallbackReportText(context.MemberName, context.MemberID)}
+	for _, hop := range context.GroupPath {
+		parts = append(parts, "MemberOf: "+fallbackReportText(hop.Name, hop.ID))
+	}
+	return strings.Join(parts, " -> ")
+}
+
+func formatMembershipEvidence(context ACLMembershipContext) string {
+	values := make([]string, 0, len(context.MembershipRefs))
+	for index, ref := range context.MembershipRefs {
+		artifact := ""
+		if index < len(context.MembershipArtifacts) {
+			artifact = context.MembershipArtifacts[index]
+		}
+		if artifact != "" {
+			values = append(values, artifact+"#"+ref)
+		} else {
+			values = append(values, ref)
+		}
+	}
+	return strings.Join(values, ", ")
+}
+
+func membershipEdgeCount(edges map[string][]aclMembershipEdge) int {
+	count := 0
+	for _, values := range edges {
+		count += len(values)
+	}
+	return count
+}
+
+func rawMembershipIDs(fields map[string]json.RawMessage) ([]string, int) {
+	var raw json.RawMessage
+	for key, value := range fields {
+		if strings.EqualFold(key, "Members") {
+			raw = value
+			break
+		}
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, 0
+	}
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		var single string
+		if json.Unmarshal(raw, &single) == nil && strings.TrimSpace(single) != "" {
+			return []string{single}, 0
+		}
+		return nil, 1
+	}
+	ids := make([]string, 0, len(values))
+	malformed := 0
+	for _, value := range values {
+		var id string
+		if json.Unmarshal(value, &id) == nil {
+			if strings.TrimSpace(id) != "" {
+				ids = append(ids, id)
+			} else {
+				malformed++
+			}
+			continue
+		}
+		var member map[string]json.RawMessage
+		if json.Unmarshal(value, &member) == nil {
+			id = rawString(member, "ObjectIdentifier")
+			if strings.TrimSpace(id) != "" {
+				ids = append(ids, id)
+			} else {
+				malformed++
+			}
+			continue
+		}
+		malformed++
+	}
+	return ids, malformed
+}
+
+func dedupeMembershipEdges(values []aclMembershipEdge) []aclMembershipEdge {
+	result := make([]aclMembershipEdge, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		key := strings.ToLower(strings.TrimSpace(value.MemberID))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+type aclMembershipCandidate struct {
+	Member    collectedObject
+	Groups    []ACLMembershipHop
+	Refs      []string
+	Artifacts []string
+}
+
+func enrichACLInventoryMembershipContext(report *ACLInventoryReport, objects map[string]aclInventoryObject, edges map[string][]aclMembershipEdge) {
+	report.MembershipCoverage = "complete-observed"
+	cache := map[string][]aclMembershipCandidate{}
+	seenPrincipals := map[string]bool{}
+	seenContexts := map[string]bool{}
+	for _, relationship := range report.Relationships {
+		principal, ok := objects[strings.ToLower(strings.TrimSpace(relationship.PrincipalID))]
+		if !ok || !strings.EqualFold(principal.Type, "groups") {
+			continue
+		}
+		principalKey := strings.ToLower(strings.TrimSpace(principal.ID))
+		seenPrincipals[principalKey] = true
+		candidates, cached := cache[principalKey]
+		if !cached {
+			candidates = membershipCandidates(principalKey, objects, edges, report)
+			cache[principalKey] = candidates
+		}
+		for _, candidate := range candidates {
+			classification := "observed_membership_context"
+			if len(candidate.Groups) > 1 {
+				classification = "observed_nested_membership_context"
+				report.NestedMembershipPaths++
+			} else {
+				report.DirectMembershipPaths++
+			}
+			if candidate.Member.Type == "unknown" {
+				report.UnresolvedMembershipPaths++
+			}
+			key := strings.Join([]string{candidate.Member.ID, relationship.PrincipalID, relationship.TargetID, relationship.Permission, strings.Join(candidate.Refs, "\x00")}, "\x00")
+			if seenContexts[key] {
+				continue
+			}
+			seenContexts[key] = true
+			if len(report.MembershipContext) >= aclInventoryMaxMembershipPaths {
+				report.MembershipTruncated = true
+				report.OmittedMembershipPaths++
+				continue
+			}
+			report.MembershipContext = append(report.MembershipContext, ACLMembershipContext{
+				MemberID: candidate.Member.ID, MemberName: objectLabel(candidate.Member), MemberType: candidate.Member.Type,
+				GroupPath: candidate.Groups, ACLPrincipalID: relationship.PrincipalID, ACLPrincipalName: relationship.PrincipalName,
+				TargetID: relationship.TargetID, TargetName: relationship.TargetName, TargetClass: relationship.TargetClass,
+				Permission: relationship.Permission, Decision: relationship.Decision, Inheritance: relationship.Inheritance,
+				Classification: classification, EffectivePermission: "NOT VERIFIED", MembershipArtifacts: candidate.Artifacts,
+				MembershipRefs: candidate.Refs, ACLArtifact: relationship.Artifact, ACLArtifactRef: relationship.ArtifactRef,
+			})
+		}
+	}
+	report.MembershipContextualizedPrincipals = len(seenPrincipals)
+	if report.MembershipTruncated {
+		report.MembershipCoverage = "partial"
+		report.MembershipLimitations = append(report.MembershipLimitations, "Membership context path limit reached; additional observed paths were not materialized.")
+	}
+	if report.MembershipEdges == 0 {
+		report.MembershipCoverage = "unavailable"
+		report.MembershipLimitations = append(report.MembershipLimitations, "No group membership edges were available in this RustHound execution; membership context is unavailable for ACL principals.")
+	}
+	if len(report.MembershipLimitations) == 0 {
+		report.MembershipLimitations = append(report.MembershipLimitations, "Membership paths describe observed directory relationships only; effective permission was not evaluated.")
+	}
+}
+
+func membershipCandidates(root string, objects map[string]aclInventoryObject, edges map[string][]aclMembershipEdge, report *ACLInventoryReport) []aclMembershipCandidate {
+	result := make([]aclMembershipCandidate, 0)
+	var walk func(group string, groupPath []ACLMembershipHop, refs, artifacts []string, visiting map[string]bool)
+	walk = func(group string, groupPath []ACLMembershipHop, refs, artifacts []string, visiting map[string]bool) {
+		if len(groupPath) > aclInventoryMaxMembershipDepth {
+			report.MembershipTruncated = true
+			return
+		}
+		key := strings.ToLower(strings.TrimSpace(group))
+		if visiting[key] {
+			report.MembershipLimitations = appendUniqueString(report.MembershipLimitations, "Cycle encountered while traversing observed group membership; cyclic edge was not expanded.")
+			return
+		}
+		visiting[key] = true
+		defer delete(visiting, key)
+		values := append([]aclMembershipEdge(nil), edges[key]...)
+		sort.SliceStable(values, func(i, j int) bool {
+			return strings.ToLower(values[i].MemberID)+values[i].Ref < strings.ToLower(values[j].MemberID)+values[j].Ref
+		})
+		for _, edge := range values {
+			memberKey := strings.ToLower(strings.TrimSpace(edge.MemberID))
+			member, ok := objects[memberKey]
+			if !ok {
+				member = aclInventoryObject{collectedObject: collectedObject{ID: edge.MemberID, Type: "unknown"}}
+			}
+			hop := membershipHop(member.collectedObject, edge.Artifact, edge.Ref)
+			if strings.EqualFold(member.Type, "groups") {
+				if len(result) >= aclInventoryMaxPathsPerGroup {
+					report.MembershipTruncated = true
+					return
+				}
+				walk(member.ID, append(groupPath, hop), append(refs, edge.Ref), append(artifacts, edge.Artifact), visiting)
+				continue
+			}
+			groups := append([]ACLMembershipHop(nil), groupPath...)
+			// The walk is root-to-leaf; presentation is member-to-root.
+			reverseMembershipHops(groups)
+			allRefs := append(append([]string(nil), refs...), edge.Ref)
+			allArtifacts := append(append([]string(nil), artifacts...), edge.Artifact)
+			reverseStrings(allRefs)
+			reverseStrings(allArtifacts)
+			result = append(result, aclMembershipCandidate{Member: member.collectedObject, Groups: groups, Refs: allRefs, Artifacts: uniqueStrings(allArtifacts)})
+			if len(result) >= aclInventoryMaxPathsPerGroup {
+				report.MembershipTruncated = true
+				return
+			}
+		}
+	}
+	rootObject, ok := objects[strings.ToLower(strings.TrimSpace(root))]
+	if !ok {
+		return nil
+	}
+	walk(root, []ACLMembershipHop{membershipHop(rootObject.collectedObject, rootObject.Artifact, rootObject.RefPrefix+"/Members")}, nil, nil, map[string]bool{})
+	return result
+}
+
+func membershipHop(member collectedObject, artifact, ref string) ACLMembershipHop {
+	name := objectLabel(member)
+	if name == "" {
+		name = member.ID
+	}
+	return ACLMembershipHop{ID: member.ID, Name: name, Type: member.Type, Artifact: artifact, ArtifactRef: ref}
+}
+func membershipGroupHopForRoot(id string, objects map[string]aclInventoryObject, artifact, ref string) ACLMembershipHop {
+	object, ok := objects[strings.ToLower(strings.TrimSpace(id))]
+	if !ok {
+		return ACLMembershipHop{ID: id, Name: id, Type: "group", Artifact: artifact, ArtifactRef: ref}
+	}
+	return membershipHop(object.collectedObject, artifact, ref)
+}
+func reverseMembershipHops(values []ACLMembershipHop) {
+	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
+		values[left], values[right] = values[right], values[left]
+	}
+}
+func reverseStrings(values []string) {
+	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
+		values[left], values[right] = values[right], values[left]
+	}
+}
+func uniqueStrings(values []string) []string {
+	result := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func aclMembershipObservation(report ACLInventoryReport) []ACLMembershipContext {
+	values := append([]ACLMembershipContext(nil), report.MembershipContext...)
+	sort.SliceStable(values, func(i, j int) bool {
+		a, b := values[i], values[j]
+		for _, pair := range [][2]string{{a.TargetName, b.TargetName}, {a.TargetID, b.TargetID}, {a.Permission, b.Permission}, {a.MemberName, b.MemberName}, {a.MemberID, b.MemberID}, {a.Classification, b.Classification}} {
+			if pair[0] != pair[1] {
+				return pair[0] < pair[1]
+			}
+		}
+		return strings.Join(a.MembershipRefs, "\x00") < strings.Join(b.MembershipRefs, "\x00")
+	})
+	if len(values) > aclInventoryObservationMaxRelationships {
+		values = values[:aclInventoryObservationMaxRelationships]
+	}
+	return values
 }

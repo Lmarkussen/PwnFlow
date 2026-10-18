@@ -688,7 +688,19 @@ func findingLimitations(finding storage.Finding) string {
 		if count := metadataInt(metadata, "malformed_entries"); count > 0 {
 			lines = append(lines, fmt.Sprintf("%d malformed source entries were not normalized.", count))
 		}
+		if coverage := metadataString(metadata, "membership_coverage"); coverage != "" {
+			lines = append(lines, "Membership context coverage: "+coverage+".")
+		}
+		if count := metadataInt(metadata, "unresolved_membership_paths"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d membership paths contain unresolved identities.", count))
+		}
+		if count := metadataInt(metadata, "omitted_membership_paths"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d membership paths were omitted by bounded processing.", count))
+		}
 		lines = append(lines, "Effective permissions, group-derived rights, deny precedence and exploitability were not evaluated.")
+		if limitations := metadataStringSlice(metadata, "membership_limitations"); len(limitations) > 0 {
+			lines = append(lines, "Membership limitations: "+strings.Join(limitations, "; "))
+		}
 		return strings.Join(lines, "\n")
 	}
 	if strings.TrimSpace(finding.Confidence) == "" {
@@ -715,33 +727,80 @@ func metadataInt(metadata map[string]any, key string) int {
 func formatACLInventoryOverview(finding storage.Finding) string {
 	metadata := findingMetadata(finding)
 	var b strings.Builder
-	fmt.Fprintf(&b, "RustHound execution %d contains observed direct ACL relationships affecting high-value Active Directory objects.\nStatus: %s\nHigh-value targets: %d\nObserved relationships: %d\n", finding.SourceExecution, fallbackText(metadataString(metadata, "status"), "unknown"), metadataInt(metadata, "high_value_targets"), metadataInt(metadata, "normalized_relationships"))
+	fmt.Fprintf(&b, "RustHound execution %d contains observed direct ACL relationships affecting high-value Active Directory objects.\nStatus: %s\nHigh-value targets: %d\nObserved relationships: %d\nMembership edges: %d\nDirect membership paths: %d\nNested membership paths: %d\nMembership coverage: %s\n", finding.SourceExecution, fallbackText(metadataString(metadata, "status"), "unknown"), metadataInt(metadata, "high_value_targets"), metadataInt(metadata, "normalized_relationships"), metadataInt(metadata, "membership_edges"), metadataInt(metadata, "direct_membership_paths"), metadataInt(metadata, "nested_membership_paths"), fallbackText(metadataString(metadata, "membership_coverage"), "unknown"))
 	relationships, _ := metadata["relationship_overview"].([]any)
 	if len(relationships) == 0 {
 		b.WriteString("\nNo bounded relationship overview is available; inspect the full report for retained evidence.")
+	} else {
+		additional := metadataInt(metadata, "normalized_relationships") - len(relationships)
+		if additional < 0 {
+			additional = 0
+		}
+		fmt.Fprintf(&b, "\nObserved relationships (showing %d; %d additional in the full report):\n", len(relationships), additional)
+		for _, raw := range relationships {
+			relation, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			principal := fallbackText(metadataString(relation, "principal_name"), "(unresolved principal)")
+			principalID := metadataString(relation, "principal_id")
+			target := fallbackText(metadataString(relation, "target_name"), "(unnamed target)")
+			targetID := metadataString(relation, "target_id")
+			fmt.Fprintf(&b, "- %s [%s] -> %s -> %s [%s] (%s)\n  Decision: %s | Inheritance: %s", principal, principalID, metadataString(relation, "permission"), target, targetID, metadataString(relation, "target_type"), fallbackText(metadataString(relation, "decision"), "unknown"), fallbackText(metadataString(relation, "inheritance"), "unknown"))
+			if restriction := metadataString(relation, "object_type"); restriction != "" || metadataString(relation, "inherited_object_type") != "" {
+				fmt.Fprintf(&b, " | Object restriction: %s/%s", restriction, metadataString(relation, "inherited_object_type"))
+			}
+			fmt.Fprintf(&b, "\n  Source: %s#%s\n", metadataString(relation, "artifact"), metadataString(relation, "artifact_ref"))
+		}
+	}
+	membership, _ := metadata["membership_context"].([]any)
+	if len(membership) == 0 {
+		b.WriteString("\nNo membership context observed in this collection.")
 		return b.String()
 	}
-	additional := metadataInt(metadata, "normalized_relationships") - len(relationships)
-	if additional < 0 {
-		additional = 0
+	membershipAdditional := metadataInt(metadata, "direct_membership_paths") + metadataInt(metadata, "nested_membership_paths") - len(membership)
+	if membershipAdditional < 0 {
+		membershipAdditional = 0
 	}
-	fmt.Fprintf(&b, "\nObserved relationships (showing %d; %d additional in the full report):\n", len(relationships), additional)
-	for _, raw := range relationships {
-		relation, ok := raw.(map[string]any)
+	fmt.Fprintf(&b, "\nMembership-context relationships (showing %d; %d additional in the full report):\n", len(membership), membershipAdditional)
+	for _, raw := range membership {
+		context, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		principal := fallbackText(metadataString(relation, "principal_name"), "(unresolved principal)")
-		principalID := metadataString(relation, "principal_id")
-		target := fallbackText(metadataString(relation, "target_name"), "(unnamed target)")
-		targetID := metadataString(relation, "target_id")
-		fmt.Fprintf(&b, "- %s [%s] -> %s -> %s [%s] (%s)\n  Decision: %s | Inheritance: %s", principal, principalID, metadataString(relation, "permission"), target, targetID, metadataString(relation, "target_type"), fallbackText(metadataString(relation, "decision"), "unknown"), fallbackText(metadataString(relation, "inheritance"), "unknown"))
-		if restriction := metadataString(relation, "object_type"); restriction != "" || metadataString(relation, "inherited_object_type") != "" {
-			fmt.Fprintf(&b, " | Object restriction: %s/%s", restriction, metadataString(relation, "inherited_object_type"))
-		}
-		fmt.Fprintf(&b, "\n  Source: %s#%s\n", metadataString(relation, "artifact"), metadataString(relation, "artifact_ref"))
+		member := fallbackText(metadataString(context, "member_name"), metadataString(context, "member_id"))
+		principal := fallbackText(metadataString(context, "acl_principal_name"), metadataString(context, "acl_principal_id"))
+		target := fallbackText(metadataString(context, "target_name"), metadataString(context, "target_id"))
+		fmt.Fprintf(&b, "- %s [%s] -> %s -> %s [%s]\n  ACL principal: %s [%s]\n  Path: %s\n  Classification: %s | Effective permission: %s\n  Membership evidence: %s\n  ACL evidence: %s#%s\n", member, metadataString(context, "member_id"), metadataString(context, "permission"), target, metadataString(context, "target_id"), principal, metadataString(context, "acl_principal_id"), formatMembershipContextPath(context), metadataString(context, "classification"), fallbackText(metadataString(context, "effective_permission"), "NOT VERIFIED"), formatMembershipContextEvidence(context), metadataString(context, "acl_artifact"), metadataString(context, "acl_artifact_ref"))
 	}
 	return b.String()
+}
+
+func formatMembershipContextPath(context map[string]any) string {
+	parts := []string{fallbackText(metadataString(context, "member_name"), metadataString(context, "member_id"))}
+	path, _ := context["group_path"].([]any)
+	for _, raw := range path {
+		hop, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		parts = append(parts, "MemberOf: "+fallbackText(metadataString(hop, "name"), metadataString(hop, "id")))
+	}
+	return strings.Join(parts, " -> ")
+}
+
+func formatMembershipContextEvidence(context map[string]any) string {
+	refs := metadataStringSlice(context, "membership_refs")
+	artifacts := metadataStringSlice(context, "membership_artifacts")
+	values := make([]string, 0, len(refs))
+	for index, ref := range refs {
+		if index < len(artifacts) && artifacts[index] != "" {
+			values = append(values, artifacts[index]+"#"+ref)
+		} else {
+			values = append(values, ref)
+		}
+	}
+	return strings.Join(values, ", ")
 }
 
 func specificFindingCondition(finding storage.Finding, metadata map[string]any) string {

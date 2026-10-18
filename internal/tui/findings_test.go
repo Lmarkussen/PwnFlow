@@ -640,6 +640,24 @@ func TestPrivilegedACLInventoryDetailShowsRelationshipsAndLimitations(t *testing
 	}
 }
 
+func TestPrivilegedACLInventoryDetailShowsMembershipContext(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Severity: "informational",
+		SourceTool: "RustHound-CE", SourceExecution: 477,
+		EvidenceJSON: `{"source_execution_id":477,"high_value_targets":1,"normalized_relationships":1,"membership_edges":2,"direct_membership_paths":0,"nested_membership_paths":1,"membership_coverage":"complete-observed","membership_context":[{"member_id":"S-1-5-21-100-1101","member_name":"alice","group_path":[{"id":"S-1-5-21-100-901","name":"Tier 1 Support"},{"id":"S-1-5-21-100-900","name":"Helpdesk Operators"}],"acl_principal_id":"S-1-5-21-100-900","acl_principal_name":"Helpdesk Operators","target_id":"S-1-5-21-100-512","target_name":"Domain Admins","permission":"WriteDacl","classification":"observed_nested_membership_context","effective_permission":"NOT VERIFIED","membership_refs":["/data/0/Members/0","/data/0/Members/0"],"acl_artifact":"groups.json","acl_artifact_ref":"/data/2/Aces/0"}]}`,
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"alice", "Tier 1 Support", "Helpdesk Operators", "WriteDacl", "Domain Admins", "NOT VERIFIED", "observed_nested_membership_context"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("membership context omitted %q: %s", expected, condition)
+		}
+	}
+	limitations := findingLimitations(finding)
+	if !strings.Contains(limitations, "Membership context coverage: complete-observed") || !strings.Contains(limitations, "Effective permissions") {
+		t.Fatalf("membership limitations omitted: %s", limitations)
+	}
+}
+
 func TestPrivilegedACLInventoryEvidenceOpensHumanReport(t *testing.T) {
 	root := t.TempDir()
 	resultsRoot := filepath.Join(root, "results")
