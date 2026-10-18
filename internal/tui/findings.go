@@ -542,6 +542,14 @@ func (m *model) findingsViewRender() string {
 			detail.WriteString(dim.Render("────────────────────────────────────────────") + "\n")
 			if m.inlineEvidence.error != "" {
 				detail.WriteString(warn.Render(m.inlineEvidence.error) + "\n")
+			} else if isKerberosMaterialFinding(finding) {
+				metadata := findingMetadata(finding)
+				count := metadataInt(metadata, "record_count")
+				if count > 0 {
+					detail.WriteString(fmt.Sprintf("Matching material records: %d\n", count))
+				}
+				detail.WriteString("Raw material: PROTECTED — available in original evidence\n")
+				detail.WriteString(dim.Render("Use E to inspect the complete source artifact; it may contain additional accounts." + "\n"))
 			} else {
 				page := max(1, m.findingPageSize()-10)
 				endEvidence := min(len(m.inlineEvidence.lines), m.inlineEvidenceTop+page)
@@ -585,6 +593,11 @@ func (m *model) findingsViewRender() string {
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
 	content.WriteString(dim.Render("\n\n→/Enter Open    ←/Esc Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func isKerberosMaterialFinding(finding storage.Finding) bool {
+	typ := strings.ToLower(finding.FindingType)
+	return typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected"
 }
 
 func (m *model) findingTieringOverview(width int) string {

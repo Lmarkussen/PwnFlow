@@ -1424,3 +1424,65 @@ func TestAdministrativeTieringArrowBackRestoresTierSelection(t *testing.T) {
 		t.Fatalf("tier selection was not restored: tiering=%t cursor=%d", m.findingTieringView, m.findingCursor)
 	}
 }
+
+func TestKerberosFindingDetailProtectsInlineMaterial(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		Title:           "Kerberoast material collected",
+		FindingType:     "kerberos_ticket_material_collected",
+		Severity:        "medium",
+		SourceTool:      "NetExec",
+		SourceExecution: 9,
+		AffectedObject:  "sccm.lab\\svc-sql",
+		ArtifactPath:    "CredentialAuditing/NetExec/LDAP_kerberoasting/kerberoast.txt",
+		EvidenceJSON:    `{"material_type":"kerberoast","principal":"sccm.lab\\svc-sql","record_count":2,"record_line_numbers":[1,2]}`,
+	}}
+	m := &model{
+		findingsView:  true,
+		findingDetail: true,
+		findingRows:   []storage.Finding{finding},
+		findingCursor: 0,
+		width:         120,
+		height:        40,
+		inlineEvidence: inlineEvidence{
+			section: "RECOVERED KERBEROS MATERIAL",
+			lines:   []string{"REDACTED_MATERIAL_A", "REDACTED_MATERIAL_B"},
+		},
+	}
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "REDACTED_MATERIAL_A") || strings.Contains(view, "REDACTED_MATERIAL_B") {
+		t.Fatal("Kerberos material leaked into the ordinary Finding detail")
+	}
+	for _, expected := range []string{"sccm.lab\\svc-sql", "Matching material records: 2", "Raw material: PROTECTED", "original evidence"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("protected Kerberos detail omitted %q: %s", expected, view)
+		}
+	}
+}
+
+func TestFindingsCategoryBackRestoresStableRootSelection(t *testing.T) {
+	m := &model{
+		findingsView:             true,
+		findingCategoryView:      true,
+		findingCategory:          "adcs",
+		findingCategorySelection: "adcs",
+		findingCategories: []findingCategory{
+			{Key: "active_directory", Name: "Active Directory"},
+			{Key: "adcs", Name: "AD CS"},
+			{Key: "acl", Name: "ACLs"},
+		},
+		findingCursor: 0,
+		width:         100,
+		height:        30,
+	}
+	m.handleFindingsKey("esc")
+	if m.findingCategory != "" || m.findingCursor != 1 {
+		t.Fatalf("category back did not restore AD CS: category=%q cursor=%d", m.findingCategory, m.findingCursor)
+	}
+	m.findingCategorySelection = "active_directory"
+	m.findingCategory = "active_directory"
+	m.findingCursor = 2
+	m.handleFindingsKey("esc")
+	if m.findingCategory != "" || m.findingCursor != 0 {
+		t.Fatalf("second category back did not restore Active Directory: category=%q cursor=%d", m.findingCategory, m.findingCursor)
+	}
+}

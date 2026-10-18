@@ -689,7 +689,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.findingCategory != "" {
 				m.findingCategory = ""
-				m.findingCursor = 0
+				m.restoreFindingCategorySelection()
+				m.findingTop = m.findingCategoryTop
 				m.refreshFindings()
 				return m, nil
 			}
