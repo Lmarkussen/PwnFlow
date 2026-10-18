@@ -50,6 +50,20 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 	if len(inputs) != 1 || inputs[0].SourceExecution != 435 || inputs[0].Severity != "informational" {
 		t.Fatalf("unexpected finding input: %+v", inputs)
 	}
+	var evidence map[string]any
+	if err := json.Unmarshal([]byte(inputs[0].EvidenceJSON), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	overview, ok := evidence["relationship_overview"].([]any)
+	if !ok || len(overview) == 0 {
+		t.Fatalf("finding did not retain a relationship overview: %+v", evidence)
+	}
+	overviewJSON, _ := json.Marshal(overview)
+	for _, expected := range []string{"alice", "WriteDacl", "S-1-5-21-100-512"} {
+		if !strings.Contains(string(overviewJSON), expected) {
+			t.Fatalf("relationship overview omitted %q: %s", expected, overviewJSON)
+		}
+	}
 	if strings.Contains(strings.ToLower(inputs[0].Description), "effective") && strings.Contains(strings.ToLower(inputs[0].Description), "verified") {
 		t.Fatal("inventory observation overclaimed effective access")
 	}
@@ -77,6 +91,11 @@ func TestACLInventoryOutputIsProvenanceBoundAndSecretSafe(t *testing.T) {
 		t.Fatal("secret-bearing fields entered the inventory artifact")
 	}
 	text := FormatACLInventoryReport(report)
+	for _, expected := range []string{"Observed relationships", "effective access", "exploitability"} {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(expected)) {
+			t.Fatalf("report omitted %q", expected)
+		}
+	}
 	for _, forbidden := range []string{"verified attack path", "effective_admin", "dcsync_capable", "verified_exploitable"} {
 		if strings.Contains(strings.ToLower(text), forbidden) {
 			t.Fatalf("report contains prohibited conclusion %q", forbidden)

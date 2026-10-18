@@ -606,3 +606,54 @@ func TestFindingDetailMarksSensitiveEvidenceWithoutDisplayingSecretValues(t *tes
 		t.Fatal("detail unexpectedly exposed a sensitive value")
 	}
 }
+
+func TestPrivilegedACLInventoryDetailShowsRelationshipsAndLimitations(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Severity: "informational",
+		SourceTool: "RustHound-CE", SourceExecution: 450, ArtifactPath: "Enumeration/ActiveDirectory/ACL/execution-450/AD_privileged_acl_inventory.json",
+		EvidenceJSON: `{"source_execution_id":450,"source_artifact":"Enumeration/RustHoundCE/artifacts","human_report":"AD_PRIVILEGED_ACL_EVIDENCE.txt","high_value_targets":2,"normalized_relationships":14,"unsupported_relationships":3,"unresolved_principals":1,"omitted_relationships":2,"status":"partial","relationship_overview":[{"principal_name":"alice","principal_id":"S-1-5-21-1-1101","target_name":"Domain Admins","target_id":"S-1-5-21-1-512","target_type":"groups","permission":"WriteDacl","decision":"allow","inheritance":"explicit","artifact":"groups.json","artifact_ref":"/data/0/Aces/0"}]}`,
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"alice", "WriteDacl", "Domain Admins", "S-1-5-21-1-512", "additional in the full report"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("condition omitted %q: %s", expected, condition)
+		}
+	}
+	if strings.Contains(findingImpact(finding), "security-relevant condition requiring operator review") {
+		t.Fatal("inventory retained generic security impact wording")
+	}
+	limitations := findingLimitations(finding)
+	for _, expected := range []string{"Unsupported ACL forms", "unresolved", "omitted", "Effective permissions"} {
+		if !strings.Contains(limitations, expected) {
+			t.Fatalf("limitations omitted %q: %s", expected, limitations)
+		}
+	}
+	evidence := findingEvidenceSummary(finding)
+	for _, expected := range []string{"AD_PRIVILEGED_ACL_EVIDENCE.txt", "AD_privileged_acl_inventory.json", "Enumeration/RustHoundCE/artifacts"} {
+		if !strings.Contains(evidence, expected) {
+			t.Fatalf("evidence summary omitted %q: %s", expected, evidence)
+		}
+	}
+}
+
+func TestPrivilegedACLInventoryEvidenceOpensHumanReport(t *testing.T) {
+	root := t.TempDir()
+	resultsRoot := filepath.Join(root, "results")
+	if err := os.MkdirAll(resultsRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resultsRoot, "AD_PRIVILEGED_ACL_EVIDENCE.txt"), []byte("Target: Domain Admins\nalice -> WriteDacl\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model := &model{cfg: config.Config{Root: root}, findingDetail: true}
+	model.openFindingEvidence(storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_privileged_acl_evidence_inventory", ArtifactPath: "missing.json",
+		EvidenceJSON: `{"human_report":"AD_PRIVILEGED_ACL_EVIDENCE.txt"}`,
+	}})
+	if model.evidenceError != "" || model.evidencePath != "AD_PRIVILEGED_ACL_EVIDENCE.txt" {
+		t.Fatalf("human report was not selected: path=%s error=%s", model.evidencePath, model.evidenceError)
+	}
+	if !strings.Contains(strings.Join(model.evidenceLines, "\n"), "alice -> WriteDacl") {
+		t.Fatal("human ACL report was not loaded")
+	}
+}

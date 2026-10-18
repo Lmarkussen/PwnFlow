@@ -330,8 +330,15 @@ func readEvidenceLines(path string) ([]string, error) {
 
 func (m *model) openFindingEvidence(finding storage.Finding) {
 	m.evidenceView, m.evidenceTop = true, 0
-	m.evidencePath, m.evidenceError, m.evidenceLines = finding.ArtifactPath, "", nil
-	path, err := m.safeEvidencePath(finding.ArtifactPath)
+	evidenceReference := finding.ArtifactPath
+	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
+		metadata := findingMetadata(finding)
+		if report := metadataString(metadata, "human_report"); report != "" {
+			evidenceReference = report
+		}
+	}
+	m.evidencePath, m.evidenceError, m.evidenceLines = evidenceReference, "", nil
+	path, err := m.safeEvidencePath(evidenceReference)
 	if err != nil {
 		m.evidenceError = err.Error()
 		return

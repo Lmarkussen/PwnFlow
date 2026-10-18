@@ -17,6 +17,8 @@ import (
 
 const aclInventoryParserVersion = "rusthound-acl-inventory-v1"
 
+const aclInventoryObservationMaxRelationships = 12
+
 const (
 	aclInventoryMaxObjects       = 100000
 	aclInventoryMaxACEs          = 250000
@@ -105,6 +107,78 @@ type ACLInventoryLimits struct {
 	MaxACLs          int `json:"max_acls"`
 	MaxRelationships int `json:"max_relationships"`
 	MaxUnresolved    int `json:"max_unresolved"`
+}
+
+// ACLInventoryObservationRelationships returns a stable, bounded selection for
+// the Findings detail view. The complete relationship set remains in the
+// execution-associated JSON and TXT report.
+func ACLInventoryObservationRelationships(report ACLInventoryReport) []ACLInventoryRelationship {
+	relations := append([]ACLInventoryRelationship(nil), report.Relationships...)
+	sort.SliceStable(relations, func(left, right int) bool {
+		leftPriority := aclInventoryTargetPriority(relations[left].TargetClass)
+		rightPriority := aclInventoryTargetPriority(relations[right].TargetClass)
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		for _, pair := range [][2]string{{relations[left].TargetName, relations[right].TargetName}, {relations[left].TargetID, relations[right].TargetID}, {relations[left].Permission, relations[right].Permission}, {relations[left].PrincipalName, relations[right].PrincipalName}, {relations[left].PrincipalID, relations[right].PrincipalID}, {relations[left].Decision, relations[right].Decision}, {relations[left].Inheritance, relations[right].Inheritance}} {
+			if pair[0] != pair[1] {
+				return pair[0] < pair[1]
+			}
+		}
+		return relations[left].ArtifactRef < relations[right].ArtifactRef
+	})
+	selected := make([]ACLInventoryRelationship, 0, minInt(aclInventoryObservationMaxRelationships, len(relations)))
+	seenTargets := map[string]bool{}
+	for _, relation := range relations {
+		if len(selected) >= aclInventoryObservationMaxRelationships {
+			break
+		}
+		if !seenTargets[relation.TargetID] {
+			selected = append(selected, relation)
+			seenTargets[relation.TargetID] = true
+		}
+	}
+	if len(selected) < aclInventoryObservationMaxRelationships {
+		selectedKeys := make(map[string]bool, len(selected))
+		for _, relation := range selected {
+			selectedKeys[aclInventoryRelationshipKey(relation)] = true
+		}
+		for _, relation := range relations {
+			if len(selected) >= aclInventoryObservationMaxRelationships {
+				break
+			}
+			if !selectedKeys[aclInventoryRelationshipKey(relation)] {
+				selected = append(selected, relation)
+				selectedKeys[aclInventoryRelationshipKey(relation)] = true
+			}
+		}
+	}
+	return selected
+}
+
+func aclInventoryTargetPriority(class string) int {
+	class = strings.ToLower(class)
+	switch {
+	case class == "domain_root", strings.HasPrefix(class, "privileged_group"):
+		return 0
+	case class == "domain_controller":
+		return 1
+	case class == "high_value_ou", class == "gpo_container":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func aclInventoryRelationshipKey(relation ACLInventoryRelationship) string {
+	return strings.Join([]string{relation.PrincipalID, relation.TargetID, relation.Permission, relation.Decision, relation.Inheritance, relation.ObjectType, relation.InheritedObjectType}, "\x00")
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 type aclInventoryObject struct {
@@ -266,7 +340,8 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 	if report.SupportedACLs == 0 {
 		return report, nil, nil
 	}
-	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_artifact": inputPath, "structured_artifact": "Enumeration/ActiveDirectory/ACL/execution-<execution-id>/AD_privileged_acl_inventory.json", "human_report": "AD_PRIVILEGED_ACL_EVIDENCE.txt", "high_value_targets": len(report.HighValueTargets), "normalized_relationships": report.NormalizedRelations, "unresolved_principals": len(report.Unresolved), "unsupported_relationships": unsupportedCount(report.UnsupportedRights), "status": report.Status})
+	overview := ACLInventoryObservationRelationships(report)
+	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_artifact": inputPath, "structured_artifact": "Enumeration/ActiveDirectory/ACL/execution-<execution-id>/AD_privileged_acl_inventory.json", "human_report": "AD_PRIVILEGED_ACL_EVIDENCE.txt", "relationship_overview": overview, "relationship_overview_limit": aclInventoryObservationMaxRelationships, "high_value_targets": len(report.HighValueTargets), "normalized_relationships": report.NormalizedRelations, "unresolved_principals": len(report.Unresolved), "unsupported_relationships": unsupportedCount(report.UnsupportedRights), "omitted_relationships": report.OmittedRelations, "malformed_entries": report.MalformedEntries, "status": report.Status})
 	input := storage.FindingInput{FindingKey: aclInventoryFindingKey(assessmentID, executionID, inputPath), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "ad_privileged_acl_evidence_inventory", Title: "AD Privileged ACL Evidence Inventory", Description: fmt.Sprintf("RustHound execution %d contains %d normalized direct ACL relationships affecting %d classified high-value targets. This is an informational evidence inventory; effective access and exploitability were not evaluated.", executionID, report.NormalizedRelations, len(report.HighValueTargets)), Severity: "informational", Confidence: "observed-direct-acl-coverage-partial", AffectedObjectID: inputPath, AffectedObject: "RustHound direct ACL inventory", EvidenceJSON: string(evidence), ArtifactPath: inputPath, ArtifactRef: "/", ObservedAt: now, Status: "open", ParserVersion: aclInventoryParserVersion}
 	return report, []storage.FindingInput{input}, nil
 }
@@ -419,7 +494,16 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 		fmt.Fprintf(&b, "\nTarget: %s\nIdentity: %s\nType: %s\n", target.Name, target.ID, target.ObjectType)
 		for _, rel := range report.Relationships {
 			if rel.TargetID == target.ID {
-				fmt.Fprintf(&b, "  %-24s %-7s %-9s %s (%s)\n", rel.Permission, rel.Decision, rel.Inheritance, rel.PrincipalName, rel.PrincipalID)
+				principal := rel.PrincipalName
+				if principal == "" {
+					principal = "(unresolved)"
+				}
+				fmt.Fprintf(&b, "  %s -> %s -> %s [%s]\n", principal, rel.Permission, target.Name, target.ID)
+				fmt.Fprintf(&b, "    Decision: %s | Inheritance: %s | Principal ID: %s | Target type: %s\n", rel.Decision, rel.Inheritance, rel.PrincipalID, rel.TargetType)
+				if rel.ObjectType != "" || rel.InheritedObjectType != "" {
+					fmt.Fprintf(&b, "    Object restriction: object_type=%s inherited_object_type=%s\n", rel.ObjectType, rel.InheritedObjectType)
+				}
+				fmt.Fprintf(&b, "    Source: %s#%s\n", rel.Artifact, rel.ArtifactRef)
 			}
 		}
 	}

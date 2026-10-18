@@ -457,6 +457,9 @@ func findingDetailHeader(finding storage.Finding, width int) string {
 
 func findingCondition(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
+	if typ == "ad_privileged_acl_evidence_inventory" {
+		return formatACLInventoryOverview(finding)
+	}
 	metadata := findingMetadata(finding)
 	protocol := metadataString(metadata, "protocol")
 	if protocol == "" {
@@ -526,14 +529,86 @@ func findingSection(name, value string, width int) string {
 }
 
 func findingEvidenceSummary(finding storage.Finding) string {
+	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s · Execution %d\nFull report: %s\nStructured inventory: %s\nOriginal RustHound source: %s", finding.SourceTool, finding.SourceExecution, metadataString(metadata, "human_report"), fallbackText(finding.ArtifactPath, metadataString(metadata, "structured_artifact")), metadataString(metadata, "source_artifact"))
+	}
 	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
 }
 
 func findingLimitations(finding storage.Finding) string {
+	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
+		metadata := findingMetadata(finding)
+		var lines []string
+		if status := metadataString(metadata, "status"); status != "" {
+			lines = append(lines, "ACL evidence status: "+status+".")
+		}
+		if count := metadataInt(metadata, "unsupported_relationships"); count > 0 {
+			lines = append(lines, fmt.Sprintf("Unsupported ACL forms were encountered (%d records); they were not generalized into permissions.", count))
+		}
+		if count := metadataInt(metadata, "unresolved_principals"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d principal or target references remain unresolved.", count))
+		}
+		if count := metadataInt(metadata, "omitted_relationships"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d normalized relationships were omitted by the analyzer's processing bound.", count))
+		}
+		if count := metadataInt(metadata, "malformed_entries"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d malformed source entries were not normalized.", count))
+		}
+		lines = append(lines, "Effective permissions, group-derived rights, deny precedence and exploitability were not evaluated.")
+		return strings.Join(lines, "\n")
+	}
 	if strings.TrimSpace(finding.Confidence) == "" {
 		return "Source limitations were not recorded."
 	}
 	return finding.Confidence
+}
+
+func metadataInt(metadata map[string]any, key string) int {
+	value, ok := metadata[key]
+	if !ok {
+		return 0
+	}
+	switch number := value.(type) {
+	case float64:
+		return int(number)
+	case int:
+		return number
+	default:
+		return 0
+	}
+}
+
+func formatACLInventoryOverview(finding storage.Finding) string {
+	metadata := findingMetadata(finding)
+	var b strings.Builder
+	fmt.Fprintf(&b, "RustHound execution %d contains observed direct ACL relationships affecting high-value Active Directory objects.\nStatus: %s\nHigh-value targets: %d\nObserved relationships: %d\n", finding.SourceExecution, fallbackText(metadataString(metadata, "status"), "unknown"), metadataInt(metadata, "high_value_targets"), metadataInt(metadata, "normalized_relationships"))
+	relationships, _ := metadata["relationship_overview"].([]any)
+	if len(relationships) == 0 {
+		b.WriteString("\nNo bounded relationship overview is available; inspect the full report for retained evidence.")
+		return b.String()
+	}
+	additional := metadataInt(metadata, "normalized_relationships") - len(relationships)
+	if additional < 0 {
+		additional = 0
+	}
+	fmt.Fprintf(&b, "\nObserved relationships (showing %d; %d additional in the full report):\n", len(relationships), additional)
+	for _, raw := range relationships {
+		relation, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		principal := fallbackText(metadataString(relation, "principal_name"), "(unresolved principal)")
+		principalID := metadataString(relation, "principal_id")
+		target := fallbackText(metadataString(relation, "target_name"), "(unnamed target)")
+		targetID := metadataString(relation, "target_id")
+		fmt.Fprintf(&b, "- %s [%s] -> %s -> %s [%s] (%s)\n  Decision: %s | Inheritance: %s", principal, principalID, metadataString(relation, "permission"), target, targetID, metadataString(relation, "target_type"), fallbackText(metadataString(relation, "decision"), "unknown"), fallbackText(metadataString(relation, "inheritance"), "unknown"))
+		if restriction := metadataString(relation, "object_type"); restriction != "" || metadataString(relation, "inherited_object_type") != "" {
+			fmt.Fprintf(&b, " | Object restriction: %s/%s", restriction, metadataString(relation, "inherited_object_type"))
+		}
+		fmt.Fprintf(&b, "\n  Source: %s#%s\n", metadataString(relation, "artifact"), metadataString(relation, "artifact_ref"))
+	}
+	return b.String()
 }
 
 func findingIndicator(finding storage.Finding) string {
@@ -634,6 +709,8 @@ func (m *model) evidenceViewRender(width int) string {
 func findingImpact(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
 	switch {
+	case typ == "ad_privileged_acl_evidence_inventory":
+		return "RustHound observed direct ACL relationships affecting high-value Active Directory objects. These are configured permission relationships, not verified effective access or exploitable attack paths."
 	case strings.Contains(typ, "asrep"):
 		return "The account may be exposed to offline AS-REP password guessing; collected material does not prove the password was cracked."
 	case strings.Contains(typ, "kerberoast"):
