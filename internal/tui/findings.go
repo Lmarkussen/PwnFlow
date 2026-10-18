@@ -51,7 +51,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"delegation": {{"delegation", "Delegation", "Delegation configurations and related observations"}},
 	"active_directory": {
 		{"protected_accounts", "Protected Accounts", "Observed adminCount and protected-group membership context"},
-		{"tier0_context", "Tier 0 Administrative Context", "Observed identity-control plane identities and relationships"},
+		{"tiering", "Administrative Tiering", "Conceptual Tier 0, Tier 1 and Tier 2 evidence scopes"},
 		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
 		{"domain_security_policy", "Domain Security Policy", "Domain-default password and machine-account policy observations"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
@@ -489,6 +489,9 @@ func (m *model) findingsViewRender() string {
 		return m.evidenceViewRender(width)
 	}
 	if m.findingCategoryView {
+		if m.findingTieringView {
+			return m.findingTieringOverview(width)
+		}
 		if m.findingSubcategoryView {
 			return m.findingSubcategoryOverview(width)
 		}
@@ -554,6 +557,39 @@ func (m *model) findingsViewRender() string {
 	}
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
 	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back    Q Quit"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) findingTieringOverview(width int) string {
+	count := 0
+	for _, finding := range m.findingAllRows {
+		if findingCategoryKey(finding) == "active_directory" && findingSubcategoryKey(finding) == "tier0_context" {
+			count++
+		}
+	}
+	rows := []struct {
+		name, description, status string
+		count                     int
+	}{
+		{"Tier 0 — Identity Control Plane", "Source-backed identity-control plane context", "INFORMATIONAL", count},
+		{"Tier 1 — Server Administration", "Future server-administration evidence scope", "NOT ASSESSED", 0},
+		{"Tier 2 — Workstation Administration", "Future workstation-administration evidence scope", "NOT ASSESSED", 0},
+	}
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // ADMINISTRATIVE TIERING") + "\n")
+	content.WriteString(dim.Render("Conceptual tier scopes; organization-specific policy is not inferred.") + "\n\n")
+	for index, row := range rows {
+		selected := index == m.findingCursor
+		label := selectionLabel(row.name, selected)
+		prefix := selectionPrefix(selected)
+		if width >= 80 {
+			content.WriteString(fmt.Sprintf("%s%-40s %10s %s\n", prefix, label, row.status, fmt.Sprintf("%d", row.count)))
+		} else {
+			content.WriteString(fmt.Sprintf("%s%s  %s\n", prefix, label, row.status))
+		}
+		content.WriteString("   " + dim.Render(wrapPaneText(row.description, max(20, width-7))) + "\n")
+	}
+	content.WriteString(dim.Render("\nEnter = Open Tier    Esc = Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

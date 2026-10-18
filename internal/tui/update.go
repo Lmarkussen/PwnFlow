@@ -358,6 +358,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.findingDetail = false
 			m.findingCategoryView = true
 			m.findingCategory = ""
+			m.findingTieringView = false
+			m.findingTieringParent = false
 			m.findingCursor = 0
 			m.findingsLoaded = false
 			m.refreshFindings()
@@ -519,6 +521,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.findingViewMode = "all"
 		m.findingCategoryView = true
 		m.findingCategory = ""
+		m.findingTieringView = false
+		m.findingTieringParent = false
 		m.findingCursor = 0
 		m.findingsLoaded = false
 		m.refreshFindings()
@@ -567,6 +571,39 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.evidenceTop = min(max(0, m.evidenceTop), maxTop)
 		return m, nil
 	}
+	if m.findingTieringView {
+		switch key {
+		case "esc":
+			m.findingTieringView = false
+			m.findingCursor = 0
+			m.findingSubcategoryView = true
+			m.findingSubcategory = ""
+			m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
+			m.restoreFindingSubcategorySelection()
+		case "up", "k":
+			m.findingCursor--
+		case "down", "j":
+			m.findingCursor++
+		case "home":
+			m.findingCursor = 0
+		case "end":
+			m.findingCursor = 2
+		case "enter":
+			if m.findingCursor == 0 {
+				m.findingTieringView = false
+				m.findingTieringParent = true
+				m.findingSubcategory = "tier0_context"
+				m.findingCategoryView = false
+				m.findingSubcategoryView = false
+				m.findingCursor, m.findingTop = 0, 0
+				m.refreshFindings()
+				m.restoreFindingRowSelection()
+				return m, m.beginFindingInlineEvidence()
+			}
+		}
+		m.findingCursor = min(max(0, m.findingCursor), 2)
+		return m, nil
+	}
 	if m.findingCategoryView && m.findingSubcategoryView {
 		switch key {
 		case "ctrl+w":
@@ -598,6 +635,13 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.findingSubcategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingSubcategories) {
 				selected := m.findingSubcategories[m.findingCursor]
+				if m.findingCategory == "active_directory" && selected.Key == "tiering" {
+					m.ensureFindingNavigationMemory()
+					m.findingSubcategorySelections[m.findingCategory] = selected.Key
+					m.findingTieringView = true
+					m.findingCursor = 0
+					return m, nil
+				}
 				m.ensureFindingNavigationMemory()
 				m.findingSubcategorySelections[m.findingCategory] = selected.Key
 				m.findingSubcategory = selected.Key
@@ -657,6 +701,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				selected := m.findingCategories[m.findingCursor]
 				m.findingCategorySelection = selected.Key
 				m.findingCategory = selected.Key
+				m.findingTieringView = false
+				m.findingTieringParent = false
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
 				m.findingSubcategoryView = true
 				m.findingCursor = 0
@@ -727,6 +773,15 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		if m.findingCategory != "" {
 			if m.findingSubcategory != "" {
 				m.rememberFindingRowSelection()
+				if m.findingTieringParent {
+					m.findingTieringParent = false
+					m.findingSubcategory = ""
+					m.findingCategoryView = true
+					m.findingSubcategoryView = true
+					m.findingTieringView = true
+					m.findingCursor = 0
+					return m, nil
+				}
 				m.findingSubcategory = ""
 				m.findingCategoryView = true
 				m.findingSubcategoryView = true

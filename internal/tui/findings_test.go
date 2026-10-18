@@ -1238,3 +1238,45 @@ func TestTier0FindingRendersIdentityControlContext(t *testing.T) {
 		t.Fatal("tier 0 overview made an unsupported boundary claim")
 	}
 }
+
+func TestAdministrativeTieringNavigationScopes(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{
+		FindingType: "ad_tier0_context_evidence", Title: "AD Tier 0 Administrative Context Evidence Overview", Severity: "informational",
+	}}}
+	m := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{{Key: "active_directory", Name: "Active Directory"}}, findingAllRows: rows, findingRows: rows, findingsLoaded: true, width: 120, height: 30}
+	m.handleFindingsKey("enter")
+	if !m.findingSubcategoryView || m.findingCategory != "active_directory" {
+		t.Fatalf("Active Directory did not open: category=%q subcategories=%t", m.findingCategory, m.findingSubcategoryView)
+	}
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "tiering" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("enter")
+	if !m.findingTieringView {
+		t.Fatal("Administrative Tiering did not open")
+	}
+	if !strings.Contains(m.findingTieringOverview(120), "Tier 1 — Server Administration") || !strings.Contains(m.findingTieringOverview(120), "NOT ASSESSED") {
+		t.Fatal("unassessed tier scopes were not rendered")
+	}
+	m.findingCursor = 0
+	m.handleFindingsKey("enter")
+	if m.findingTieringView || m.findingSubcategory != "tier0_context" || m.findingCategoryView {
+		t.Fatalf("Tier 0 did not open its findings: tiering=%t subcategory=%q categoryView=%t", m.findingTieringView, m.findingSubcategory, m.findingCategoryView)
+	}
+	if len(m.findingRows) != 1 {
+		t.Fatalf("Tier 0 rows=%d, want 1", len(m.findingRows))
+	}
+	m.handleFindingsKey("esc")
+	if m.findingDetail {
+		m.handleFindingsKey("esc")
+	}
+	if !m.findingTieringView || !m.findingSubcategoryView || m.findingSubcategory != "" {
+		t.Fatalf("Esc did not restore Administrative Tiering: tiering=%t subcategoryView=%t key=%q", m.findingTieringView, m.findingSubcategoryView, m.findingSubcategory)
+	}
+	m.handleFindingsKey("esc")
+	if m.findingTieringView || !m.findingSubcategoryView || m.findingCategory != "active_directory" {
+		t.Fatalf("Esc did not return to Active Directory subcategories")
+	}
+}
