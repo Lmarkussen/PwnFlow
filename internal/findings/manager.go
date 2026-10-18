@@ -351,12 +351,14 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 			if analysisErr != nil {
 				return nil, analysisErr
 			}
-			var gpoArtifact, gpoReportPath string
+			var gpoReportPath string
 			if gpoInput != nil {
-				gpoArtifact, writeErr = WriteGPOPrivilegeArtifacts(resultsRoot, gpoReport)
+				_, writeErr = WriteGPOPrivilegeArtifacts(resultsRoot, gpoReport)
 				if writeErr != nil {
 					return nil, writeErr
 				}
+				gpoInput.ArtifactPath = gpoReportPath
+				gpoInput.ArtifactRef = "/"
 				gpoReportPath, writeErr = WriteGPOPrivilegeReport(resultsRoot, gpoReport)
 				if writeErr != nil {
 					return nil, writeErr
@@ -370,11 +372,6 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 				case "ad_replication_rights_evidence_overview":
 					if replicationArtifact != "" {
 						inventoryInputs[index].ArtifactPath = replicationArtifact
-						inventoryInputs[index].ArtifactRef = "/"
-					}
-				case "ad_gpo_privilege_relationship_evidence":
-					if gpoArtifact != "" {
-						inventoryInputs[index].ArtifactPath = gpoReportPath
 						inventoryInputs[index].ArtifactRef = "/"
 					}
 				}
