@@ -1351,3 +1351,20 @@ func TestAdministrativeTieringRoutesTierOneAndTwo(t *testing.T) {
 		}
 	}
 }
+
+func TestTierContextFindingRendersObservedIdentitiesAndLimits(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_tier1_context_evidence", SourceExecution: 82, Severity: "informational",
+		EvidenceJSON: `{"tier":1,"policy_id":"lab-tier-policy","declared_groups":[{"id":"S-1-5-21-1-2-3-1152","name":"PF-T1-Admins"}],"membership_paths":[{"path":["PF-T1-Admin","PF-T1-Admins"],"classification":"direct"}],"targets":[{"declared":{"name":"MSSQL.SCCM.LAB","ip":"10.1.10.42"},"status":"unresolved"}]}`,
+	}}
+
+	detail := findingCondition(finding)
+	for _, want := range []string{"PF-T1-Admins", "PF-T1-Admin", "MSSQL.SCCM.LAB", "NOT VERIFIED", "Cross-tier policy violation: NOT ESTABLISHED"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("tier detail missing %q: %s", want, detail)
+		}
+	}
+	if !strings.Contains(specificFindingImpact(finding), "host-local administrator") {
+		t.Fatal("tier impact used generic or privileged wording")
+	}
+}
