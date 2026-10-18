@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -373,13 +374,17 @@ func groupVisibleFindings(rows []storage.Finding) []storage.Finding {
 	acl := make([]storage.Finding, 0)
 	other := make([]storage.Finding, 0)
 	for _, finding := range rows {
-		if strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_acl_") {
+		if strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_acl_") && !isGeneralACLInventory(finding) {
 			acl = append(acl, finding)
 		} else {
 			other = append(other, finding)
 		}
 	}
 	return append(groupACLFindings(acl), other...)
+}
+
+func isGeneralACLInventory(finding storage.Finding) bool {
+	return strings.EqualFold(finding.FindingType, "ad_acl_evidence_inventory")
 }
 
 func groupACLFindings(rows []storage.Finding) []storage.Finding {
@@ -557,6 +562,9 @@ func findingDetailHeader(finding storage.Finding, width int) string {
 
 func findingCondition(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
+	if isGeneralACLInventory(finding) {
+		return formatGeneralACLInventoryOverview(finding)
+	}
 	if typ == "ad_privileged_acl_evidence_inventory" {
 		return formatACLInventoryOverview(finding)
 	}
@@ -599,7 +607,9 @@ func findingAttributes(finding storage.Finding, width int) string {
 			lines = append(lines, fmt.Sprintf("  %-12s %s", label, value))
 		}
 	}
-	if target := metadataString(metadata, "target"); target != "" {
+	if isGeneralACLInventory(finding) {
+		add("SCOPE", fallbackText(finding.AffectedObject, finding.AffectedObjectID))
+	} else if target := metadataString(metadata, "target"); target != "" {
 		if port := metadataString(metadata, "port"); port != "" {
 			target += ":" + port
 		}
@@ -678,6 +688,10 @@ func findingEvidenceSummary(finding storage.Finding) string {
 			}
 		}
 		return fmt.Sprintf("%s — Execution %d\nSource artifacts: %s\nFull report: %s\nStructured inventory: %s", finding.SourceTool, finding.SourceExecution, aclEvidenceNames(metadata), fallbackText(metadataString(metadata, "human_report"), "AD_PRIVILEGED_ACL_EVIDENCE.txt"), fallbackText(structured, "execution-associated ACL inventory JSON"))
+	}
+	if isGeneralACLInventory(finding) {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured inventory: %s", fallbackText(finding.SourceTool, "RustHound-CE"), finding.SourceExecution, fallbackText(shortEvidencePath(metadataString(metadata, "human_report")), shortEvidencePath(finding.ArtifactPath)), fallbackText(shortEvidencePath(metadataString(metadata, "structured_artifact")), "execution-associated ACL inventory JSON"))
 	}
 	if strings.EqualFold(finding.FindingType, "gpo_evidence_inventory") {
 		metadata := findingMetadata(finding)
@@ -958,6 +972,42 @@ func formatACLInventoryOverview(finding storage.Finding) string {
 		fmt.Fprintf(&b, "  Interpretation: Observed membership paths connect the listed principals to the group named in this ACL.\n  Effective permission: NOT VERIFIED\n")
 	}
 	return b.String()
+}
+
+func formatGeneralACLInventoryOverview(finding storage.Finding) string {
+	metadata := findingMetadata(finding)
+	var b strings.Builder
+	fmt.Fprintf(&b, "RustHound execution %d recorded an aggregate Active Directory ACL evidence inventory.\n\nSUMMARY\nObserved ACL records: %s\nRetained records: %s\nExplicit ACEs: %s\nInherited ACEs: %s\nUnknown decisions: %s\n", finding.SourceExecution, metadataCount(metadata, "source_supported_ace_count"), metadataCount(metadata, "retained_ace_count"), metadataCount(metadata, "explicit_count"), metadataCount(metadata, "inherited_count"), metadataCount(metadata, "unknown_decision_count"))
+	b.WriteString("\nINTERPRETATION\nThe inventory preserves observed Active Directory ACL relationships. These records do not independently establish effective authorization, misconfiguration or exploitable attack paths.\n")
+	if examples, ok := metadata["examples"].([]any); ok && len(examples) > 0 {
+		b.WriteString("\nREPRESENTATIVE OBSERVED RELATIONSHIPS\n")
+		for index, raw := range examples {
+			if index >= 12 {
+				break
+			}
+			record, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			principal := fallbackText(metadataString(record, "principal_name"), metadataString(record, "principal_id"))
+			target := fallbackText(metadataString(record, "target_name"), metadataString(record, "target_id"))
+			permission := fallbackText(metadataString(record, "permission"), "UNKNOWN")
+			fmt.Fprintf(&b, "  %s → %s → %s\n", principal, permission, target)
+		}
+		if retained, ok := metadata["retained_ace_count"].(float64); ok && int(retained) > len(examples) {
+			fmt.Fprintf(&b, "  Additional retained relationships are available in the full report (%d more).\n", int(retained)-len(examples))
+		}
+	} else {
+		b.WriteString("\nNo representative relationships were retained in the bounded preview.\n")
+	}
+	return b.String()
+}
+
+func metadataCount(metadata map[string]any, key string) string {
+	if _, ok := metadata[key]; !ok {
+		return "UNKNOWN"
+	}
+	return strconv.Itoa(metadataInt(metadata, key))
 }
 
 func formatMembershipContextPath(context map[string]any) string {
@@ -1459,6 +1509,8 @@ func findingImpact(finding storage.Finding) string {
 		return impact
 	}
 	switch {
+	case isGeneralACLInventory(finding):
+		return "RustHound collected Active Directory ACL relationships describing configured permissions between principals and directory objects. These relationships provide evidence for administrative review but do not, by themselves, establish effective access, misconfiguration or exploitability."
 	case typ == "ad_privileged_acl_evidence_inventory":
 		return "RustHound observed direct ACL relationships affecting high-value Active Directory objects. These are configured permission relationships, not verified effective access or exploitable attack paths."
 	case strings.Contains(typ, "asrep"):
@@ -1482,6 +1534,8 @@ func findingRemediation(finding storage.Finding) string {
 		return remediation
 	}
 	switch {
+	case isGeneralACLInventory(finding):
+		return "Review the collected ACL relationships in the full evidence report, prioritize sensitive objects and unexpected principals, and validate effective permissions and operational requirements before making any access-control changes."
 	case strings.Contains(typ, "asrep"):
 		return "Enable Kerberos preauthentication where appropriate, use a strong managed secret, and review the account's purpose."
 	case strings.Contains(typ, "kerberoast"):

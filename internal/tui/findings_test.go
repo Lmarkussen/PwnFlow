@@ -341,6 +341,59 @@ func TestGlobalVisibleFindingsGroupsACLRecordsOnly(t *testing.T) {
 	}
 }
 
+func TestGeneralACLInventoryIsNotRenderedAsRelationship(t *testing.T) {
+	row := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_acl_evidence_inventory", Title: "AD ACL Evidence Inventory", Severity: "informational",
+		SourceTool: "RustHound-CE", SourceExecution: 12, AffectedObject: "SCCM.LAB", AffectedObjectID: "S-1-5-21-domain",
+		EvidenceJSON: `{"source_supported_ace_count":1400,"retained_ace_count":1390,"explicit_count":735,"inherited_count":649,"unknown_decision_count":1390,"human_report":"Enumeration/ActiveDirectory/ACL/execution-12/AD_ACL_EVIDENCE.txt","structured_artifact":"Enumeration/ActiveDirectory/ACL/execution-12/AD_acl_evidence_inventory.json","examples":[{"principal_name":"alice@SCCM.LAB","permission":"WriteDacl","target_name":"Helpdesk OU"}]}`,
+	}}
+	grouped := groupVisibleFindings([]storage.Finding{row})
+	if len(grouped) != 1 || grouped[0].FindingType != "ad_acl_evidence_inventory" {
+		t.Fatalf("general inventory was grouped as a relationship: %#v", grouped)
+	}
+	if grouped[0].Title != "AD ACL Evidence Inventory" {
+		t.Fatalf("general inventory title changed: %q", grouped[0].Title)
+	}
+	condition := findingCondition(grouped[0])
+	for _, expected := range []string{"Observed ACL records: 1400", "Explicit ACEs: 735", "Inherited ACEs: 649", "Unknown decisions: 1390", "alice@SCCM.LAB → WriteDacl → Helpdesk OU"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("aggregate presentation omitted %q: %s", expected, condition)
+		}
+	}
+	if strings.Contains(condition, "(UNSPECIFIED)") || strings.Contains(condition, "EVIDENCE_INVENTORY") {
+		t.Fatalf("aggregate presentation contains pseudo relationship data: %s", condition)
+	}
+	if got := findingImpact(grouped[0]); !strings.Contains(got, "configured permissions between principals") {
+		t.Fatalf("unexpected aggregate impact: %s", got)
+	}
+	if got := findingRemediation(grouped[0]); strings.Contains(got, "named principal") || !strings.Contains(got, "full evidence report") {
+		t.Fatalf("unexpected aggregate remediation: %s", got)
+	}
+	evidence := findingEvidenceSummary(grouped[0])
+	if !strings.Contains(evidence, "AD_ACL_EVIDENCE.txt") || !strings.Contains(evidence, "AD_acl_evidence_inventory.json") || strings.Contains(evidence, "/ ") {
+		t.Fatalf("aggregate evidence path is not concise: %s", evidence)
+	}
+}
+
+func TestGeneralACLInventoryEvidenceUsesHumanReport(t *testing.T) {
+	root := t.TempDir()
+	report := filepath.Join(root, "results", "Enumeration", "ActiveDirectory", "ACL", "execution-12", "AD_ACL_EVIDENCE.txt")
+	if err := os.MkdirAll(filepath.Dir(report), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(report, []byte("aggregate ACL evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{cfg: config.Config{Root: root}}
+	m.openFindingEvidence(storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_acl_evidence_inventory", ArtifactPath: report,
+		EvidenceJSON: `{"human_report":"Enumeration/ActiveDirectory/ACL/execution-12/AD_ACL_EVIDENCE.txt"}`,
+	}})
+	if m.evidenceError != "" || len(m.evidenceLines) != 1 || m.evidenceLines[0] != "aggregate ACL evidence" {
+		t.Fatalf("general inventory did not open its report: path=%s error=%s lines=%v", m.evidencePath, m.evidenceError, m.evidenceLines)
+	}
+}
+
 func TestRawACLsRouteToEvidenceInventory(t *testing.T) {
 	rows := []storage.Finding{{FindingInput: storage.FindingInput{
 		FindingType: "ad_acl_genericall", Title: "Direct ACL GenericAll", Severity: "informational", SourceTool: "RustHound-CE",

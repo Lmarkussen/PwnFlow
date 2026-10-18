@@ -391,7 +391,7 @@ func readEvidenceLines(path string) ([]string, error) {
 func (m *model) openFindingEvidence(finding storage.Finding) {
 	m.evidenceView, m.evidenceTop = true, 0
 	evidenceReference := finding.ArtifactPath
-	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
+	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") || strings.EqualFold(finding.FindingType, "ad_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		if report := metadataString(metadata, "human_report"); report != "" {
 			evidenceReference = report
