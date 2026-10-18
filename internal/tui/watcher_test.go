@@ -88,3 +88,54 @@ func TestWrapWatcherOutputPreservesMultipleLines(t *testing.T) {
 		t.Fatalf("multiple lines changed: %q", wrapped)
 	}
 }
+
+func TestWatcherPendingPlanShowsOnlyPlannedModules(t *testing.T) {
+	all := make([]modules.Module, 8)
+	for index := range all {
+		all[index] = viewTestModule{}
+	}
+	m := newModel(context.Background(), config.Config{}, nil, all, make([]int64, len(all)), 1, "test")
+	m.modules = all
+	m.moduleKeys = make([]int, len(all))
+	for index := range m.moduleKeys {
+		m.moduleKeys[index] = index
+	}
+	m.pendingIndices = []int{1, 5, 7}
+
+	states := m.watcherStates()
+	if len(states) != len(m.pendingIndices) {
+		t.Fatalf("pending watcher has %d rows, want %d: %#v", len(states), len(m.pendingIndices), states)
+	}
+	for position, state := range states {
+		if state.Index != m.pendingIndices[position] {
+			t.Fatalf("pending row %d has index %d, want %d", position, state.Index, m.pendingIndices[position])
+		}
+		if state.Status != "queued" {
+			t.Fatalf("pending row %d has status %q, want queued", position, state.Status)
+		}
+	}
+}
+
+func TestWatcherDoesNotTreatVisibleFamilyAsQueuedBatch(t *testing.T) {
+	all := make([]modules.Module, 8)
+	for index := range all {
+		all[index] = viewTestModule{}
+	}
+	m := newModel(context.Background(), config.Config{}, nil, all, make([]int64, len(all)), 1, "test")
+	m.modules = all
+	m.moduleKeys = make([]int, len(all))
+	for index := range m.moduleKeys {
+		m.moduleKeys[index] = index
+	}
+	if states := m.watcherStates(); len(states) != 0 {
+		t.Fatalf("idle watcher exposed visible family as queued work: %#v", states)
+	}
+}
+
+func TestWatcherNonRunningMessageIsActionScoped(t *testing.T) {
+	m := &model{status: "Module is not running", width: 100}
+	message := ansi.Strip(m.watcherStatusLine())
+	if !strings.Contains(message, "Selected action: Module is not running") {
+		t.Fatalf("watcher status was not scoped to selected action: %q", message)
+	}
+}

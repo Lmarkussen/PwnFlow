@@ -51,9 +51,22 @@ func (m *model) watcherStates() []runner.BatchState {
 		states, _, _, _ := m.batch.Snapshot()
 		return states
 	}
-	states := make([]runner.BatchState, len(m.modules))
-	for index, module := range m.modules {
-		states[index] = runner.BatchState{Index: m.moduleKeys[index], Module: module, Status: "queued"}
+	indices := m.pendingIndices
+	if len(indices) == 0 {
+		indices = m.pending.indices
+	}
+	if len(indices) == 0 {
+		if len(m.modules) == 1 && len(m.moduleKeys) == 1 {
+			return []runner.BatchState{{Index: m.moduleKeys[0], Module: m.modules[0], Status: "queued"}}
+		}
+		return nil
+	}
+	states := make([]runner.BatchState, 0, len(indices))
+	for _, index := range indices {
+		if index < 0 || index >= len(m.allModules) || index >= len(m.allModuleIDs) {
+			continue
+		}
+		states = append(states, runner.BatchState{Index: index, Module: m.allModules[index], Status: "queued"})
 	}
 	return states
 }
@@ -253,10 +266,14 @@ func (m *model) watcherStatusLine() string {
 	if m.status == "" {
 		return "\n"
 	}
-	if m.watcherAbortConfirm {
-		return wrapPaneStyle(warn, m.status, max(1, m.width-6)) + "\n"
+	status := m.status
+	if status == "Module is not running" {
+		status = "Selected action: " + status
 	}
-	return wrapPaneStyle(dim, m.status, max(1, m.width-6)) + "\n"
+	if m.watcherAbortConfirm {
+		return wrapPaneStyle(warn, status, max(1, m.width-6)) + "\n"
+	}
+	return wrapPaneStyle(dim, status, max(1, m.width-6)) + "\n"
 }
 
 // watcherFooter advertises the watcher's keys, including the abort binding, and
