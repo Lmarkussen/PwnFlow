@@ -264,7 +264,7 @@ func AnalyzeProtectedAccounts(ctx context.Context, inputPath string, assessmentI
 	if err != nil {
 		return result, nil, err
 	}
-	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_snapshot": result.SourceSnapshot, "structured_artifact": jsonPath, "human_report": "AD_PROTECTED_ACCOUNTS_EVIDENCE.txt", "admincount_users": countAdmin(result.Users), "admincount_groups": countAdmin(result.Groups), "membership_paths": len(result.MembershipPaths), "omitted_membership_paths": result.OmittedPaths, "admin_sdholder": result.AdminSDHolder, "coverage": result.Coverage, "limitations": result.Limitations, "effective_protection": "NOT VERIFIED"})
+	evidence, _ := json.Marshal(map[string]any{"source_execution_id": executionID, "source_snapshot": result.SourceSnapshot, "structured_artifact": jsonPath, "human_report": "AD_PROTECTED_ACCOUNTS_EVIDENCE.txt", "admincount_users": countAdmin(result.Users), "admincount_groups": countAdmin(result.Groups), "admincount_user_examples": protectedObjectPreview(result.Users, 12), "admincount_group_examples": protectedObjectPreview(result.Groups, 12), "membership_paths": len(result.MembershipPaths), "membership_examples": protectedPathPreview(result.MembershipPaths, 16), "attribute_membership_differences": protectedDifferences(result, 16), "omitted_membership_paths": result.OmittedPaths, "admin_sdholder": result.AdminSDHolder, "coverage": result.Coverage, "limitations": result.Limitations, "effective_protection": "NOT VERIFIED"})
 	h := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%d\x00%s", assessmentID, executionID, inputPath)))
 	input := &storage.FindingInput{FindingKey: "adprotected:" + hex.EncodeToString(h[:]), AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "ad_protected_accounts_admincount_evidence", Title: "AD Protected Accounts & adminCount Evidence Overview", Description: fmt.Sprintf("RustHound execution %d contains observed adminCount attributes, protected-group membership context and AdminSDHolder evidence. Effective protection and SDProp application were not verified.", executionID), Severity: "informational", Confidence: "observed-partial-protected-account-evidence", AffectedObjectID: result.Domain, AffectedObject: "Protected accounts and AdminSDHolder evidence", EvidenceJSON: string(evidence), ArtifactPath: reportPath, ArtifactRef: "/", ObservedAt: now.UTC(), Status: "open", ParserVersion: protectedAccountsParserVersion}
 	return result, input, nil
@@ -428,6 +428,40 @@ func countAdmin(v []ProtectedAccountObject) int {
 	}
 	return n
 }
+
+func protectedObjectPreview(values []ProtectedAccountObject, limit int) []ProtectedAccountObject {
+	preview := make([]ProtectedAccountObject, 0, limit)
+	for _, value := range values {
+		if value.AdminCount != "true" {
+			continue
+		}
+		preview = append(preview, value)
+		if len(preview) >= limit {
+			break
+		}
+	}
+	return preview
+}
+
+func protectedPathPreview(values []ProtectedMembershipPath, limit int) []ProtectedMembershipPath {
+	if len(values) > limit {
+		return append([]ProtectedMembershipPath(nil), values[:limit]...)
+	}
+	return append([]ProtectedMembershipPath(nil), values...)
+}
+
+func protectedDifferences(report ProtectedAccountsReport, limit int) []ProtectedAccountObject {
+	differences := make([]ProtectedAccountObject, 0, limit)
+	for _, value := range append(append([]ProtectedAccountObject{}, report.Users...), report.Groups...) {
+		if value.AdminCount == "true" && value.Membership == "not_observed" || value.AdminCount == "false" && value.Membership == "observed" || value.AdminCount == "unknown" {
+			differences = append(differences, value)
+			if len(differences) >= limit {
+				break
+			}
+		}
+	}
+	return differences
+}
 func uniqueProtectedStrings(v []string) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -456,13 +490,31 @@ func WriteProtectedAccountsArtifacts(resultsRoot string, report ProtectedAccount
 	var b strings.Builder
 	fmt.Fprintf(&b, "AD PROTECTED ACCOUNTS & ADMINCOUNT EVIDENCE\n\nSource execution: %d\nSource snapshot: %s\nStatus: %s\nCoverage: %s\n\n", report.SourceExecutionID, report.SourceSnapshot, report.Status, report.Coverage)
 	fmt.Fprintf(&b, "Users: %d (adminCount=true: %d)\nGroups: %d (adminCount=true: %d)\nMembership paths retained: %d\nMembership paths omitted: %d\n\n", len(report.Users), countAdmin(report.Users), len(report.Groups), countAdmin(report.Groups), len(report.MembershipPaths), report.OmittedPaths)
-	b.WriteString("ADMINCOUNT / MEMBERSHIP CONTEXT\n")
-	for _, o := range append(append([]ProtectedAccountObject{}, report.Users...), report.Groups...) {
-		fmt.Fprintf(&b, "%s [%s] adminCount=%s membership=%s\n", o.Name, o.ID, o.AdminCount, o.Membership)
+	b.WriteString("ADMINCOUNT=TRUE USERS\n")
+	for _, o := range report.Users {
+		if o.AdminCount == "true" {
+			fmt.Fprintf(&b, "%s [%s]\n", o.Name, o.ID)
+		}
 	}
-	b.WriteString("\nMEMBERSHIP PATHS\n")
+	b.WriteString("\nADMINCOUNT=TRUE GROUPS\n")
+	for _, o := range report.Groups {
+		if o.AdminCount == "true" {
+			fmt.Fprintf(&b, "%s [%s]\n", o.Name, o.ID)
+		}
+	}
+	b.WriteString("\nOBSERVED PROTECTED-GROUP MEMBERSHIP PATHS\n")
 	for _, p := range report.MembershipPaths {
-		fmt.Fprintf(&b, "%s [%s] -> %s [%s] (%s)\n", p.MemberName, p.MemberID, p.GroupName, p.GroupID, p.Classification)
+		fmt.Fprintf(&b, "%s (%s)\n", strings.Join(p.Path, " -> "), p.Classification)
+	}
+	b.WriteString("\nATTRIBUTE / MEMBERSHIP DIFFERENCES\n")
+	for _, o := range protectedDifferences(report, len(report.Users)+len(report.Groups)) {
+		fmt.Fprintf(&b, "%s [%s] adminCount=%s membership=%s (not a protection conclusion)\n", o.Name, o.ID, o.AdminCount, o.Membership)
+	}
+	b.WriteString("\nREMAINING USER/GROUP INVENTORY\n")
+	for _, o := range append(append([]ProtectedAccountObject{}, report.Users...), report.Groups...) {
+		if o.AdminCount != "true" {
+			fmt.Fprintf(&b, "%s [%s] type=%s adminCount=%s membership=%s\n", o.Name, o.ID, o.Type, o.AdminCount, o.Membership)
+		}
 	}
 	b.WriteString("\nADMINSDHOLDER\n")
 	if report.AdminSDHolder != nil {
@@ -472,6 +524,10 @@ func WriteProtectedAccountsArtifacts(resultsRoot string, report ProtectedAccount
 		}
 	} else {
 		b.WriteString("AdminSDHolder object: NOT OBSERVED\n")
+	}
+	b.WriteString("\nSOURCE REFERENCES\n")
+	for _, source := range report.SourceArtifacts {
+		fmt.Fprintf(&b, "%s\n", source)
 	}
 	b.WriteString("\nLIMITATIONS\n")
 	for _, l := range report.Limitations {

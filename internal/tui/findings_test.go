@@ -1173,3 +1173,25 @@ func TestFindingsRowsKeepAffectedObjectColumnStableAcrossSelection(t *testing.T)
 		}
 	}
 }
+
+func TestProtectedAccountsFindingShowsIdentitiesAndLimitations(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType:     "ad_protected_accounts_admincount_evidence",
+		SourceTool:      "RustHound-CE",
+		SourceExecution: 42,
+		Severity:        "informational",
+		EvidenceJSON:    `{"admincount_users":7,"admincount_groups":10,"admincount_user_examples":[{"name":"alice"}],"admincount_group_examples":[{"name":"Domain Admins"}],"membership_paths":7,"membership_examples":[{"path":["alice","Domain Admins"],"classification":"direct"}],"attribute_membership_differences":[{"name":"krbtgt","admin_count":"true","membership":"not_observed"}],"admin_sdholder":{"distinguished_name":"CN=ADMINSDHOLDER,CN=SYSTEM,DC=SCCM,DC=LAB","aces":[{"principal":"Domain Admins","rights":"WriteDacl"}]}}`,
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"alice", "Domain Admins", "alice → Domain Admins", "krbtgt", "CN=ADMINSDHOLDER", "WriteDacl", "NOT VERIFIED"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("protected-account condition missing %q: %s", expected, condition)
+		}
+	}
+	if strings.Contains(findingImpact(finding), "security-relevant condition requiring operator review") {
+		t.Fatal("protected-account impact retained generic wording")
+	}
+	if strings.Contains(findingRemediation(finding), "named principal") {
+		t.Fatal("protected-account remediation treated aggregate evidence as one principal")
+	}
+}

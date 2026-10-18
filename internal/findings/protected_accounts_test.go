@@ -70,6 +70,20 @@ func TestAnalyzeProtectedAccountsCorrelatesSameSnapshot(t *testing.T) {
 	if _, err := os.Stat(finding.ArtifactPath); err != nil {
 		t.Fatalf("report was not written: %v", err)
 	}
+	reportText, err := os.ReadFile(finding.ArtifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range []string{"ADMINCOUNT=TRUE USERS", "ADMINCOUNT=TRUE GROUPS", "OBSERVED PROTECTED-GROUP MEMBERSHIP PATHS", "ATTRIBUTE / MEMBERSHIP DIFFERENCES", "ADMINSDHOLDER", "REMAINING USER/GROUP INVENTORY", "LIMITATIONS"} {
+		if !strings.Contains(string(reportText), section) {
+			t.Fatalf("report missing section %q", section)
+		}
+	}
+	for _, name := range []string{"Alice", "Domain Admins", "ADMINSDHOLDER"} {
+		if !strings.Contains(string(finding.EvidenceJSON), name) {
+			t.Fatalf("finding preview missing source-backed identity %q", name)
+		}
+	}
 }
 
 func writeRustHoundFixture(t *testing.T, path, kind string, data []map[string]any) {

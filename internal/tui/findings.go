@@ -1116,7 +1116,7 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 }
 
 func formatProtectedAccountsCondition(metadata map[string]any, finding storage.Finding) string {
-	lines := []string{"Observed adminCount and protected-group context:"}
+	lines := []string{"ADMINCOUNT OBSERVATIONS"}
 	if execution := finding.SourceExecution; execution > 0 {
 		lines = append(lines, fmt.Sprintf("RustHound execution: %d", execution))
 	}
@@ -1129,11 +1129,89 @@ func formatProtectedAccountsCondition(metadata map[string]any, finding storage.F
 	if value := metadataInt(metadata, "membership_paths"); value >= 0 {
 		lines = append(lines, fmt.Sprintf("Observed membership paths retained: %d", value))
 	}
+	appendProtectedPreview(&lines, "Users with adminCount=true", metadata["admincount_user_examples"])
+	appendProtectedPreview(&lines, "Groups with adminCount=true", metadata["admincount_group_examples"])
+	if paths, ok := metadata["membership_examples"].([]any); ok && len(paths) > 0 {
+		lines = append(lines, "PROTECTED-GROUP MEMBERSHIP")
+		for index, raw := range paths {
+			if index >= 8 {
+				lines = append(lines, "  Additional paths are available through E.")
+				break
+			}
+			path, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			values, _ := path["path"].([]any)
+			names := make([]string, 0, len(values))
+			for _, value := range values {
+				if name, ok := value.(string); ok {
+					names = append(names, name)
+				}
+			}
+			classification := fallbackText(stringValue(path["classification"]), "observed")
+			if len(names) > 0 {
+				lines = append(lines, fmt.Sprintf("  %s (%s)", strings.Join(names, " → "), classification))
+			}
+		}
+	}
+	if differences, ok := metadata["attribute_membership_differences"].([]any); ok && len(differences) > 0 {
+		lines = append(lines, "ATTRIBUTE / MEMBERSHIP DIFFERENCES")
+		for index, raw := range differences {
+			if index >= 6 {
+				lines = append(lines, "  Additional differences are available through E.")
+				break
+			}
+			object, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("  %s — adminCount=%s; membership=%s (not a protection conclusion)", fallbackText(stringValue(object["name"]), stringValue(object["id"])), fallbackText(stringValue(object["admin_count"]), "unknown"), fallbackText(stringValue(object["membership"]), "unknown")))
+		}
+	}
+	if holder, ok := metadata["admin_sdholder"].(map[string]any); ok {
+		lines = append(lines, "ADMINSDHOLDER")
+		lines = append(lines, "  Object: "+fallbackText(stringValue(holder["distinguished_name"]), fallbackText(stringValue(holder["name"]), stringValue(holder["id"]))))
+		if aces, ok := holder["aces"].([]any); ok {
+			lines = append(lines, fmt.Sprintf("  Observed ACEs: %d", len(aces)))
+			for index, raw := range aces {
+				if index >= 3 {
+					lines = append(lines, "  Additional ACEs are available through E.")
+					break
+				}
+				ace, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				lines = append(lines, fmt.Sprintf("    %s → %s", fallbackText(stringValue(ace["principal"]), stringValue(ace["principal_id"])), fallbackText(stringValue(ace["rights"]), "right unavailable")))
+			}
+		}
+		lines = append(lines, "  Complete security descriptor: NOT VERIFIED", "  SDProp application: NOT VERIFIED")
+	}
 	if value := metadataInt(metadata, "omitted_membership_paths"); value > 0 {
 		lines = append(lines, fmt.Sprintf("Membership paths omitted by bounds: %d", value))
 	}
 	lines = append(lines, "Effective protection: NOT VERIFIED", "AdminSDHolder descriptor completeness and SDProp application: NOT VERIFIED")
 	return strings.Join(lines, "\n")
+}
+
+func appendProtectedPreview(lines *[]string, heading string, value any) {
+	objects, ok := value.([]any)
+	if !ok || len(objects) == 0 {
+		return
+	}
+	*lines = append(*lines, heading)
+	for index, raw := range objects {
+		if index >= 8 {
+			*lines = append(*lines, "  Additional entries are available through E.")
+			break
+		}
+		object, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		*lines = append(*lines, "  "+fallbackText(stringValue(object["name"]), stringValue(object["id"])))
+	}
 }
 
 func formatGPOPrivilegeCondition(metadata map[string]any, finding storage.Finding) string {
@@ -1203,6 +1281,8 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "RustHound recorded ACL relationships corresponding to Active Directory replication-related rights on the identified domain object. These observations identify principals and permissions that warrant authorization review, but do not establish effective replication access or DCSync capability."
 	case typ == "ad_gpo_privilege_relationship_evidence":
 		return "RustHound observed supported ACL relationships for the identified GPOs, while separately collected policy metadata supplied configured-link context. The GUID correlation is evidence context only; effective GPO authorization, SYSVOL access and policy application were not verified."
+	case typ == "ad_protected_accounts_admincount_evidence":
+		return "The collected adminCount attributes and protected-group membership relationships identify accounts and groups that warrant administrative protection review. Differences may reflect historical membership or incomplete collection, but do not establish current SDProp protection or misconfiguration."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
