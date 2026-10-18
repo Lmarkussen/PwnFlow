@@ -1280,3 +1280,60 @@ func TestAdministrativeTieringNavigationScopes(t *testing.T) {
 		t.Fatalf("Esc did not return to Active Directory subcategories")
 	}
 }
+
+func TestAdministrativeTieringParentAggregatesDescendants(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Severity: "informational"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Severity: "informational"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Severity: "informational"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_tier1_context_evidence", Severity: "informational"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_tier2_context_evidence", Severity: "medium"}},
+		{FindingInput: storage.FindingInput{FindingType: "ad_gpo_privilege_relationship_evidence", Severity: "informational"}},
+	}
+	subcategories := buildFindingSubcategories("active_directory", rows)
+	var tiering, groupPolicy findingSubcategory
+	for _, subcategory := range subcategories {
+		switch subcategory.Key {
+		case "tiering":
+			tiering = subcategory
+		case "gpo":
+			groupPolicy = subcategory
+		}
+	}
+	if got := tiering.Findings + tiering.Observations; got != 5 {
+		t.Fatalf("tiering count=%d, want 5 descendant findings", got)
+	}
+	if got := groupPolicy.Findings + groupPolicy.Observations; got != 1 {
+		t.Fatalf("unrelated Group Policy count=%d, want 1", got)
+	}
+	model := &model{findingAllRows: rows, findingSubcategories: subcategories, width: 120, height: 30}
+	parentView := model.findingSubcategoryOverview(120)
+	if !strings.Contains(parentView, "Administrative Tiering") || !strings.Contains(parentView, "         5") {
+		t.Fatalf("parent view did not render aggregated tiering count: %s", parentView)
+	}
+	categories := buildFindingCategories(rows)
+	for _, category := range categories {
+		if category.Key == "active_directory" && category.Findings+category.Observations != len(rows) {
+			t.Fatalf("Active Directory count=%d, want %d without double-counting", category.Findings+category.Observations, len(rows))
+		}
+	}
+}
+
+func TestAdministrativeTieringParentEmptyAndFutureScopes(t *testing.T) {
+	for _, rows := range [][]storage.Finding{
+		{},
+		{{FindingInput: storage.FindingInput{FindingType: "ad_tier1_context_evidence", Severity: "informational"}}},
+		{{FindingInput: storage.FindingInput{FindingType: "ad_tier2_context_evidence", Severity: "informational"}}},
+	} {
+		subcategories := buildFindingSubcategories("active_directory", rows)
+		for _, subcategory := range subcategories {
+			if subcategory.Key == "tiering" {
+				want := len(rows)
+				if got := subcategory.Findings + subcategory.Observations; got != want {
+					t.Fatalf("tiering count=%d, want %d for future scope rows", got, want)
+				}
+				break
+			}
+		}
+	}
+}

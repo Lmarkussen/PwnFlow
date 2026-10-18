@@ -96,6 +96,8 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_tier0_"):
 		return "active_directory"
+	case strings.HasPrefix(typ, "ad_tier1_"), strings.HasPrefix(typ, "ad_tier2_"):
+		return "active_directory"
 	case strings.HasPrefix(typ, "ad_gpo_privilege_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_user_description_"):
@@ -140,6 +142,10 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "protected_accounts"
 	case strings.HasPrefix(typ, "ad_tier0_"):
 		return "tier0_context"
+	case strings.HasPrefix(typ, "ad_tier1_"):
+		return "tier1_context"
+	case strings.HasPrefix(typ, "ad_tier2_"):
+		return "tier2_context"
 	case strings.HasPrefix(typ, "ad_privileged_acl_"):
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "ad_replication_rights_"):
@@ -199,9 +205,8 @@ func buildFindingSubcategories(category string, rows []storage.Finding) []findin
 		if findingCategoryKey(finding) != category {
 			continue
 		}
-		key := findingSubcategoryKey(finding)
 		for index := range result {
-			if result[index].Key != key {
+			if !findingBelongsToSubcategory(category, result[index].Key, finding) {
 				continue
 			}
 			if actionableFinding(finding) {
@@ -212,6 +217,28 @@ func buildFindingSubcategories(category string, rows []storage.Finding) []findin
 		}
 	}
 	return result
+}
+
+func findingBelongsToSubcategory(category, subcategory string, finding storage.Finding) bool {
+	if category == "active_directory" && subcategory == "tiering" {
+		scope := findingTierScopeKey(finding)
+		return scope == "tier0_context" || scope == "tier1_context" || scope == "tier2_context"
+	}
+	return findingSubcategoryKey(finding) == subcategory
+}
+
+func findingTierScopeKey(finding storage.Finding) string {
+	typ := strings.ToLower(strings.TrimSpace(finding.FindingType))
+	switch {
+	case strings.HasPrefix(typ, "ad_tier0_"):
+		return "tier0_context"
+	case strings.HasPrefix(typ, "ad_tier1_"):
+		return "tier1_context"
+	case strings.HasPrefix(typ, "ad_tier2_"):
+		return "tier2_context"
+	default:
+		return ""
+	}
 }
 
 func buildFindingCategories(rows []storage.Finding) []findingCategory {
@@ -563,7 +590,7 @@ func (m *model) findingsViewRender() string {
 func (m *model) findingTieringOverview(width int) string {
 	count := 0
 	for _, finding := range m.findingAllRows {
-		if findingCategoryKey(finding) == "active_directory" && findingSubcategoryKey(finding) == "tier0_context" {
+		if findingCategoryKey(finding) == "active_directory" && findingTierScopeKey(finding) != "" {
 			count++
 		}
 	}
