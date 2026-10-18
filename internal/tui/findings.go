@@ -87,6 +87,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl"
+	case strings.HasPrefix(typ, "ad_gpo_privilege_"):
+		return "active_directory"
 	case strings.HasPrefix(typ, "ad_user_description_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_account_"):
@@ -687,6 +689,10 @@ func findingEvidenceSummary(finding storage.Finding) string {
 		}
 		return strings.Join(lines, "\n")
 	}
+	if strings.EqualFold(finding.FindingType, "ad_gpo_privilege_relationship_evidence") {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured evidence: %s", finding.SourceTool, finding.SourceExecution, shortEvidencePath(finding.ArtifactPath), fallbackText(metadataString(metadata, "structured_artifact"), "execution-associated GPO privilege JSON"))
+	}
 	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
 }
 
@@ -748,6 +754,14 @@ func findingLimitations(finding storage.Finding) string {
 	}
 	if strings.EqualFold(finding.FindingType, "ad_replication_rights_evidence_overview") {
 		return "Effective replication authorization and DCSync capability were not evaluated. NOT OBSERVED means no matching supported relationship was found in the inspected evidence; it does not mean denied or absent. Allow/deny precedence, inheritance applicability, object-specific restrictions, group scope, SIDHistory, cross-domain authorization and token semantics remain unknown."
+	}
+	if strings.EqualFold(finding.FindingType, "ad_gpo_privilege_relationship_evidence") {
+		metadata := findingMetadata(finding)
+		lines := []string{"Effective GPO authorization, GPC/SYSVOL write access and client-side policy application were not evaluated."}
+		if mismatch, ok := metadata["snapshot_mismatch"].(bool); ok && mismatch {
+			lines = append(lines, "ACL and configured-link evidence are cross-snapshot identity context, not proof of temporal consistency.")
+		}
+		return strings.Join(lines, "\n")
 	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
@@ -1027,8 +1041,67 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		return formatCertipyESCCondition(finding, metadata)
 	case typ == "gpo_evidence_inventory":
 		return formatGPOEvidenceCondition(metadata, finding)
+	case typ == "ad_gpo_privilege_relationship_evidence":
+		return formatGPOPrivilegeCondition(metadata, finding)
 	}
 	return ""
+}
+
+func formatGPOPrivilegeCondition(metadata map[string]any, finding storage.Finding) string {
+	lines := []string{"Observed GPO ACL and configured-link context:"}
+	if status := metadataString(metadata, "status"); status != "" {
+		lines = append(lines, "Status: "+status)
+	}
+	if mismatch, ok := metadata["snapshot_mismatch"].(bool); ok && mismatch {
+		lines = append(lines, "Snapshot caveat: ACL and GPO link evidence came from separate snapshots.")
+	}
+	if gpos, ok := metadata["gpos"].([]any); ok {
+		for index, raw := range gpos {
+			if index >= 8 {
+				lines = append(lines, "Additional GPO relationships are available in the full report.")
+				break
+			}
+			gpo, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name := fallbackText(stringValue(gpo["display_name"]), "GPO identity unavailable")
+			guid := stringValue(gpo["gpo_guid"])
+			lines = append(lines, fmt.Sprintf("GPO: %s [%s]", name, guid))
+			if acls, ok := gpo["observed_acl_relationships"].([]any); ok {
+				for j, rawACL := range acls {
+					if j >= 6 {
+						lines = append(lines, "  Additional ACL relationships are in the full report.")
+						break
+					}
+					acl, ok := rawACL.(map[string]any)
+					if !ok {
+						continue
+					}
+					lines = append(lines, fmt.Sprintf("  Principal: %s | Permission: %s | Effective permission: NOT VERIFIED", fallbackText(stringValue(acl["principal_name"]), stringValue(acl["principal_id"])), stringValue(acl["permission"])))
+				}
+			}
+			if links, ok := gpo["configured_links"].([]any); ok {
+				for _, rawLink := range links {
+					link, ok := rawLink.(map[string]any)
+					if !ok {
+						continue
+					}
+					lines = append(lines, "  Configured link: "+fallbackText(stringValue(link["target_container_dn"]), stringValue(link["source_dn"])))
+				}
+			}
+		}
+	}
+	if len(lines) == 1 {
+		lines = append(lines, fallbackText(finding.Description, "No bounded GPO relationship details were retained."))
+	}
+	lines = append(lines, "Policy application: NOT VERIFIED.")
+	return strings.Join(lines, "\n")
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func specificFindingImpact(finding storage.Finding) string {
@@ -1039,6 +1112,8 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "RustHound observed ACL entries referencing groups with collected member relationships. These observations identify principals and objects that warrant permission review, but do not establish effective authorization or exploitability."
 	case typ == "ad_replication_rights_evidence_overview":
 		return "RustHound recorded ACL relationships corresponding to Active Directory replication-related rights on the identified domain object. These observations identify principals and permissions that warrant authorization review, but do not establish effective replication access or DCSync capability."
+	case typ == "ad_gpo_privilege_relationship_evidence":
+		return "RustHound observed supported ACL relationships for the identified GPOs, while separately collected policy metadata supplied configured-link context. The GUID correlation is evidence context only; effective GPO authorization, SYSVOL access and policy application were not verified."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
@@ -1077,6 +1152,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Review the listed ACL principals and permissions on the identified AD objects. Confirm whether each group should hold the observed rights, then validate effective permissions with approved AD administration tools before changing access controls."
 	case typ == "ad_replication_rights_evidence_overview":
 		return "Review the observed replication-related permissions on the identified domain root. Confirm which principals require those rights, validate effective permissions using approved AD administration methods, and remove unnecessary grants only after verifying their operational purpose."
+	case typ == "ad_gpo_privilege_relationship_evidence":
+		return "Review the observed GPO ACL principal/right combinations and configured links. Validate effective GPC and SYSVOL permissions, intended policy scope and actual processing with approved AD administration tools before changing policy access."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

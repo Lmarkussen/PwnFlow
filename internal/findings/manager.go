@@ -347,6 +347,21 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 					return nil, writeErr
 				}
 			}
+			gpoReport, gpoInput, analysisErr := AnalyzeGPOPrivilegeRelationships(inventory, job.AssessmentID, job.ObservedAt, resultsRoot)
+			if analysisErr != nil {
+				return nil, analysisErr
+			}
+			var gpoArtifact, gpoReportPath string
+			if gpoInput != nil {
+				gpoArtifact, writeErr = WriteGPOPrivilegeArtifacts(resultsRoot, gpoReport)
+				if writeErr != nil {
+					return nil, writeErr
+				}
+				gpoReportPath, writeErr = WriteGPOPrivilegeReport(resultsRoot, gpoReport)
+				if writeErr != nil {
+					return nil, writeErr
+				}
+			}
 			for index := range inventoryInputs {
 				switch inventoryInputs[index].FindingType {
 				case "ad_privileged_acl_evidence_inventory":
@@ -357,7 +372,15 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 						inventoryInputs[index].ArtifactPath = replicationArtifact
 						inventoryInputs[index].ArtifactRef = "/"
 					}
+				case "ad_gpo_privilege_relationship_evidence":
+					if gpoArtifact != "" {
+						inventoryInputs[index].ArtifactPath = gpoReportPath
+						inventoryInputs[index].ArtifactRef = "/"
+					}
 				}
+			}
+			if gpoInput != nil {
+				inventoryInputs = append(inventoryInputs, *gpoInput)
 			}
 		}
 		inputs = append(inputs, inventoryInputs...)
