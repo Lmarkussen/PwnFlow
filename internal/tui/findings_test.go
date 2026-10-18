@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 	"github.com/pwnflow/pwnflow/internal/config"
+	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/runner"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
@@ -724,5 +725,79 @@ func TestSelectedFindingFamiliesUseEvidenceSpecificPresentation(t *testing.T) {
 				t.Fatal("secret-bearing metadata leaked")
 			}
 		})
+	}
+}
+
+func TestHistoricalACLInventoryHydratesOnlyMatchingExecution(t *testing.T) {
+	root := t.TempDir()
+	resultsRoot := filepath.Join(root, "results")
+	report := findingengine.ACLInventoryReport{
+		SchemaVersion: 1, ParserVersion: "test", Domain: "example.test", SourceExecutionID: 450,
+		Status: "partial", NormalizedRelations: 1,
+		HighValueTargets: []findingengine.ACLInventoryTarget{{ID: "S-1-5-21-1-512", Name: "Domain Admins", ObjectType: "groups", Class: "privileged_group"}},
+		Relationships:    []findingengine.ACLInventoryRelationship{{PrincipalID: "S-1-5-21-1-1101", PrincipalName: "alice", TargetID: "S-1-5-21-1-512", TargetName: "Domain Admins", TargetType: "groups", TargetClass: "privileged_group", Permission: "WriteDacl", Decision: "allow", Inheritance: "explicit", Artifact: "groups.json", ArtifactRef: "/data/0/Aces/0"}},
+	}
+	artifact, err := findingengine.WriteACLInventoryArtifact(resultsRoot, report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &model{cfg: config.Config{Root: root}}
+	finding := storage.Finding{FindingInput: storage.FindingInput{FindingType: "ad_privileged_acl_evidence_inventory", SourceExecution: 450, ArtifactPath: artifact, EvidenceJSON: `{"source_execution_id":450,"normalized_relationships":1,"status":"partial"}`}}
+	hydrated := model.hydrateHistoricalACLInventory(finding)
+	if !strings.Contains(findingCondition(hydrated), "alice") || !strings.Contains(findingCondition(hydrated), "WriteDacl") {
+		t.Fatalf("historical ACL evidence was not hydrated: %s", findingCondition(hydrated))
+	}
+	mismatched := finding
+	mismatched.SourceExecution = 451
+	if strings.Contains(findingCondition(model.hydrateHistoricalACLInventory(mismatched)), "alice") {
+		t.Fatal("ACL compatibility path crossed execution provenance")
+	}
+}
+
+func TestGPOAndCredentialKeywordPresentationsAreSpecific(t *testing.T) {
+	gpo := storage.Finding{FindingInput: storage.FindingInput{FindingType: "gpo_evidence_inventory", SourceExecution: 409, EvidenceJSON: `{"gpos_discovered":3,"gpo_names":["Default Domain Policy (31B2...)"],"gpos_complete":3,"gpos_partial":0,"sysvol_files":9,"configured_relationships":4,"file_failures":0,"file_limits":0,"limitations":["effective application not verified"]}`}}
+	gpoCondition := findingCondition(gpo)
+	for _, value := range []string{"3 GPOs", "9 SYSVOL", "Default Domain Policy", "4 configured link"} {
+		if !strings.Contains(gpoCondition, value) {
+			t.Fatalf("GPO condition omitted %q: %s", value, gpoCondition)
+		}
+	}
+	if strings.Contains(findingImpact(gpo), "security-relevant condition requiring operator review") {
+		t.Fatal("GPO retained generic impact wording")
+	}
+	keywordInput := storage.FindingInput{
+		FindingType:    "ad_user_description_keyword_observed",
+		AffectedObject: "snablr-lab-admin",
+		EvidenceJSON:   `{"attribute":"info","keyword":"secret","line":4,"principal":"snablr-lab-admin"}`,
+	}
+	keyword := storage.Finding{FindingInput: keywordInput}
+	condition := findingCondition(keyword)
+	if !strings.Contains(condition, "snablr-lab-admin") || !strings.Contains(condition, "credential was disclosed") {
+		t.Fatalf("keyword interpretation is not specific: %s", condition)
+	}
+	if strings.Contains(condition+findingImpact(keyword)+findingRemediation(keyword), "secret") && strings.Contains(condition+findingImpact(keyword)+findingRemediation(keyword), "fictional") {
+		t.Fatal("keyword fixture leaked a secret")
+	}
+}
+
+func TestKerberosMaterialRoutingAndSafeMetadata(t *testing.T) {
+	materialInput := storage.FindingInput{
+		FindingType:    "kerberos_ticket_material_collected",
+		Severity:       "medium",
+		AffectedObject: "sccm.lab\\svc-sql",
+		EvidenceJSON:   `{"material_type":"kerberoast","principal":"sccm.lab\\svc-sql","material_collected":true,"record_count":3,"payload":"do-not-display"}`,
+	}
+	material := storage.Finding{FindingInput: materialInput}
+	if findingCategoryKey(material) != "kerberos" || findingSubcategoryKey(material) != "kerberos_material" {
+		t.Fatalf("Kerberos material was misrouted: category=%s subcategory=%s", findingCategoryKey(material), findingSubcategoryKey(material))
+	}
+	rows := buildFindingSubcategories("kerberos", []storage.Finding{material})
+	for _, row := range rows {
+		if row.Key == "kerberos_material" && row.Findings+row.Observations != 1 {
+			t.Fatalf("Kerberos material was not visible in its subcategory: %+v", row)
+		}
+	}
+	if strings.Contains(findingCondition(material)+findingImpact(material)+findingRemediation(material), "do-not-display") {
+		t.Fatal("Kerberos material payload leaked")
 	}
 }

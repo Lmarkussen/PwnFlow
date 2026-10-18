@@ -383,7 +383,7 @@ func (m *model) findingsViewRender() string {
 	m.keepFindingVisible()
 	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
 	if m.findingDetail && len(m.findingRows) > 0 {
-		finding := m.findingRows[m.findingCursor]
+		finding := m.hydrateHistoricalACLInventory(m.findingRows[m.findingCursor])
 		content.WriteString(findingDetailHeader(finding, width-4) + "\n\n")
 		content.WriteString(wrapPaneText(findingCondition(finding), width-4) + "\n\n")
 		content.WriteString(findingAttributes(finding, width-4))
@@ -536,6 +536,20 @@ func findingEvidenceSummary(finding storage.Finding) string {
 		metadata := findingMetadata(finding)
 		return fmt.Sprintf("%s · Execution %d\nFull report: %s\nStructured inventory: %s\nOriginal RustHound source: %s", finding.SourceTool, finding.SourceExecution, metadataString(metadata, "human_report"), fallbackText(finding.ArtifactPath, metadataString(metadata, "structured_artifact")), metadataString(metadata, "source_artifact"))
 	}
+	if strings.EqualFold(finding.FindingType, "gpo_evidence_inventory") {
+		metadata := findingMetadata(finding)
+		lines := []string{"Configured GPO links are evidence of directory configuration, not proof of effective client-side application."}
+		if failures := metadataInt(metadata, "file_failures"); failures > 0 {
+			lines = append(lines, fmt.Sprintf("SYSVOL retrieval failures: %d.", failures))
+		}
+		if limits := metadataInt(metadata, "file_limits"); limits > 0 {
+			lines = append(lines, fmt.Sprintf("SYSVOL records limited by collection bounds: %d.", limits))
+		}
+		if limitations := metadataStringSlice(metadata, "limitations"); len(limitations) > 0 {
+			lines = append(lines, "Collection limitations: "+strings.Join(limitations, "; "))
+		}
+		return strings.Join(lines, "\n")
+	}
 	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
 }
 
@@ -663,6 +677,13 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		kind := fallbackText(metadataString(metadata, "material_type"), "Kerberos material")
 		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
 		return fmt.Sprintf("NetExec recorded %s associated with %s. Secret material is intentionally not displayed.", kind, principal)
+	case typ == "ad_user_description_keyword_observed":
+		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
+		attribute := fallbackText(metadataString(metadata, "attribute"), "account information")
+		keyword := fallbackText(metadataString(metadata, "keyword"), "credential-related language")
+		return fmt.Sprintf("NetExec observed the keyword %q in the %s attribute for %s. The keyword is not proof that a credential was disclosed.", keyword, attribute, principal)
+	case typ == "gpo_evidence_inventory":
+		return formatGPOEvidenceCondition(metadata, finding)
 	}
 	return ""
 }
@@ -691,6 +712,10 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "The reported value is a domain-default policy observation. It may be overridden by fine-grained or endpoint-specific policy; it does not by itself prove weak credentials, compromise or effective policy for every account."
 	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
 		return "The source artifact contains roast material associated with the identified principal. The material is protected and not displayed; collection does not prove that it was cracked or used."
+	case typ == "ad_user_description_keyword_observed":
+		return "A credential-related term was observed in directory metadata. This is an indicator to inspect the account information safely, not confirmed credential exposure."
+	case typ == "gpo_evidence_inventory":
+		return "The collector preserved GPO metadata, configured-link evidence and bounded SYSVOL files. Configured links do not prove effective client-side policy application."
 	}
 	return ""
 }
@@ -714,8 +739,28 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Verify the named domain-default setting in directory policy and review whether fine-grained policies or business requirements override it. Apply a targeted policy change only after confirming the affected accounts and services."
 	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
 		return "Treat the protected artifact as sensitive evidence. Verify the principal and collection scope, restrict unnecessary access, and rotate affected credentials through the approved process if exposure is confirmed."
+	case typ == "ad_user_description_keyword_observed":
+		return "Verify whether the identified account's directory attribute contains sensitive operational or credential information. Remove sensitive metadata and review access if disclosure is confirmed; do not treat the keyword alone as a recovered credential."
+	case typ == "gpo_evidence_inventory":
+		return "Review the listed GPO metadata, links and preserved SYSVOL files using the referenced evidence. Validate security filtering and client-side application separately before changing policy."
 	}
 	return ""
+}
+
+func formatGPOEvidenceCondition(metadata map[string]any, finding storage.Finding) string {
+	discovered := metadataInt(metadata, "gpos_discovered")
+	complete := metadataInt(metadata, "gpos_complete")
+	partial := metadataInt(metadata, "gpos_partial")
+	files := metadataInt(metadata, "sysvol_files")
+	links := metadataInt(metadata, "configured_relationships")
+	condition := fmt.Sprintf("AD GPO Evidence preserved %d GPOs (%d complete, %d partial), %d SYSVOL file records and %d configured link relationships.", discovered, complete, partial, files, links)
+	if names := metadataStringSlice(metadata, "gpo_names"); len(names) > 0 {
+		condition += " GPOs: " + strings.Join(names, "; ") + "."
+	}
+	if finding.SourceExecution > 0 {
+		condition += fmt.Sprintf(" Producing execution: %d.", finding.SourceExecution)
+	}
+	return condition
 }
 
 func metadataStringSlice(metadata map[string]any, key string) []string {
@@ -910,7 +955,11 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		empty = m.findingSubcategories[index].Findings == 0 && m.findingSubcategories[index].Observations == 0
 	}
 	if empty {
-		content.WriteString(warn.Render("No records in this category. Analysis status: NOT ASSESSED.") + "\n")
+		message := "No records in this category. Analysis status: NOT ASSESSED."
+		if m.findingCategory == "kerberos" && len(m.findingSubcategories) > 0 && m.findingCursor < len(m.findingSubcategories) && m.findingSubcategories[m.findingCursor].Key == "kerberos_material" {
+			message = "No collected Kerberos-material records are associated with this assessment. This does not establish that no material exists; the relevant collector may not have run or may have produced no qualifying records."
+		}
+		content.WriteString(warn.Render(message) + "\n")
 	}
 	content.WriteString(dim.Render("\nEnter = Open    Esc = Back"))
 	return paneStyle(false).Width(width).Render(content.String())

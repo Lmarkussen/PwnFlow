@@ -15,10 +15,70 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pwnflow/pwnflow/internal/config"
+	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 const maxEvidenceViewBytes = 4 << 20
+
+// hydrateHistoricalACLInventory provides a read-only compatibility path for
+// ACL observations persisted before relationship_overview was added. It only
+// reads the Finding's own artifact and requires the embedded execution ID to
+// match the persisted Finding provenance.
+func (m *model) hydrateHistoricalACLInventory(finding storage.Finding) storage.Finding {
+	if !strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
+		return finding
+	}
+	metadata := findingMetadata(finding)
+	if _, present := metadata["relationship_overview"]; present {
+		return finding
+	}
+	if finding.SourceExecution <= 0 || finding.ArtifactPath == "" {
+		return finding
+	}
+	path, err := m.safeEvidencePath(finding.ArtifactPath)
+	if err != nil {
+		return finding
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxEvidenceViewBytes {
+		return finding
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return finding
+	}
+	var report findingengine.ACLInventoryReport
+	if err := json.Unmarshal(data, &report); err != nil || report.SourceExecutionID != finding.SourceExecution {
+		return finding
+	}
+	metadata["relationship_overview"] = findingengine.ACLInventoryObservationRelationships(report)
+	metadata["relationship_overview_limit"] = 12
+	metadata["high_value_targets"] = len(report.HighValueTargets)
+	metadata["normalized_relationships"] = report.NormalizedRelations
+	metadata["unresolved_principals"] = len(report.Unresolved)
+	metadata["unsupported_relationships"] = unsupportedACLRightCount(report.UnsupportedRights)
+	metadata["omitted_relationships"] = report.OmittedRelations
+	metadata["malformed_entries"] = report.MalformedEntries
+	metadata["status"] = report.Status
+	if metadataString(metadata, "human_report") == "" {
+		metadata["human_report"] = "AD_PRIVILEGED_ACL_EVIDENCE.txt"
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return finding
+	}
+	finding.EvidenceJSON = string(encoded)
+	return finding
+}
+
+func unsupportedACLRightCount(rights map[string]int) int {
+	total := 0
+	for _, count := range rights {
+		total += count
+	}
+	return total
+}
 
 type inlineEvidence struct {
 	section string
