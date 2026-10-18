@@ -31,6 +31,7 @@ const (
 	maxFileBytes   = 8 << 20
 	maxTotalBytes  = 128 << 20
 	maxDepth       = 12
+	perGPOTimeout  = 2 * time.Minute
 )
 
 var guidPattern = regexp.MustCompile(`(?i)^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$`)
@@ -408,8 +409,9 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 			manifest.GPOs = append(manifest.GPOs, summary)
 			continue
 		}
+		operationCtx, cancel := context.WithTimeout(ctx, perGPOTimeout)
 		command := fmt.Sprintf("cd %s; recurse; prompt OFF; mget *", remotePath)
-		cmd := exec.CommandContext(ctx, "smbclient", "//"+runtime.Target+"/SYSVOL", "-A", authPath, "-c", command)
+		cmd := exec.CommandContext(operationCtx, "smbclient", "//"+runtime.Target+"/SYSVOL", "-A", authPath, "-c", command)
 		cmd.Dir = tempRoot
 		_, runErr := cmd.CombinedOutput()
 		gpoRoot := filepath.Join(tempRoot, runtime.Domain, "Policies", gpo.GUID)
@@ -419,12 +421,15 @@ func collectSYSVOL(ctx context.Context, runtime *modules.Runtime, root string, g
 		storedRoot := filepath.Join(root, "SYSVOL", gpo.GUID)
 		_ = os.MkdirAll(storedRoot, 0o700)
 		walkErr := publishTree(ctx, gpoRoot, storedRoot, runtime, gpo.GUID, manifest, &totalFiles, &totalBytes)
+		cancel()
 		_ = os.RemoveAll(tempRoot)
 		summary.Listed = countManifest(manifest.Files, gpo.GUID)
 		summary.Retrieved = countManifestStatus(manifest.Files, gpo.GUID, "complete")
 		summary.Limited = countManifestStatus(manifest.Files, gpo.GUID, "limited")
 		summary.Failed = countManifestStatus(manifest.Files, gpo.GUID, "failed")
-		if runErr != nil && summary.Retrieved == 0 {
+		if errors.Is(operationCtx.Err(), context.DeadlineExceeded) {
+			summary.Status = "timed_out"
+		} else if runErr != nil && summary.Retrieved == 0 {
 			summary.Status = statusFor(runErr)
 		} else if walkErr != nil || summary.Limited > 0 || runErr != nil {
 			summary.Status = "partial"
