@@ -30,7 +30,7 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 		{"ObjectIdentifier": "S-1-5-21-100-1102", "Properties": map[string]any{"name": "bob", "domain": "EXAMPLE.TEST"}},
 	})
 	writeExport(t, filepath.Join(root, "domains.json"), "domains", []map[string]any{
-		{"ObjectIdentifier": "S-1-5-21-100", "Properties": map[string]any{"name": "EXAMPLE.TEST", "domain": "EXAMPLE.TEST"}, "Aces": []map[string]any{{"PrincipalSID": "S-1-5-21-100-1101", "RightName": "GetChangesAll"}}},
+		{"ObjectIdentifier": "S-1-5-21-100", "Properties": map[string]any{"name": "EXAMPLE.TEST", "domain": "EXAMPLE.TEST", "highvalue": true}, "Aces": []map[string]any{{"PrincipalSID": "S-1-5-21-100-1101", "RightName": "GetChangesAll"}}},
 	})
 
 	report, inputs, err := AnalyzeRustHoundACLInventory(context.Background(), root, 7, 435, time.Unix(1, 0).UTC())
@@ -42,6 +42,15 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 	}
 	if len(report.HighValueTargets) != 2 {
 		t.Fatalf("expected privileged group and domain targets, got %+v", report.HighValueTargets)
+	}
+	var domainRootFound bool
+	for _, target := range report.HighValueTargets {
+		if target.ID == "S-1-5-21-100" {
+			domainRootFound = target.Class == "domain_root"
+		}
+	}
+	if !domainRootFound {
+		t.Fatalf("domain object was not classified as domain_root: %+v", report.HighValueTargets)
 	}
 	if len(report.Unresolved) != 1 || report.Unresolved[0].ID != "S-1-5-21-100-9999" {
 		t.Fatalf("unresolved principal was not retained: %+v", report.Unresolved)

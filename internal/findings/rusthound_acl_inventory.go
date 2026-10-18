@@ -421,12 +421,12 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 }
 
 func classifyACLTarget(object collectedObject) string {
-	if object.HighValue {
-		return "high_value"
-	}
 	props := object.Properties
 	if object.Type == "domains" {
 		return "domain_root"
+	}
+	if object.HighValue {
+		return "high_value"
 	}
 	if object.Type == "gpos" {
 		return "gpo_container"
