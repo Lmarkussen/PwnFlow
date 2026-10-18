@@ -657,3 +657,72 @@ func TestPrivilegedACLInventoryEvidenceOpensHumanReport(t *testing.T) {
 		t.Fatal("human ACL report was not loaded")
 	}
 }
+
+func TestSelectedFindingFamiliesUseEvidenceSpecificPresentation(t *testing.T) {
+	tests := []struct {
+		name        string
+		finding     storage.Finding
+		condition   string
+		impact      string
+		remediation string
+	}{
+		{
+			name:      "privileged access",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "netexec_privileged_access", SourceExecution: 42, AffectedObject: "192.0.2.40", RelatedObject: "sccm.lab\\admin", EvidenceJSON: `{"protocol":"SMB","target":"192.0.2.40","port":"445","principal":"sccm.lab\\admin","outcome":"success","privileged":true}`}},
+			condition: "administrative-access indicator", impact: "broader privileges", remediation: "administrative access",
+		},
+		{
+			name:      "authentication",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "netexec_auth_success", AffectedObject: "192.0.2.43", RelatedObject: "sccm.lab\\user", EvidenceJSON: `{"protocol":"WINRM","target":"192.0.2.43","port":"5985","principal":"sccm.lab\\user","outcome":"success","privileged":false}`}},
+			condition: "successful WINRM authentication", impact: "accepted the authentication", remediation: "expected to authenticate",
+		},
+		{
+			name:      "unconstrained delegation",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "unconstrained_delegation_configured", AffectedObject: "svc-delegation", EvidenceJSON: `{"object_name":"svc-delegation","delegation_type":"unconstrained","direct_property":true}`}},
+			condition: "unconstrained delegation", impact: "credential-delegation exposure", remediation: "delegation configuration",
+		},
+		{
+			name:      "constrained delegation",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "constrained_delegation_configured", AffectedObject: "WEB01$", EvidenceJSON: `{"object_name":"WEB01$","delegation_type":"constrained","allowed_to_delegate":["MSSQLSvc/sql.example.test:1433"]}`}},
+			condition: "Allowed service targets", impact: "listed service targets", remediation: "allowed service targets",
+		},
+		{
+			name:      "relay",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "relay_exposure_observed", AffectedObject: "192.0.2.40", EvidenceJSON: `{"level":"high","impact":"signing absent","protocol":"SMB","destination":"192.0.2.40","details":"synthetic"}`}},
+			condition: "relay-related path", impact: "does not prove", remediation: "signing and channel binding",
+		},
+		{
+			name:      "SMB signing",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "smb_signing_not_required", AffectedObject: "192.0.2.40", EvidenceJSON: `{"protocol":"SMB","target":"192.0.2.40","port":"445","host":"dc.sccm.lab","signing_required":false}`}},
+			condition: "signing is not required", impact: "relay exposure", remediation: "require signing",
+		},
+		{
+			name:      "domain policy",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "ad_domain_policy_weak_minimum_password_length", AffectedObject: "sccm.lab", EvidenceJSON: `{"domain":"sccm.lab","minimum_password_length":5,"policy_scope":"domain default policy","fine_grained_policy_limitation":"not reconciled"}`}},
+			condition: "minimum password length=5", impact: "domain-default policy", remediation: "fine-grained policies",
+		},
+		{
+			name:      "Kerberos material",
+			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "kerberos_ticket_material_collected", AffectedObject: "svc-sql@sccm.lab", EvidenceJSON: `{"material_type":"kerberoast","material_collected":true,"principal":"svc-sql@sccm.lab","record_count":1,"payload":"synthetic-secret"}`}},
+			condition: "secret material is intentionally not displayed", impact: "not prove", remediation: "protected artifact",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			condition := findingCondition(test.finding)
+			impact := findingImpact(test.finding)
+			remediation := findingRemediation(test.finding)
+			for value, expected := range map[string]string{condition: test.condition, impact: test.impact, remediation: test.remediation} {
+				if !strings.Contains(strings.ToLower(value), strings.ToLower(expected)) {
+					t.Fatalf("missing %q in %q", expected, value)
+				}
+				if strings.Contains(value, "security-relevant condition requiring operator review") || strings.Contains(value, "source tool's recommended hardening") {
+					t.Fatalf("generic fallback remained: %q", value)
+				}
+			}
+			if strings.Contains(condition+impact+remediation, "synthetic-secret") {
+				t.Fatal("secret-bearing metadata leaked")
+			}
+		})
+	}
+}

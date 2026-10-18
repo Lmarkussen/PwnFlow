@@ -461,6 +461,9 @@ func findingCondition(finding storage.Finding) string {
 		return formatACLInventoryOverview(finding)
 	}
 	metadata := findingMetadata(finding)
+	if condition := specificFindingCondition(finding, metadata); condition != "" {
+		return condition
+	}
 	protocol := metadataString(metadata, "protocol")
 	if protocol == "" {
 		protocol = protocolFromFindingTitle(finding.Title)
@@ -611,6 +614,142 @@ func formatACLInventoryOverview(finding storage.Finding) string {
 	return b.String()
 }
 
+func specificFindingCondition(finding storage.Finding, metadata map[string]any) string {
+	typ := strings.ToLower(finding.FindingType)
+	switch {
+	case typ == "netexec_privileged_access" || typ == "netexec_auth_success":
+		protocol := fallbackText(metadataString(metadata, "protocol"), "unknown protocol")
+		target := fallbackText(metadataString(metadata, "target"), fallbackText(finding.AffectedObject, "target identity unavailable in source evidence"))
+		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.RelatedObject, "principal identity unavailable in source evidence"))
+		port := metadataString(metadata, "port")
+		if port != "" {
+			target += ":" + port
+		}
+		if typ == "netexec_privileged_access" {
+			return fmt.Sprintf("NetExec reported its administrative-access indicator for %s authentication by %s against %s. The indicator is scoped to this tested protocol and target.", protocol, principal, target)
+		}
+		return fmt.Sprintf("NetExec reported successful %s authentication by %s against %s.", protocol, principal, target)
+	case typ == "unconstrained_delegation_configured" || typ == "constrained_delegation_configured":
+		delegationType := fallbackText(metadataString(metadata, "delegation_type"), strings.TrimSuffix(strings.TrimPrefix(typ, "configured"), "_"))
+		object := fallbackText(metadataString(metadata, "object_name"), fallbackText(finding.AffectedObject, "object identity unavailable in source evidence"))
+		condition := fmt.Sprintf("RustHound observed %s delegation configured on %s.", delegationType, object)
+		if services := metadataStringSlice(metadata, "allowed_to_delegate"); len(services) > 0 {
+			condition += " Allowed service targets: " + strings.Join(services, ", ") + "."
+		}
+		return condition
+	case typ == "relay_exposure_observed":
+		protocol := fallbackText(metadataString(metadata, "protocol"), "protocol unavailable")
+		destination := fallbackText(metadataString(metadata, "destination"), fallbackText(finding.AffectedObject, "destination unavailable"))
+		level := metadataString(metadata, "level")
+		impact := metadataString(metadata, "impact")
+		condition := fmt.Sprintf("RelayKing reported an explicit relay-related path for %s toward %s.", protocol, destination)
+		if level != "" || impact != "" {
+			condition += fmt.Sprintf(" Tool classification: level=%s impact=%s.", fallbackText(level, "unknown"), fallbackText(impact, "unknown"))
+		}
+		return condition
+	case typ == "smb_signing_not_required":
+		protocol := fallbackText(metadataString(metadata, "protocol"), "SMB")
+		target := fallbackText(metadataString(metadata, "target"), fallbackText(finding.AffectedObject, "target identity unavailable in source evidence"))
+		return fmt.Sprintf("NetExec reported that %s message signing is not required by %s.", protocol, target)
+	case strings.HasPrefix(typ, "ad_domain_policy_"):
+		domain := fallbackText(metadataString(metadata, "domain"), fallbackText(finding.AffectedObject, "domain identity unavailable in source evidence"))
+		scope := fallbackText(metadataString(metadata, "policy_scope"), "domain policy")
+		value := domainPolicyDisplayValue(typ, metadata)
+		if value == "" {
+			value = "configured value unavailable in source evidence"
+		}
+		return fmt.Sprintf("NetExec observed %s on %s: %s.", scope, domain, value)
+	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
+		kind := fallbackText(metadataString(metadata, "material_type"), "Kerberos material")
+		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
+		return fmt.Sprintf("NetExec recorded %s associated with %s. Secret material is intentionally not displayed.", kind, principal)
+	}
+	return ""
+}
+
+func specificFindingImpact(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	metadata := findingMetadata(finding)
+	switch {
+	case typ == "netexec_privileged_access":
+		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
+	case typ == "netexec_auth_success":
+		return "The tested service accepted the authentication attempt. This does not establish elevated privileges, local administrator membership, privilege escalation or domain-wide access."
+	case typ == "unconstrained_delegation_configured":
+		return "Unconstrained delegation is an observed directory configuration that can broaden credential-delegation exposure for the affected object. Credential capture or Kerberos abuse was not observed or verified."
+	case typ == "constrained_delegation_configured":
+		services := metadataStringSlice(metadata, "allowed_to_delegate")
+		if len(services) > 0 {
+			return "Constrained delegation is configured toward the listed service targets. The configuration and trust boundary matter for review; ticket abuse or exploitability was not verified."
+		}
+		return "Constrained-delegation properties were observed, but the allowed service targets were not available in this record. Exploitability was not verified."
+	case typ == "relay_exposure_observed":
+		return "RelayKing classified a relay-related path in the supplied assessment evidence. This does not prove that an NTLM relay succeeded; signing, channel binding, authentication behavior and destination prerequisites require separate validation."
+	case typ == "smb_signing_not_required":
+		return "SMB signing is not required on the reported service, which can increase relay exposure when other relay prerequisites are present. No relay success is established by this observation."
+	case strings.HasPrefix(typ, "ad_domain_policy_"):
+		return "The reported value is a domain-default policy observation. It may be overridden by fine-grained or endpoint-specific policy; it does not by itself prove weak credentials, compromise or effective policy for every account."
+	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
+		return "The source artifact contains roast material associated with the identified principal. The material is protected and not displayed; collection does not prove that it was cracked or used."
+	}
+	return ""
+}
+
+func specificFindingRemediation(finding storage.Finding) string {
+	typ := strings.ToLower(finding.FindingType)
+	switch {
+	case typ == "netexec_privileged_access":
+		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
+	case typ == "netexec_auth_success":
+		return "Verify whether this account is expected to authenticate to the identified host using the tested protocol. If unexpected, review account permissions, credential exposure and permitted access paths."
+	case typ == "unconstrained_delegation_configured":
+		return "Review the affected account or computer's delegation configuration and business need. Restrict or remove unconstrained delegation where operationally appropriate, then validate dependent services."
+	case typ == "constrained_delegation_configured":
+		return "Review the allowed service targets and trust boundary for the affected object. Restrict delegation to the minimum necessary service scope where operationally appropriate."
+	case typ == "relay_exposure_observed":
+		return "Validate the reported source, destination and protocol conditions using approved configuration review. Require appropriate signing and channel binding protections; do not disable protections to reproduce the path."
+	case typ == "smb_signing_not_required":
+		return "Verify the signing policy on the named SMB service and require signing where compatible. Review relay prerequisites separately; this record does not justify an attack attempt."
+	case strings.HasPrefix(typ, "ad_domain_policy_"):
+		return "Verify the named domain-default setting in directory policy and review whether fine-grained policies or business requirements override it. Apply a targeted policy change only after confirming the affected accounts and services."
+	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
+		return "Treat the protected artifact as sensitive evidence. Verify the principal and collection scope, restrict unnecessary access, and rotate affected credentials through the approved process if exposure is confirmed."
+	}
+	return ""
+}
+
+func metadataStringSlice(metadata map[string]any, key string) []string {
+	value, ok := metadata[key]
+	if !ok {
+		return nil
+	}
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func domainPolicyDisplayValue(typ string, metadata map[string]any) string {
+	switch {
+	case strings.HasSuffix(typ, "weak_minimum_password_length"):
+		if value := metadataInt(metadata, "minimum_password_length"); value > 0 {
+			return fmt.Sprintf("minimum password length=%d", value)
+		}
+	case strings.HasSuffix(typ, "password_expiration_not_enforced"):
+		return "maximum password age=" + fallbackText(metadataString(metadata, "maximum_password_age"), "unknown")
+	case strings.HasSuffix(typ, "machine_account_creation_quota"):
+		return fmt.Sprintf("machine account quota=%d", metadataInt(metadata, "machine_account_quota"))
+	}
+	return ""
+}
+
 func findingIndicator(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
 	if strings.HasPrefix(typ, "netexec_privileged_") || strings.Contains(strings.ToLower(finding.Title), "pwn3d!") {
@@ -708,6 +847,9 @@ func (m *model) evidenceViewRender(width int) string {
 
 func findingImpact(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
+	if impact := specificFindingImpact(finding); impact != "" {
+		return impact
+	}
 	switch {
 	case typ == "ad_privileged_acl_evidence_inventory":
 		return "RustHound observed direct ACL relationships affecting high-value Active Directory objects. These are configured permission relationships, not verified effective access or exploitable attack paths."
@@ -728,6 +870,9 @@ func findingImpact(finding storage.Finding) string {
 
 func findingRemediation(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
+	if remediation := specificFindingRemediation(finding); remediation != "" {
+		return remediation
+	}
 	switch {
 	case strings.Contains(typ, "asrep"):
 		return "Enable Kerberos preauthentication where appropriate, use a strong managed secret, and review the account's purpose."
