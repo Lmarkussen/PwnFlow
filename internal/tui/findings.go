@@ -35,7 +35,10 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"asrep", "AS-REP Roastable Users", "Accounts with preauthentication disabled where evidenced"},
 		{"kerberos_material", "Collected Kerberos Material", "Explicitly collected ticket or AS-REP material"},
 	},
-	"acl": {{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"}},
+	"acl": {
+		{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"},
+		{"acl_inventory", "ACL Evidence Inventory", "Informational direct ACL evidence and collection limitations"},
+	},
 	"adcs": {
 		{"adcs_ca", "Vulnerable Certificate Authorities", "Explicit ESC conditions reported for certificate authorities"},
 		{"adcs_template", "Vulnerable Templates", "Explicit ESC conditions reported for certificate templates"},
@@ -81,6 +84,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	title := strings.ToLower(finding.Title)
 	source := strings.ToLower(finding.SourceTool)
 	switch {
+	case strings.HasPrefix(typ, "ad_privileged_acl_"):
+		return "acl"
 	case strings.HasPrefix(typ, "ad_user_description_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_account_"):
@@ -119,6 +124,8 @@ func findingCategoryKey(finding storage.Finding) string {
 func findingSubcategoryKey(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType + " " + finding.Title)
 	switch {
+	case strings.HasPrefix(typ, "ad_privileged_acl_"):
+		return "acl_inventory"
 	case strings.HasPrefix(typ, "adcs_"):
 		if strings.Contains(strings.ToLower(finding.EvidenceJSON), `"object_type":"ca"`) {
 			return "adcs_ca"
