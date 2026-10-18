@@ -425,6 +425,18 @@ func jobKey(job Job) string {
 // the whole historical results tree and therefore cannot re-analyze old runs as
 // a side effect of a new execution.
 func DiscoverArtifact(tool, outputPath string) string {
+	return discoverArtifact(tool, outputPath, time.Time{})
+}
+
+// DiscoverArtifactAt selects the run-scoped artifact whose collector
+// directory timestamp is the latest one not later than the completed module
+// time. This prevents a later historical RustHound directory from being
+// associated with the current execution.
+func DiscoverArtifactAt(tool, outputPath string, completedAt time.Time) string {
+	return discoverArtifact(tool, outputPath, completedAt)
+}
+
+func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	if outputPath == "" {
 		return ""
 	}
@@ -484,6 +496,20 @@ func DiscoverArtifact(tool, outputPath string) string {
 		return ""
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() > entries[j].Name() })
+	if strings.EqualFold(tool, "rusthound-ce") || strings.EqualFold(tool, "rusthound") {
+		if !completedAt.IsZero() {
+			const layout = "20060102-150405"
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				stamp, parseErr := time.ParseInLocation(layout, entry.Name(), completedAt.Location())
+				if parseErr == nil && !stamp.After(completedAt) {
+					return filepath.Join(base, entry.Name())
+				}
+			}
+		}
+	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

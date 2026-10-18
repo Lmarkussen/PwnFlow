@@ -1141,7 +1141,7 @@ func (m *model) syncBatch() tea.Cmd {
 						}
 						if err == nil && m.findings != nil {
 							module := state.Module
-							artifact := findingengine.DiscoverArtifact(module.Tool(), state.Result.OutputPath)
+							artifact := findingengine.DiscoverArtifactAt(module.Tool(), state.Result.OutputPath, state.Result.Finished)
 							_ = m.findings.Submit(findingengine.Job{AssessmentID: m.targetID, ExecutionID: executionID, SourceTool: module.Tool(), ArtifactPath: artifact, ObservedAt: state.Result.Finished})
 						}
 					}

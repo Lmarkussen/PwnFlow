@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -235,6 +236,7 @@ func (m *model) refreshFindings() {
 		}
 		m.findingAllRows = append(m.findingAllRows[:0], rows...)
 		m.findingCategories = buildFindingCategories(m.findingAllRows)
+		m.findingsAnalysisStatus = findingsStatusLabel(m.db, m.ctx, m.targetID)
 		m.findingsLoaded = true
 	}
 	if m.findingCategories == nil {
@@ -1523,7 +1525,7 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		empty = m.findingSubcategories[index].Findings == 0 && m.findingSubcategories[index].Observations == 0
 	}
 	if empty {
-		message := "No records in this category. Analysis status: NOT ASSESSED."
+		message := "No records in this category. Analysis status: " + fallbackText(m.findingsAnalysisStatus, "NOT ASSESSED") + "."
 		if m.findingCategory == "kerberos" && len(m.findingSubcategories) > 0 && m.findingCursor < len(m.findingSubcategories) && m.findingSubcategories[m.findingCursor].Key == "kerberos_material" {
 			message = "No collected Kerberos-material records are associated with this assessment. This does not establish that no material exists; the relevant collector may not have run or may have produced no qualifying records."
 		}
@@ -1531,6 +1533,24 @@ func (m *model) findingSubcategoryOverview(width int) string {
 	}
 	content.WriteString(dim.Render("\nEnter = Open    Esc = Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func findingsStatusLabel(db *storage.DB, ctx context.Context, assessmentID int64) string {
+	jobs, err := db.ListAnalysisJobs(ctx, assessmentID)
+	if err != nil || len(jobs) == 0 {
+		return "NOT ASSESSED"
+	}
+	for _, job := range jobs {
+		switch job.Status {
+		case storage.AnalysisPending, storage.AnalysisAnalyzing:
+			return "ANALYSIS PENDING"
+		case storage.AnalysisFailed:
+			return "ANALYSIS FAILED"
+		case storage.AnalysisPartial:
+			return "PARTIAL"
+		}
+	}
+	return "ASSESSED; NO QUALIFYING EVIDENCE"
 }
 
 func (m *model) findingCategoryOverview(width int) string {

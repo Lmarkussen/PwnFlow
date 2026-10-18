@@ -133,6 +133,28 @@ func TestDiscoverArtifactUsesFinalizedPXEAndKerberosOutputs(t *testing.T) {
 	}
 }
 
+func TestDiscoverArtifactAtSelectsCompletedRustHoundRun(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "RustHoundCE", "rusthound-ce.log")
+	artifacts := filepath.Join(root, "RustHoundCE", "artifacts")
+	for _, name := range []string{"20261018-150226", "20261018-163658"} {
+		if err := os.MkdirAll(filepath.Join(artifacts, name), 0750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(output), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	completed := time.Date(2026, 10, 18, 15, 2, 26, 0, time.Local)
+	want := filepath.Join(artifacts, "20261018-150226")
+	if got := DiscoverArtifactAt("RustHound-CE", output, completed); got != want {
+		t.Fatalf("artifact=%q want %q", got, want)
+	}
+}
+
 func TestDiscoverArtifactAssociatesCertipyModuleWithExecutionLog(t *testing.T) {
 	root := t.TempDir()
 	certipyRoot := filepath.Join(root, "Enumeration", "Certipy")
