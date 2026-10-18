@@ -78,6 +78,9 @@ func TestAnalyzeGPOEvidenceInventoryIsInformationalAndTraceable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "collection.log"), []byte("inventory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "GPO_applicability.json"), []byte(`{"collection_execution_id":77,"gpos":[{"gpo_guid":"ABC","display_name":"Baseline"}],"configured_relationships":[{"classification":"configured_direct","applicability":"confirmed_configured_relationship"}],"limitations":["effective application not verified"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	inputs, err := AnalyzeSpecialized(context.Background(), filepath.Join(dir, "collection.log"), "AD GPO Evidence", 1, 77, nowForTest())
 	if err != nil || len(inputs) != 1 {
 		t.Fatalf("inputs=%#v err=%v", inputs, err)
@@ -88,6 +91,9 @@ func TestAnalyzeGPOEvidenceInventoryIsInformationalAndTraceable(t *testing.T) {
 	}
 	if strings.Contains(input.Description, "password") {
 		t.Fatal("secret-bearing text entered observation")
+	}
+	if !strings.Contains(input.Description, "Configured relationships analyzed: 1") || !strings.Contains(input.EvidenceJSON, "GPO_applicability.json") {
+		t.Fatalf("applicability evidence was not surfaced: %#v", input)
 	}
 }
 

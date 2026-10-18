@@ -70,6 +70,7 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 	manifestPath := filepath.Join(directory, "GPO_evidence_manifest.json")
 	metadataPath := filepath.Join(directory, "GPO_metadata.json")
 	linksPath := filepath.Join(directory, "GPO_links.json")
+	applicabilityPath := filepath.Join(directory, "GPO_applicability.json")
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("GPO evidence manifest unavailable: %w", err)
@@ -100,6 +101,24 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 	if len(metadata) == 0 || len(links) == 0 {
 		return nil, fmt.Errorf("GPO evidence metadata or links artifact is unavailable")
 	}
+	var applicability struct {
+		CollectionExecutionID int64 `json:"collection_execution_id"`
+		GPOs                  []struct {
+			GUID        string `json:"gpo_guid"`
+			DisplayName string `json:"display_name"`
+		} `json:"gpos"`
+		Links []struct {
+			Classification string `json:"classification"`
+			Applicability  string `json:"applicability"`
+		} `json:"configured_relationships"`
+		Limitations []string `json:"limitations"`
+	}
+	applicabilityData, applicabilityErr := os.ReadFile(applicabilityPath)
+	if applicabilityErr == nil {
+		if err := json.Unmarshal(applicabilityData, &applicability); err != nil {
+			return nil, fmt.Errorf("GPO applicability artifact is invalid: %w", err)
+		}
+	}
 	complete, partial := 0, 0
 	for _, gpo := range manifest.GPOs {
 		if gpo.Status == "complete" {
@@ -123,9 +142,20 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 			limitations = append(limitations, fmt.Sprintf("%s: %s (%s)", gpo.GPOGUID, gpo.ErrorSummary, gpo.Stage))
 		}
 	}
-	evidence, _ := json.Marshal(map[string]any{"execution_id": executionID, "gpos_discovered": len(manifest.GPOs), "gpos_complete": complete, "gpos_partial": partial, "sysvol_files": len(manifest.Files), "file_failures": failed, "file_limits": limited, "metadata": metadataPath, "links": linksPath, "manifest": manifestPath, "applicability": "not_verified", "wmi_filters": "references preserved; runtime results not evaluated", "security_filtering": "raw evidence only; effective rights not calculated", "retrieval_limitations": limitations})
-	description := fmt.Sprintf("Collected %d GPO(s) and %d preserved SYSVOL file record(s) from execution %d. Complete GPOs: %d; partial/limited GPOs: %d; file failures: %d; file limits: %d. Retrieval limitations: %s. Authoritative artifacts: %s, %s, %s, and %sSYSVOL/. Configured links are not proof of applicability; WMI runtime results, effective security filtering and client-side policy application were not verified.", len(manifest.GPOs), len(manifest.Files), executionID, complete, partial, failed, limited, strings.Join(limitations, "; "), filepath.Base(metadataPath), filepath.Base(linksPath), filepath.Base(manifestPath), filepath.Base(directory)+string(os.PathSeparator))
-	return []storage.FindingInput{specializedFinding(assessmentID, executionID, "gpo_evidence_inventory", "AD Group Policy Evidence Inventory", description, "informational", "", string(evidence), metadataPath, "GPO_metadata.json; GPO_links.json; GPO_evidence_manifest.json; SYSVOL/<GPO-GUID>/", now)}, nil
+	applicabilityLimitations := applicability.Limitations
+	if applicabilityErr != nil {
+		applicabilityLimitations = []string{"Applicability analysis artifact is unavailable; configured-link evidence remains available."}
+	} else if applicability.CollectionExecutionID != 0 && applicability.CollectionExecutionID != executionID {
+		applicabilityLimitations = append(applicabilityLimitations, fmt.Sprintf("Applicability artifact execution %d does not match evidence execution %d; correlation is historical/unverified.", applicability.CollectionExecutionID, executionID))
+	}
+	linkCount := len(applicability.Links)
+	applicabilityNames := make([]string, 0, len(applicability.GPOs))
+	for _, gpo := range applicability.GPOs {
+		applicabilityNames = append(applicabilityNames, fmt.Sprintf("%s (%s)", gpo.DisplayName, gpo.GUID))
+	}
+	evidence, _ := json.Marshal(map[string]any{"execution_id": executionID, "gpos_discovered": len(manifest.GPOs), "gpo_names": applicabilityNames, "gpos_complete": complete, "gpos_partial": partial, "sysvol_files": len(manifest.Files), "file_failures": failed, "file_limits": limited, "configured_relationships": linkCount, "metadata": metadataPath, "links": linksPath, "manifest": manifestPath, "applicability_analysis": applicabilityPath, "applicability": "configured relationships analyzed; effective application not verified", "wmi_filters": "references preserved; runtime results not evaluated", "security_filtering": "raw evidence only; effective rights not calculated", "retrieval_limitations": limitations, "analysis_limitations": applicabilityLimitations})
+	description := fmt.Sprintf("Collected %d GPO(s) and %d preserved SYSVOL file record(s) from execution %d. Complete GPOs: %d; partial/limited GPOs: %d; file failures: %d; file limits: %d. Configured relationships analyzed: %d. Retrieval limitations: %s. Authoritative artifacts: %s, %s, %s, %s, and %sSYSVOL/. Configured links are not proof of applicability; WMI runtime results, effective security filtering and client-side policy application were not verified.", len(manifest.GPOs), len(manifest.Files), executionID, complete, partial, failed, limited, linkCount, strings.Join(limitations, "; "), filepath.Base(metadataPath), filepath.Base(linksPath), filepath.Base(manifestPath), filepath.Base(applicabilityPath), filepath.Base(directory)+string(os.PathSeparator))
+	return []storage.FindingInput{specializedFinding(assessmentID, executionID, "gpo_evidence_inventory", "AD Group Policy Evidence Inventory", description, "informational", "", string(evidence), metadataPath, "GPO_metadata.json; GPO_links.json; GPO_evidence_manifest.json; GPO_applicability.json; GPO_APPLICABILITY_SUMMARY.txt; SYSVOL/<GPO-GUID>/", now)}, nil
 }
 
 func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
