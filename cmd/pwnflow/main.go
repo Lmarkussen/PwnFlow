@@ -48,7 +48,8 @@ func main() {
 		printShortUsage(os.Stderr)
 		os.Exit(2)
 	}
-	target := flag.String("target", "", "target address or hostname")
+	dcIP := flag.String("dc-ip", "", "domain controller IP address")
+	targetAlias := flag.String("target", "", "deprecated alias for --dc-ip")
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
 	passwordFlag := flag.String("password", "", "password (avoid on shared systems)")
@@ -60,7 +61,11 @@ func main() {
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
-	if *target == "" || *domain == "" || *username == "" {
+	target, targetErr := resolveDCIP(*dcIP, *targetAlias)
+	if targetErr != nil {
+		fail(targetErr)
+	}
+	if target == "" || *domain == "" || *username == "" {
 		printShortUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -77,7 +82,7 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		cfg, err := config.New(*target, *domain, *username, "", root)
+		cfg, err := config.New(target, *domain, *username, "", root)
 		if err != nil {
 			fail(err)
 		}
@@ -96,7 +101,7 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		cfg, err := config.New(*target, *domain, *username, "", root)
+		cfg, err := config.New(target, *domain, *username, "", root)
 		if err != nil {
 			fail(err)
 		}
@@ -161,7 +166,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	cfg, err := config.New(*target, *domain, *username, passwordValue, root)
+	cfg, err := config.New(target, *domain, *username, passwordValue, root)
 	if err != nil {
 		fail(err)
 	}
@@ -227,6 +232,16 @@ func main() {
 	if err := tui.Run(ctx, cfg, db, version, dependencyReasons); err != nil && !errors.Is(err, tui.ErrQuit) {
 		fail(err)
 	}
+}
+
+func resolveDCIP(canonical, deprecatedAlias string) (string, error) {
+	if canonical != "" && deprecatedAlias != "" && canonical != deprecatedAlias {
+		return "", errors.New("--dc-ip and deprecated --target cannot specify different values")
+	}
+	if canonical != "" {
+		return canonical, nil
+	}
+	return deprecatedAlias, nil
 }
 
 // trustOptions builds the verification options for the LDAP preflight: the

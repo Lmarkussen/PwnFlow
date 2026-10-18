@@ -128,12 +128,12 @@ func printFullHelp(w io.Writer) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, cliSection(theme, "USAGE"))
-	for _, line := range wrapCLI("pwnflow --target ADDRESS --domain DOMAIN --username USER [OPTIONS]", maxCLI(1, width-2)) {
+	for _, line := range wrapCLI("pwnflow --dc-ip ADDRESS --domain DOMAIN --username USER [OPTIONS]", maxCLI(1, width-2)) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintln(w)
 	printCLIOptions(w, theme, width, "CONNECTION", []cliHelpOption{
-		{"--target ADDRESS", "Domain controller address or hostname"},
+		{"--dc-ip ADDRESS", "Domain controller IP address"},
 		{"--domain DOMAIN", "Active Directory domain"},
 		{"--username USER", "Authentication username"},
 		{"--password PASSWORD", "Password; avoid exposing credentials in shell history or shared systems"},
@@ -154,7 +154,7 @@ func printFullHelp(w io.Writer) {
 		{"-h, --help", "Show this screen"},
 	})
 	fmt.Fprintln(w, cliSection(theme, "EXAMPLES"))
-	for _, line := range wrapCLI("pwnflow --target 10.1.10.40 --domain sccm.lab --username USER", maxCLI(1, width-2)) {
+	for _, line := range wrapCLI("pwnflow --dc-ip 10.1.10.40 --domain sccm.lab --username USER", maxCLI(1, width-2)) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintln(w)
@@ -200,7 +200,7 @@ func printShortUsage(w io.Writer) {
 	for _, line := range wrapCLI("PwnFlow — Active Directory Enumeration & Security Evidence", width) {
 		fmt.Fprintln(w, theme.paint(line, "1;92"))
 	}
-	for _, line := range wrapCLI("Usage: pwnflow --target ADDRESS --domain DOMAIN --username USER [OPTIONS]", maxCLI(1, width)) {
+	for _, line := range wrapCLI("Usage: pwnflow --dc-ip ADDRESS --domain DOMAIN --username USER [OPTIONS]", maxCLI(1, width)) {
 		fmt.Fprintln(w, line)
 	}
 	fmt.Fprintln(w, "Run 'pwnflow --help' for grouped options and examples.")

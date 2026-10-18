@@ -49,6 +49,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	},
 	"delegation": {{"delegation", "Delegation", "Delegation configurations and related observations"}},
 	"active_directory": {
+		{"protected_accounts", "Protected Accounts", "Observed adminCount and protected-group membership context"},
 		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
 		{"domain_security_policy", "Domain Security Policy", "Domain-default password and machine-account policy observations"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
@@ -89,6 +90,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl"
+	case strings.HasPrefix(typ, "ad_protected_accounts_"):
+		return "active_directory"
 	case strings.HasPrefix(typ, "ad_gpo_privilege_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_user_description_"):
@@ -129,6 +132,8 @@ func findingCategoryKey(finding storage.Finding) string {
 func findingSubcategoryKey(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType + " " + finding.Title)
 	switch {
+	case strings.HasPrefix(typ, "ad_protected_accounts_"):
+		return "protected_accounts"
 	case strings.HasPrefix(typ, "ad_privileged_acl_"):
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "ad_replication_rights_"):
@@ -711,6 +716,10 @@ func findingEvidenceSummary(finding storage.Finding) string {
 		metadata := findingMetadata(finding)
 		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured evidence: %s", finding.SourceTool, finding.SourceExecution, shortEvidencePath(finding.ArtifactPath), fallbackText(metadataString(metadata, "structured_artifact"), "execution-associated GPO privilege JSON"))
 	}
+	if strings.EqualFold(finding.FindingType, "ad_protected_accounts_admincount_evidence") {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured evidence: %s", finding.SourceTool, finding.SourceExecution, shortEvidencePath(finding.ArtifactPath), fallbackText(metadataString(metadata, "structured_artifact"), "execution-associated protected-accounts JSON"))
+	}
 	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
 }
 
@@ -769,6 +778,9 @@ func findingLimitations(finding storage.Finding) string {
 		}
 		lines = append(lines, "Effective permissions, certificate issuance, authentication, impersonation and attack-path prerequisites were not independently verified.")
 		return strings.Join(lines, "\n")
+	}
+	if strings.EqualFold(finding.FindingType, "ad_protected_accounts_admincount_evidence") {
+		return "adminCount is an observed attribute and does not prove current protected membership. Membership context and AdminSDHolder identity are source-backed observations; effective protection, complete security descriptors and SDProp application were not verified."
 	}
 	if strings.EqualFold(finding.FindingType, "ad_replication_rights_evidence_overview") {
 		return "Effective replication authorization and DCSync capability were not evaluated. NOT OBSERVED means no matching supported relationship was found in the inspected evidence; it does not mean denied or absent. Allow/deny precedence, inheritance applicability, object-specific restrictions, group scope, SIDHistory, cross-domain authorization and token semantics remain unknown."
@@ -1097,8 +1109,31 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		return formatGPOEvidenceCondition(metadata, finding)
 	case typ == "ad_gpo_privilege_relationship_evidence":
 		return formatGPOPrivilegeCondition(metadata, finding)
+	case typ == "ad_protected_accounts_admincount_evidence":
+		return formatProtectedAccountsCondition(metadata, finding)
 	}
 	return ""
+}
+
+func formatProtectedAccountsCondition(metadata map[string]any, finding storage.Finding) string {
+	lines := []string{"Observed adminCount and protected-group context:"}
+	if execution := finding.SourceExecution; execution > 0 {
+		lines = append(lines, fmt.Sprintf("RustHound execution: %d", execution))
+	}
+	if value := metadataInt(metadata, "admincount_users"); value >= 0 {
+		lines = append(lines, fmt.Sprintf("Users with adminCount=true: %d", value))
+	}
+	if value := metadataInt(metadata, "admincount_groups"); value >= 0 {
+		lines = append(lines, fmt.Sprintf("Groups with adminCount=true: %d", value))
+	}
+	if value := metadataInt(metadata, "membership_paths"); value >= 0 {
+		lines = append(lines, fmt.Sprintf("Observed membership paths retained: %d", value))
+	}
+	if value := metadataInt(metadata, "omitted_membership_paths"); value > 0 {
+		lines = append(lines, fmt.Sprintf("Membership paths omitted by bounds: %d", value))
+	}
+	lines = append(lines, "Effective protection: NOT VERIFIED", "AdminSDHolder descriptor completeness and SDProp application: NOT VERIFIED")
+	return strings.Join(lines, "\n")
 }
 
 func formatGPOPrivilegeCondition(metadata map[string]any, finding storage.Finding) string {
@@ -1208,6 +1243,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Review the observed replication-related permissions on the identified domain root. Confirm which principals require those rights, validate effective permissions using approved AD administration methods, and remove unnecessary grants only after verifying their operational purpose."
 	case typ == "ad_gpo_privilege_relationship_evidence":
 		return "Review the observed GPO ACL principal/right combinations and configured links. Validate effective GPC and SYSVOL permissions, intended policy scope and actual processing with approved AD administration tools before changing policy access."
+	case typ == "ad_protected_accounts_admincount_evidence":
+		return "Review the observed adminCount values, protected-group membership paths and AdminSDHolder evidence. Validate current membership, complete security descriptors and SDProp behavior with approved AD administration tools before making access-control changes."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

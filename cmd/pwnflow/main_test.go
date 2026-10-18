@@ -100,6 +100,29 @@ func TestCLIHelpUsesEmbeddedBannerAndPlainFallback(t *testing.T) {
 			t.Fatalf("help is missing %q", required)
 		}
 	}
+	if !strings.Contains(plain, "--dc-ip ADDRESS") || strings.Contains(plain, "--target ADDRESS") {
+		t.Fatalf("help does not use canonical --dc-ip syntax: %s", plain)
+	}
+}
+
+func TestResolveDCIPCompatibilityAlias(t *testing.T) {
+	for _, test := range []struct {
+		name, canonical, alias, want string
+	}{
+		{"canonical", "192.0.2.1", "", "192.0.2.1"},
+		{"deprecated alias", "", "192.0.2.2", "192.0.2.2"},
+		{"same value", "192.0.2.3", "192.0.2.3", "192.0.2.3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := resolveDCIP(test.canonical, test.alias)
+			if err != nil || got != test.want {
+				t.Fatalf("resolveDCIP() = %q, %v; want %q", got, err, test.want)
+			}
+		})
+	}
+	if _, err := resolveDCIP("192.0.2.1", "192.0.2.2"); err == nil {
+		t.Fatal("conflicting canonical and deprecated target values were accepted")
+	}
 }
 
 func TestCLIHelpNarrowWrappingKeepsWordsReadable(t *testing.T) {
