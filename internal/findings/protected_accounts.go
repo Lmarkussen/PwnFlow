@@ -245,7 +245,7 @@ func AnalyzeProtectedAccounts(ctx context.Context, inputPath string, assessmentI
 		result.OmittedPaths = 1
 		result.Status = "partial"
 	}
-	result.AdminSDHolder = findAdminSDHolder(objects, inputPath)
+	result.AdminSDHolder = findAdminSDHolder(objects)
 	if result.AdminSDHolder == nil {
 		result.Status = "partial"
 		result.Limitations = append(result.Limitations, "AdminSDHolder object was not found in this source snapshot.")
@@ -358,7 +358,7 @@ func dedupeProtectedPaths(in []ProtectedMembershipPath) []ProtectedMembershipPat
 	}
 	return out
 }
-func findAdminSDHolder(objects map[string]protectedObject, input string) *AdminSDHolderEvidence {
+func findAdminSDHolder(objects map[string]protectedObject) *AdminSDHolderEvidence {
 	for _, o := range objects {
 		if o.Type != "container" {
 			continue
