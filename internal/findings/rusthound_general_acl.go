@@ -148,7 +148,7 @@ func WriteGeneralACLInventoryArtifacts(resultsRoot string, report GeneralACLInve
 	if err := writeProtectedFile(structuredPath, data, 0600); err != nil {
 		return "", "", err
 	}
-	reportPath := filepath.Join(resultsRoot, "AD_ACL_EVIDENCE.txt")
+	reportPath := filepath.Join(directory, "AD_ACL_EVIDENCE.txt")
 	if err := writeProtectedFile(reportPath, []byte(FormatGeneralACLInventoryReport(report)), 0600); err != nil {
 		return "", "", err
 	}
