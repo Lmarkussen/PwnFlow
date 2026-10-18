@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/security"
 )
@@ -39,28 +40,28 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 		return result
 	}
 	if err := m.Check(ctx, runtime); err != nil {
-		result.Status, result.Err, result.Finished = statusForCheck(ctx, err), err, time.Now()
+		result.Status, result.Err, result.Finished = statusForCheck(ctx, err), formatFailure("dependency check", err, r.Secrets), time.Now()
 		return result
 	}
 	path := filepath.Join(root, m.OutputFile())
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
-		result.Status, result.Err, result.Finished = "failed", err, time.Now()
+		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
 	history := filepath.Join(filepath.Dir(path), "history", started.Format("20060102-150405")+".txt")
 	if err := os.MkdirAll(filepath.Dir(history), 0750); err != nil {
-		result.Status, result.Err, result.Finished = "failed", err, time.Now()
+		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
 	file, err := os.OpenFile(history, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
-		result.Status, result.Err, result.Finished = "failed", err, time.Now()
+		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
 	defer file.Close()
 	latest, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
-		result.Status, result.Err, result.Finished = "failed", err, time.Now()
+		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
 	defer latest.Close()
@@ -84,7 +85,7 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 	result.Finished = time.Now()
 	result.OutputPath = path
 	if err != nil {
-		result.Status, result.Err = statusFor(ctx, err), redactError(err, r.Secrets)
+		result.Status, result.Err = statusFor(ctx, err), formatFailure("execution", err, r.Secrets, path)
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
@@ -148,4 +149,49 @@ func statusFor(ctx context.Context, err error) string {
 }
 func redactError(err error, secrets []string) error {
 	return fmt.Errorf("%s", security.RedactString(strings.TrimSpace(err.Error()), secrets...))
+}
+
+func formatFailure(stage string, err error, secrets []string, evidencePath ...string) error {
+	if err == nil {
+		return nil
+	}
+	category, action := failureCategory(err)
+	reason := security.RedactString(strings.TrimSpace(err.Error()), secrets...)
+	message := fmt.Sprintf("Stage: %s\nCategory: %s\nReason: %s\nSuggested action: %s", stage, category, reason, action)
+	if len(evidencePath) > 0 && evidencePath[0] != "" {
+		message += "\nEvidence: " + evidencePath[0]
+	}
+	return errors.New(message)
+}
+
+func failureCategory(err error) (string, string) {
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", "Retry when the operator is ready."
+	}
+	var ldapErr *ldap.Error
+	if errors.As(err, &ldapErr) {
+		switch ldapErr.ResultCode {
+		case ldap.LDAPResultInvalidCredentials:
+			return "authentication rejected by LDAP server", "Check this module's authentication mechanism and username/domain format; do not infer that global startup authentication failed."
+		case ldap.LDAPResultStrongAuthRequired, ldap.LDAPResultConfidentialityRequired:
+			return "LDAP signing/integrity required", "Use the module's supported secure LDAP transport."
+		case ldap.LDAPResultInsufficientAccessRights:
+			return "permission denied", "Verify the account has the permissions required by this module."
+		}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return fmt.Sprintf("tool execution failed (exit %d)", exitErr.ExitCode()), "Review the protected module log and the tool's reported error."
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "timeout"), strings.Contains(text, "deadline exceeded"):
+		return "timeout", "Verify target service readiness and retry."
+	case strings.Contains(text, "permission denied"), strings.Contains(text, "access denied"):
+		return "permission denied", "Verify the account and target permissions required by this module."
+	case strings.Contains(text, "not found"), strings.Contains(text, "required"):
+		return "dependency or required resource unavailable", "Verify the installed tool path and required target resource."
+	default:
+		return "execution failed; cause not established", "Review the protected module log and underlying tool output."
+	}
 }

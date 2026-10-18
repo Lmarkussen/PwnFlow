@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
 
@@ -29,6 +31,53 @@ func (testModule) Check(context.Context, *modules.Runtime) error { return nil }
 func (testModule) Run(_ context.Context, _ *modules.Runtime, sink modules.OutputSink) error {
 	_, err := sink.Write([]byte("before secret after"))
 	return err
+}
+
+type checkFailingModule struct{ testModule }
+
+func (checkFailingModule) Check(context.Context, *modules.Runtime) error {
+	return errors.New("required executable not found in configured tool environment")
+}
+
+type ldapFailingModule struct{ testModule }
+
+func (ldapFailingModule) Run(context.Context, *modules.Runtime, modules.OutputSink) error {
+	return &ldap.Error{ResultCode: ldap.LDAPResultInvalidCredentials, Err: errors.New("data 52e")}
+}
+
+func TestExecuteFailureDetailsIncludeStageCategoryAndAction(t *testing.T) {
+	result := (Runner{Secrets: []string{"secret"}, BufferLimit: 100}).Execute(context.Background(), checkFailingModule{}, &modules.Runtime{}, t.TempDir())
+	if result.Status != "unavailable" || result.Err == nil {
+		t.Fatalf("status=%s err=%v", result.Status, result.Err)
+	}
+	for _, want := range []string{"Stage: dependency check", "Category: dependency or required resource unavailable", "Suggested action:"} {
+		if !strings.Contains(result.Err.Error(), want) {
+			t.Fatalf("missing %q: %v", want, result.Err)
+		}
+	}
+}
+
+func TestExecuteModuleLDAPRejectionIsModuleScopedAndTraceable(t *testing.T) {
+	root := t.TempDir()
+	result := (Runner{Secrets: []string{"secret"}, BufferLimit: 100}).Execute(context.Background(), ldapFailingModule{}, &modules.Runtime{}, root)
+	if result.Status != "failed" || result.Err == nil {
+		t.Fatalf("status=%s err=%v", result.Status, result.Err)
+	}
+	for _, want := range []string{"Stage: execution", "authentication rejected by LDAP server", "49", "52e", "global startup authentication", "Evidence:"} {
+		if !strings.Contains(result.Err.Error(), want) {
+			t.Fatalf("missing %q: %v", want, result.Err)
+		}
+	}
+}
+
+func TestExecuteToolExitWithoutStructuredCausePreservesUncertainty(t *testing.T) {
+	module := failingModule{err: func() error {
+		return exec.Command("sh", "-c", "exit 1").Run()
+	}()}
+	result := (Runner{Secrets: nil, BufferLimit: 100}).Execute(context.Background(), module, &modules.Runtime{}, t.TempDir())
+	if !strings.Contains(result.Err.Error(), "tool execution failed (exit 1)") || !strings.Contains(result.Err.Error(), "Review the protected module log") {
+		t.Fatalf("unexpected tool failure detail: %v", result.Err)
+	}
 }
 
 // Tool output is assessment evidence: a bare occurrence of a value is preserved. Only a

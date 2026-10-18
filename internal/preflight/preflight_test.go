@@ -2,10 +2,15 @@ package preflight
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 )
@@ -16,6 +21,111 @@ func TestBindIdentityUsesUPN(t *testing.T) {
 	}
 	if got := BindIdentity("user@corp.example", "corp.example"); got != "user@corp.example" {
 		t.Fatalf("qualified identity changed to %q", got)
+	}
+}
+
+func TestDiagnosticCategoriesFromStructuredErrors(t *testing.T) {
+	tests := map[string]struct {
+		err      error
+		category DiagnosticCategory
+		phrase   string
+	}{
+		"ldap 49 52e": {
+			err:      &ldap.Error{ResultCode: ldap.LDAPResultInvalidCredentials, Err: errors.New("data 52e")},
+			category: CategoryAuthenticationRejected,
+			phrase:   "does not by itself prove that the password is incorrect",
+		},
+		"ldap signing": {
+			err:      &ldap.Error{ResultCode: ldap.LDAPResultStrongAuthRequired, Err: errors.New("strongerAuthRequired")},
+			category: CategoryLDAPIntegrityRequired,
+			phrase:   "requires signing or integrity protection",
+		},
+		"refused": {
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			category: CategoryConnectionRefused,
+			phrase:   "explicitly refused",
+		},
+		"timeout": {
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: context.DeadlineExceeded},
+			category: CategoryConnectionTimeout,
+			phrase:   "timed out",
+		},
+		"dns": {
+			err:      &net.DNSError{Name: "dc.example.test", Err: "no such host"},
+			category: CategoryTargetUnreachable,
+			phrase:   "No usable network connection",
+		},
+		"tls identity": {
+			err:      x509.HostnameError{Certificate: &x509.Certificate{}, Host: "10.1.10.40"},
+			category: CategoryTLSIdentityFailed,
+			phrase:   "identity validation",
+		},
+		"tls trust": {
+			err:      x509.UnknownAuthorityError{},
+			category: CategoryTLSTrustFailed,
+			phrase:   "certificate validation",
+		},
+		"tls handshake": {
+			err:      tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"},
+			category: CategoryTLSHandshakeFailed,
+			phrase:   "TLS negotiation",
+		},
+		"cancelled": {
+			err:      context.Canceled,
+			category: CategoryCancelled,
+			phrase:   "cancelled",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := classifyBindFailureWithContext(&ldaptransport.Error{Kind: ldaptransport.KindConnectivity, Attempts: []ldaptransport.Attempt{{Transport: ldaptransport.LDAP, Endpoint: "dc:389", Err: test.err, Kind: ldaptransport.Classify(test.err)}}}, false, "10.1.10.40", "sccm.lab", "secret")
+			failure := new(Failure)
+			if !errors.As(err, &failure) || failure.Category != test.category {
+				t.Fatalf("category=%q error=%v", failure.Category, err)
+			}
+			if !strings.Contains(err.Error(), test.phrase) {
+				t.Fatalf("message missing %q: %v", test.phrase, err)
+			}
+		})
+	}
+}
+
+func TestDiagnosticPrecedencePrefersExplicitLDAPRejection(t *testing.T) {
+	err := &ldaptransport.Error{Kind: ldaptransport.KindConnectivity, Attempts: []ldaptransport.Attempt{
+		{Transport: ldaptransport.LDAP, Endpoint: "dc:389", Kind: ldaptransport.KindAuthentication, Err: &ldap.Error{ResultCode: ldap.LDAPResultInvalidCredentials, Err: errors.New("data 52e")}},
+		{Transport: ldaptransport.LDAPS, Endpoint: "dc:636", Kind: ldaptransport.KindConnectivity, Err: &net.OpError{Op: "dial", Net: "tcp", Err: context.DeadlineExceeded}},
+	}}
+	got := classifyBindFailureWithContext(err, false, "10.1.10.40", "sccm.lab", "secret")
+	if !strings.Contains(got.Error(), "authentication_rejected") || !strings.Contains(got.Error(), "49") {
+		t.Fatalf("explicit LDAP rejection was not preferred: %v", got)
+	}
+}
+
+func TestDiagnosticRecognizesADAccountStateSubcodes(t *testing.T) {
+	tests := map[string]DiagnosticCategory{
+		"525": CategoryAccountNotFound,
+		"532": CategoryPasswordExpired,
+		"533": CategoryAccountDisabled,
+		"701": CategoryAccountExpired,
+		"773": CategoryPasswordExpired,
+		"775": CategoryAccountLocked,
+	}
+	for subcode, want := range tests {
+		err := &ldaptransport.Error{Kind: ldaptransport.KindAuthentication, Attempts: []ldaptransport.Attempt{{Transport: ldaptransport.LDAP, Endpoint: "dc:389", Kind: ldaptransport.KindAuthentication, Err: &ldap.Error{ResultCode: ldap.LDAPResultInvalidCredentials, Err: errors.New("data " + subcode)}}}}
+		failure, ok := classifyBindFailureWithContext(err, false, "10.1.10.40", "sccm.lab", "secret").(*Failure)
+		if !ok || failure.Category != want {
+			t.Errorf("subcode %s category=%q want=%q", subcode, failure.Category, want)
+		}
+	}
+}
+
+func TestDiagnosticRedactsSecrets(t *testing.T) {
+	err := classifyBindFailureWithContext(errors.New("bind failed password=SuperSecret token=abc123"), false, "10.1.10.40", "sccm.lab", "SuperSecret")
+	text := err.Error()
+	for _, secret := range []string{"SuperSecret", "abc123"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("diagnostic leaked %q: %s", secret, text)
+		}
 	}
 }
 
