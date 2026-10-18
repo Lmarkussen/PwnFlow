@@ -741,6 +741,11 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.findingDetail {
 		switch key {
+		case "a", "A":
+			if m.inlineEvidence.accountScopedPath != "" {
+				m.openFindingEvidencePath(m.inlineEvidence.accountScopedPath)
+			}
+			return m, nil
 		case "e":
 			if len(m.findingRows) > 0 {
 				m.openFindingEvidence(m.findingRows[m.findingCursor])

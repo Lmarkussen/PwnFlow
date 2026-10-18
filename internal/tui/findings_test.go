@@ -1444,15 +1444,16 @@ func TestKerberosFindingDetailRendersScopedInlineMaterial(t *testing.T) {
 		width:         120,
 		height:        40,
 		inlineEvidence: inlineEvidence{
-			section: "RECOVERED KERBEROS MATERIAL",
-			lines:   []string{"REDACTED_MATERIAL_A", "REDACTED_MATERIAL_B"},
+			section:             "RECOVERED KERBEROS MATERIAL",
+			lines:               []string{"REDACTED_MATERIAL_A", "REDACTED_MATERIAL_B"},
+			uniqueMaterialCount: 2,
 		},
 	}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "REDACTED_MATERIAL_A") || !strings.Contains(view, "REDACTED_MATERIAL_B") {
-		t.Fatal("account-specific Kerberos material was not rendered")
+	if !strings.Contains(view, "REDACTED_MATERIAL_A") || strings.Contains(view, "REDACTED_MATERIAL_B") {
+		t.Fatal("Finding did not render exactly one representative Kerberos record")
 	}
-	for _, expected := range []string{"sccm.lab\\svc-sql", "Unique material entries: 2", "Duplicate records: 0", "original artifact"} {
+	for _, expected := range []string{"sccm.lab\\svc-sql", "Unique material entries: 2", "Additional unique hashes: 1", "original artifact"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("protected Kerberos detail omitted %q: %s", expected, view)
 		}
@@ -1549,5 +1550,19 @@ func TestFindingsADCSSequencePreservesRootIdentityAcrossCategories(t *testing.T)
 	m.handleFindingsKey("left")
 	if m.findingCategory != "" || m.findingCursor != adcsIndex {
 		t.Fatalf("repeated Right/Left changed AD CS root selection: category=%q cursor=%d want=%d", m.findingCategory, m.findingCursor, adcsIndex)
+	}
+}
+
+func TestKerberosAccountEvidenceActionOpensDerivedReport(t *testing.T) {
+	m := &model{
+		findingsView:   true,
+		findingDetail:  true,
+		inlineEvidence: inlineEvidence{accountScopedPath: "CredentialAuditing/NetExec/account-scoped/finding-test-account-scoped.txt"},
+		width:          100,
+		height:         24,
+	}
+	m.handleFindingsKey("a")
+	if !m.evidenceView || m.evidencePath != m.inlineEvidence.accountScopedPath {
+		t.Fatalf("account evidence action did not open derived report: view=%t path=%q", m.evidenceView, m.evidencePath)
 	}
 }

@@ -558,8 +558,11 @@ func (m *model) findingsViewRender() string {
 				detail.WriteString(fmt.Sprintf("Unique material entries: %d\n", uniqueCount))
 				detail.WriteString(fmt.Sprintf("Duplicate records: %d\n", m.inlineEvidence.duplicateRecordCount))
 				detail.WriteString("\nCOLLECTED KERBEROS MATERIAL\n")
-				for index, line := range m.inlineEvidence.lines {
-					detail.WriteString(fmt.Sprintf("  Hash %d:\n    %s\n", index+1, line))
+				if len(m.inlineEvidence.lines) > 0 {
+					detail.WriteString("  " + m.inlineEvidence.lines[0] + "\n")
+				}
+				if additional := m.inlineEvidence.uniqueMaterialCount - 1; additional > 0 {
+					detail.WriteString(fmt.Sprintf("Additional unique hashes: %d\n", additional))
 				}
 				if m.inlineEvidence.accountScopedPath != "" {
 					detail.WriteString("Account-scoped evidence: " + m.inlineEvidence.accountScopedPath + "\n")
@@ -584,7 +587,7 @@ func (m *model) findingsViewRender() string {
 		m.findingDetailTop = min(max(0, m.findingDetailTop), maxDetailTop)
 		endDetail := min(len(detailLines), m.findingDetailTop+detailPageSize)
 		content.WriteString(strings.Join(detailLines[m.findingDetailTop:endDetail], "\n"))
-		content.WriteString(dim.Render("\n↑/↓ Scroll    PgUp/PgDn Change Finding    ←/Esc Back    E Evidence    Q Quit"))
+		content.WriteString(dim.Render("\n↑/↓ Scroll    PgUp/PgDn Change Finding    ←/Esc Back    A Account Evidence    E Original Evidence    Q Quit"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
 	if len(m.findingRows) == 0 {

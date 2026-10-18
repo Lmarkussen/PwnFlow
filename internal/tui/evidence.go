@@ -160,11 +160,11 @@ func loadInlineEvidence(cfg config.Config, finding storage.Finding) inlineEviden
 		result.error = "Recovered Kerberos material could not be loaded from the referenced artifact."
 		return result
 	}
-	result.accountScopedPath = writeKerberosScopedEvidence(path, cfg.ResultsRoot(), finding, metadata, result.lines)
+	result.accountScopedPath = writeKerberosScopedEvidence(path, cfg.ResultsRoot(), finding, metadata, result.lines, result.sourceRecordCount, result.uniqueMaterialCount, result.duplicateRecordCount)
 	return result
 }
 
-func writeKerberosScopedEvidence(sourcePath, resultsRoot string, finding storage.Finding, metadata map[string]any, lines []string) string {
+func writeKerberosScopedEvidence(sourcePath, resultsRoot string, finding storage.Finding, metadata map[string]any, lines []string, sourceCount, uniqueCount, duplicateCount int) string {
 	if len(lines) == 0 {
 		return ""
 	}
@@ -182,6 +182,10 @@ func writeKerberosScopedEvidence(sourcePath, resultsRoot string, finding storage
 	report.WriteString(fmt.Sprintf("Source execution: %d\n", finding.SourceExecution))
 	report.WriteString("Principal: " + metadataString(metadata, "principal") + "\n")
 	report.WriteString("Material type: " + metadataString(metadata, "material_type") + "\n")
+	report.WriteString(fmt.Sprintf("Source records: %d\n", sourceCount))
+	report.WriteString(fmt.Sprintf("Unique hashes: %d\n", uniqueCount))
+	report.WriteString(fmt.Sprintf("Exact duplicate captures: %d\n", duplicateCount))
+	report.WriteString("Ambiguous/unresolved matched records: 0\n")
 	report.WriteString("Source line references: " + strings.Join(intStrings(intSlice(metadata["record_line_numbers"])), ", ") + "\n")
 	report.WriteString("\nCOLLECTED MATERIAL\n")
 	for _, line := range lines {
@@ -506,7 +510,6 @@ func readEvidenceLines(path string) ([]string, error) {
 }
 
 func (m *model) openFindingEvidence(finding storage.Finding) {
-	m.evidenceView, m.evidenceTop = true, 0
 	evidenceReference := finding.ArtifactPath
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") || strings.EqualFold(finding.FindingType, "ad_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
@@ -514,6 +517,11 @@ func (m *model) openFindingEvidence(finding storage.Finding) {
 			evidenceReference = report
 		}
 	}
+	m.openFindingEvidencePath(evidenceReference)
+}
+
+func (m *model) openFindingEvidencePath(evidenceReference string) {
+	m.evidenceView, m.evidenceTop = true, 0
 	m.evidencePath, m.evidenceError, m.evidenceLines = evidenceReference, "", nil
 	path, err := m.safeEvidencePath(evidenceReference)
 	if err != nil {
