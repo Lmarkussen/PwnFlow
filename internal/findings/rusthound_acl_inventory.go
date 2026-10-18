@@ -561,18 +561,38 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 	fmt.Fprintln(&b, "\n----------------------------------------------------------------------\nOBSERVED RELATIONSHIPS\n----------------------------------------------------------------------")
 	for _, target := range report.HighValueTargets {
 		fmt.Fprintf(&b, "\nTarget: %s\nIdentity: %s\nType: %s\n", target.Name, target.ID, target.ObjectType)
+		byPermission := map[string][]ACLInventoryRelationship{}
 		for _, rel := range report.Relationships {
 			if rel.TargetID == target.ID {
+				byPermission[rel.Permission] = append(byPermission[rel.Permission], rel)
+			}
+		}
+		permissions := make([]string, 0, len(byPermission))
+		for permission := range byPermission {
+			permissions = append(permissions, permission)
+		}
+		sort.Strings(permissions)
+		for _, permission := range permissions {
+			fmt.Fprintf(&b, "  Permission: %s\n", permission)
+			relations := byPermission[permission]
+			sort.SliceStable(relations, func(i, j int) bool {
+				left, right := relations[i], relations[j]
+				if left.PrincipalName != right.PrincipalName {
+					return left.PrincipalName < right.PrincipalName
+				}
+				return left.PrincipalID < right.PrincipalID
+			})
+			for _, rel := range relations {
 				principal := rel.PrincipalName
 				if principal == "" {
 					principal = "(unresolved)"
 				}
-				fmt.Fprintf(&b, "  %s -> %s -> %s [%s]\n", principal, rel.Permission, target.Name, target.ID)
-				fmt.Fprintf(&b, "    Decision: %s | Inheritance: %s | Principal ID: %s | Target type: %s\n", rel.Decision, rel.Inheritance, rel.PrincipalID, rel.TargetType)
+				fmt.Fprintf(&b, "    %s [%s]\n", principal, rel.PrincipalID)
+				fmt.Fprintf(&b, "      Decision: %s | Inheritance: %s | Target type: %s\n", rel.Decision, rel.Inheritance, rel.TargetType)
 				if rel.ObjectType != "" || rel.InheritedObjectType != "" {
-					fmt.Fprintf(&b, "    Object restriction: object_type=%s inherited_object_type=%s\n", rel.ObjectType, rel.InheritedObjectType)
+					fmt.Fprintf(&b, "      Object restriction: object_type=%s inherited_object_type=%s\n", rel.ObjectType, rel.InheritedObjectType)
 				}
-				fmt.Fprintf(&b, "    Source: %s#%s\n", rel.Artifact, rel.ArtifactRef)
+				fmt.Fprintf(&b, "      Source: %s#%s\n", rel.Artifact, rel.ArtifactRef)
 			}
 		}
 	}
@@ -581,10 +601,12 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 	if len(report.MembershipContext) == 0 {
 		fmt.Fprintln(&b, "No membership context observed in this collection.")
 	} else {
-		for _, context := range report.MembershipContext {
-			fmt.Fprintf(&b, "\nTarget: %s [%s]\nObserved ACL: %s -> %s\nACL principal: %s [%s]\n", context.TargetName, context.TargetID, fallbackReportText(context.ACLPrincipalName, context.ACLPrincipalID), context.Permission, fallbackReportText(context.ACLPrincipalName, context.ACLPrincipalID), context.ACLPrincipalID)
-			fmt.Fprintf(&b, "Member: %s [%s]\nPath: %s\nClassification: %s\nEffective permission: %s\n", fallbackReportText(context.MemberName, context.MemberID), context.MemberID, formatMembershipPath(context), context.Classification, context.EffectivePermission)
-			fmt.Fprintf(&b, "Membership evidence: %s\nACL evidence: %s#%s\n", formatMembershipEvidence(context), context.ACLArtifact, context.ACLArtifactRef)
+		for _, group := range groupACLMembershipContexts(report.MembershipContext) {
+			fmt.Fprintf(&b, "\nTarget: %s [%s]\n", fallbackReportText(group.TargetName, group.TargetID), group.TargetID)
+			fmt.Fprintf(&b, "  Permission: %s\n  ACL principal: %s [%s]\n  Observed members:\n", group.Permission, fallbackReportText(group.PrincipalName, group.PrincipalID), group.PrincipalID)
+			for _, context := range group.Contexts {
+				fmt.Fprintf(&b, "    - %s [%s]\n      Path: %s\n      Classification: %s\n      Effective permission: %s\n      Membership evidence: %s\n      ACL evidence: %s#%s\n", fallbackReportText(context.MemberName, context.MemberID), context.MemberID, formatMembershipPath(context), context.Classification, fallbackReportText(context.EffectivePermission, "NOT VERIFIED"), formatMembershipEvidence(context), context.ACLArtifact, context.ACLArtifactRef)
+			}
 		}
 	}
 	for _, limitation := range report.MembershipLimitations {
@@ -614,6 +636,47 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 	}
 	fmt.Fprintln(&b, "- This report contains observed ACL relationships only; it does not verify effective access, DCSync capability, an attack path or exploitability.")
 	return b.String()
+}
+
+type aclMembershipContextGroup struct {
+	TargetName, TargetID       string
+	Permission                 string
+	PrincipalName, PrincipalID string
+	Contexts                   []ACLMembershipContext
+}
+
+func groupACLMembershipContexts(contexts []ACLMembershipContext) []aclMembershipContextGroup {
+	groups := map[string]*aclMembershipContextGroup{}
+	for _, context := range contexts {
+		key := strings.Join([]string{context.TargetID, context.Permission, context.ACLPrincipalID}, "\x00")
+		group := groups[key]
+		if group == nil {
+			group = &aclMembershipContextGroup{TargetName: context.TargetName, TargetID: context.TargetID, Permission: context.Permission, PrincipalName: context.ACLPrincipalName, PrincipalID: context.ACLPrincipalID}
+			groups[key] = group
+		}
+		group.Contexts = append(group.Contexts, context)
+	}
+	ordered := make([]aclMembershipContextGroup, 0, len(groups))
+	for _, group := range groups {
+		sort.SliceStable(group.Contexts, func(i, j int) bool {
+			left, right := group.Contexts[i], group.Contexts[j]
+			if left.MemberName != right.MemberName {
+				return left.MemberName < right.MemberName
+			}
+			return left.MemberID < right.MemberID
+		})
+		ordered = append(ordered, *group)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		for _, pair := range [][2]string{{left.TargetName, right.TargetName}, {left.TargetID, right.TargetID}, {left.Permission, right.Permission}, {left.PrincipalName, right.PrincipalName}, {left.PrincipalID, right.PrincipalID}} {
+			if pair[0] != pair[1] {
+				return pair[0] < pair[1]
+			}
+		}
+		return false
+	})
+	return ordered
 }
 
 func fallbackReportText(value, fallback string) string {

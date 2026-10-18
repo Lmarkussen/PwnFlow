@@ -513,7 +513,10 @@ func (m *model) findingsViewRender() string {
 			objectWidth := max(12, width-titleWidth-22)
 			severityText := strings.ToUpper(finding.Severity)
 			severityField := severityStyle(finding.Severity).Render(severityText) + strings.Repeat(" ", max(1, 11-ansi.StringWidthWc(severityText)))
-			line := fmt.Sprintf("%s%s %-*s %s", selectionPrefix(selected), severityField, titleWidth, selectionLabel(truncateFinding(finding.Title, titleWidth), selected), truncateFinding(object, objectWidth))
+			title := truncateFinding(finding.Title, titleWidth)
+			titleField := selectionLabel(title, selected) + strings.Repeat(" ", max(0, titleWidth-ansi.StringWidthWc(title)))
+			objectField := truncateFinding(object, objectWidth)
+			line := fmt.Sprintf("%s%s %s %s", selectionPrefix(selected), severityField, titleField, objectField)
 			content.WriteString(line + "\n")
 		}
 	}
@@ -641,7 +644,11 @@ func findingEvidenceSummary(finding storage.Finding) string {
 	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
-		return fmt.Sprintf("%s · Execution %d\nFull report: %s\nStructured inventory: %s\nOriginal RustHound source: %s", finding.SourceTool, finding.SourceExecution, metadataString(metadata, "human_report"), fallbackText(finding.ArtifactPath, metadataString(metadata, "structured_artifact")), metadataString(metadata, "source_artifact"))
+		structured := metadataString(metadata, "structured_artifact")
+		if structured == "" {
+			structured = shortEvidencePath(finding.ArtifactPath)
+		}
+		return fmt.Sprintf("%s — Execution %d\nSource artifacts: %s\nFull report: %s\nStructured inventory: %s", finding.SourceTool, finding.SourceExecution, aclEvidenceNames(metadata), fallbackText(metadataString(metadata, "human_report"), "AD_PRIVILEGED_ACL_EVIDENCE.txt"), fallbackText(structured, "execution-associated ACL inventory JSON"))
 	}
 	if strings.EqualFold(finding.FindingType, "gpo_evidence_inventory") {
 		metadata := findingMetadata(finding)
@@ -658,6 +665,52 @@ func findingEvidenceSummary(finding storage.Finding) string {
 		return strings.Join(lines, "\n")
 	}
 	return fmt.Sprintf("%s · Execution %d\n%s %s", finding.SourceTool, finding.SourceExecution, finding.ArtifactPath, finding.ArtifactRef)
+}
+
+func shortEvidencePath(value string) string {
+	value = strings.TrimSpace(value)
+	if index := strings.LastIndexAny(value, "/\\"); index >= 0 {
+		return value[index+1:]
+	}
+	return value
+}
+
+func aclEvidenceNames(metadata map[string]any) string {
+	seen := map[string]bool{}
+	var names []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if index := strings.LastIndexAny(value, "/\\"); index >= 0 {
+			value = value[index+1:]
+		}
+		if !seen[value] {
+			seen[value] = true
+			names = append(names, value)
+		}
+	}
+	add(metadataString(metadata, "source_artifact"))
+	for _, key := range []string{"relationship_overview", "membership_context"} {
+		values, _ := metadata[key].([]any)
+		for _, raw := range values {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			add(metadataString(item, "artifact"))
+			add(metadataString(item, "acl_artifact"))
+			for _, artifact := range metadataStringSlice(item, "membership_artifacts") {
+				add(artifact)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "source artifact unavailable"
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func findingLimitations(finding storage.Finding) string {
@@ -696,6 +749,7 @@ func findingLimitations(finding storage.Finding) string {
 		}
 		if count := metadataInt(metadata, "omitted_membership_paths"); count > 0 {
 			lines = append(lines, fmt.Sprintf("%d membership paths were omitted by bounded processing.", count))
+			lines = append(lines, "The retained preview and report are bounded; omitted paths are not verified permissions.")
 		}
 		lines = append(lines, "Effective permissions, group-derived rights, deny precedence and exploitability were not evaluated.")
 		if limitations := metadataStringSlice(metadata, "membership_limitations"); len(limitations) > 0 {
@@ -758,20 +812,57 @@ func formatACLInventoryOverview(finding storage.Finding) string {
 		b.WriteString("\nNo membership context observed in this collection.")
 		return b.String()
 	}
-	membershipAdditional := metadataInt(metadata, "direct_membership_paths") + metadataInt(metadata, "nested_membership_paths") - len(membership)
-	if membershipAdditional < 0 {
-		membershipAdditional = 0
+	type membershipGroup struct {
+		targetName, targetID, targetClass      string
+		permission, principalName, principalID string
+		paths                                  []map[string]any
 	}
-	fmt.Fprintf(&b, "\nMembership-context relationships (showing %d; %d additional in the full report):\n", len(membership), membershipAdditional)
+	groups := make(map[string]*membershipGroup)
 	for _, raw := range membership {
 		context, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		member := fallbackText(metadataString(context, "member_name"), metadataString(context, "member_id"))
-		principal := fallbackText(metadataString(context, "acl_principal_name"), metadataString(context, "acl_principal_id"))
-		target := fallbackText(metadataString(context, "target_name"), metadataString(context, "target_id"))
-		fmt.Fprintf(&b, "- %s [%s] -> %s -> %s [%s]\n  ACL principal: %s [%s]\n  Path: %s\n  Classification: %s | Effective permission: %s\n  Membership evidence: %s\n  ACL evidence: %s#%s\n", member, metadataString(context, "member_id"), metadataString(context, "permission"), target, metadataString(context, "target_id"), principal, metadataString(context, "acl_principal_id"), formatMembershipContextPath(context), metadataString(context, "classification"), fallbackText(metadataString(context, "effective_permission"), "NOT VERIFIED"), formatMembershipContextEvidence(context), metadataString(context, "acl_artifact"), metadataString(context, "acl_artifact_ref"))
+		key := strings.Join([]string{metadataString(context, "target_id"), metadataString(context, "permission"), metadataString(context, "acl_principal_id")}, "\x00")
+		group := groups[key]
+		if group == nil {
+			group = &membershipGroup{targetName: metadataString(context, "target_name"), targetID: metadataString(context, "target_id"), targetClass: metadataString(context, "target_class"), permission: metadataString(context, "permission"), principalName: metadataString(context, "acl_principal_name"), principalID: metadataString(context, "acl_principal_id")}
+			groups[key] = group
+		}
+		group.paths = append(group.paths, context)
+	}
+	ordered := make([]*membershipGroup, 0, len(groups))
+	for _, group := range groups {
+		ordered = append(ordered, group)
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		for _, pair := range [][2]string{{left.targetName, right.targetName}, {left.targetID, right.targetID}, {left.permission, right.permission}, {left.principalName, right.principalName}, {left.principalID, right.principalID}} {
+			if pair[0] != pair[1] {
+				return pair[0] < pair[1]
+			}
+		}
+		return false
+	})
+	totalMembershipPaths := metadataInt(metadata, "direct_membership_paths") + metadataInt(metadata, "nested_membership_paths")
+	membershipAdditional := totalMembershipPaths - len(membership)
+	if membershipAdditional < 0 {
+		membershipAdditional = 0
+	}
+	fmt.Fprintf(&b, "\nOBSERVED MEMBERSHIP CONTEXT\nShowing %d grouped relationships; %d additional paths remain in the full report.\n", len(ordered), membershipAdditional)
+	if omitted := metadataInt(metadata, "omitted_membership_paths"); omitted > 0 {
+		fmt.Fprintf(&b, "Bounded processing omitted %d paths; retained evidence is not exhaustive.\n", omitted)
+	}
+	for _, group := range ordered {
+		fmt.Fprintf(&b, "\nTarget: %s [%s]\n", fallbackText(group.targetName, group.targetID), group.targetID)
+		if group.targetClass != "" {
+			fmt.Fprintf(&b, "Type/classification: %s\n", group.targetClass)
+		}
+		fmt.Fprintf(&b, "  Permission: %s\n  ACL principal: %s [%s]\n  Observed members:\n", group.permission, fallbackText(group.principalName, group.principalID), group.principalID)
+		for _, context := range group.paths {
+			fmt.Fprintf(&b, "    - %s\n      Path: %s\n      Classification: %s\n", fallbackText(metadataString(context, "member_name"), metadataString(context, "member_id")), formatMembershipContextPath(context), fallbackText(metadataString(context, "classification"), "observed_membership_context"))
+		}
+		fmt.Fprintf(&b, "  Interpretation: Observed membership paths connect the listed principals to the group named in this ACL.\n  Effective permission: NOT VERIFIED\n")
 	}
 	return b.String()
 }
@@ -869,6 +960,8 @@ func specificFindingImpact(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
 	metadata := findingMetadata(finding)
 	switch {
+	case typ == "ad_privileged_acl_evidence_inventory":
+		return "RustHound observed ACL entries referencing groups with collected member relationships. These observations identify principals and objects that warrant permission review, but do not establish effective authorization or exploitability."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
@@ -903,6 +996,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
 	metadata := findingMetadata(finding)
 	switch {
+	case typ == "ad_privileged_acl_evidence_inventory":
+		return "Review the listed ACL principals and permissions on the identified AD objects. Confirm whether each group should hold the observed rights, then validate effective permissions with approved AD administration tools before changing access controls."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

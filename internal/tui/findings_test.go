@@ -633,7 +633,7 @@ func TestPrivilegedACLInventoryDetailShowsRelationshipsAndLimitations(t *testing
 		}
 	}
 	evidence := findingEvidenceSummary(finding)
-	for _, expected := range []string{"AD_PRIVILEGED_ACL_EVIDENCE.txt", "AD_privileged_acl_inventory.json", "Enumeration/RustHoundCE/artifacts"} {
+	for _, expected := range []string{"AD_PRIVILEGED_ACL_EVIDENCE.txt", "AD_privileged_acl_inventory.json", "groups.json"} {
 		if !strings.Contains(evidence, expected) {
 			t.Fatalf("evidence summary omitted %q: %s", expected, evidence)
 		}
@@ -647,14 +647,20 @@ func TestPrivilegedACLInventoryDetailShowsMembershipContext(t *testing.T) {
 		EvidenceJSON: `{"source_execution_id":477,"high_value_targets":1,"normalized_relationships":1,"membership_edges":2,"direct_membership_paths":0,"nested_membership_paths":1,"membership_coverage":"complete-observed","membership_context":[{"member_id":"S-1-5-21-100-1101","member_name":"alice","group_path":[{"id":"S-1-5-21-100-901","name":"Tier 1 Support"},{"id":"S-1-5-21-100-900","name":"Helpdesk Operators"}],"acl_principal_id":"S-1-5-21-100-900","acl_principal_name":"Helpdesk Operators","target_id":"S-1-5-21-100-512","target_name":"Domain Admins","permission":"WriteDacl","classification":"observed_nested_membership_context","effective_permission":"NOT VERIFIED","membership_refs":["/data/0/Members/0","/data/0/Members/0"],"acl_artifact":"groups.json","acl_artifact_ref":"/data/2/Aces/0"}]}`,
 	}}
 	condition := findingCondition(finding)
-	for _, expected := range []string{"alice", "Tier 1 Support", "Helpdesk Operators", "WriteDacl", "Domain Admins", "NOT VERIFIED", "observed_nested_membership_context"} {
+	for _, expected := range []string{"OBSERVED MEMBERSHIP CONTEXT", "Observed members", "alice", "Tier 1 Support", "Helpdesk Operators", "WriteDacl", "Domain Admins", "NOT VERIFIED", "observed_nested_membership_context"} {
 		if !strings.Contains(condition, expected) {
 			t.Fatalf("membership context omitted %q: %s", expected, condition)
 		}
 	}
+	if strings.Contains(condition, "/data/0/Members") {
+		t.Fatalf("bounded membership preview exposed raw JSON pointers: %s", condition)
+	}
 	limitations := findingLimitations(finding)
 	if !strings.Contains(limitations, "Membership context coverage: complete-observed") || !strings.Contains(limitations, "Effective permissions") {
 		t.Fatalf("membership limitations omitted: %s", limitations)
+	}
+	if strings.Contains(findingRemediation(finding), "source tool's recommended hardening") || !strings.Contains(findingRemediation(finding), "validate effective permissions") {
+		t.Fatalf("ACL remediation remained generic: %s", findingRemediation(finding))
 	}
 }
 
@@ -997,5 +1003,35 @@ func TestFindingsNavigationFallsBackWhenSelectionDisappears(t *testing.T) {
 	m.handleFindingsKey("enter")
 	if len(m.findingRows) != 1 || m.findingCursor != 0 {
 		t.Fatalf("disappearing selection did not fall back safely: rows=%d cursor=%d", len(m.findingRows), m.findingCursor)
+	}
+}
+
+func TestFindingsRowsKeepAffectedObjectColumnStableAcrossSelection(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{Title: "AD Privileged ACL Evidence Inventory", Severity: "informational", AffectedObject: "RustHound direct ACL inventory"}},
+		{FindingInput: storage.FindingInput{Title: "AD Privileged ACL Evidence Inventory", Severity: "informational", AffectedObject: "RustHound direct ACL inventory"}},
+		{FindingInput: storage.FindingInput{Title: "AD Privileged ACL Evidence Inventory", Severity: "informational", AffectedObject: "RustHound direct ACL inventory"}},
+	}
+	positions := make([]int, 0, len(rows))
+	for selected := range rows {
+		m := &model{findingsView: true, findingViewMode: "all", findingRows: rows, findingCursor: selected, width: 120, height: 24}
+		lines := strings.Split(ansi.Strip(m.View()), "\n")
+		found := false
+		for _, line := range lines {
+			if index := strings.Index(line, "RustHound direct ACL inventory"); index >= 0 {
+				positions = append(positions, index)
+				if ansi.StringWidthWc(line) > 120 {
+					t.Fatalf("finding row overflowed panel width: %d", ansi.StringWidthWc(line))
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("affected-object column missing for selected row %d:\n%s", selected, ansi.Strip(m.View()))
+		}
+	}
+	if positions[0] != positions[1] || positions[1] != positions[2] {
+		t.Fatalf("affected-object column moved with selection: positions=%v", positions)
 	}
 }
