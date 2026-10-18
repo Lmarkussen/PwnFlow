@@ -84,3 +84,53 @@ func TestTrustOptionsConsultTheApprovalStore(t *testing.T) {
 		t.Fatalf("a stored approval was not honoured: %v %v", decision, err)
 	}
 }
+
+func TestCLIHelpUsesEmbeddedBannerAndPlainFallback(t *testing.T) {
+	var output strings.Builder
+	printFullHelp(&output)
+	plain := output.String()
+	if !strings.Contains(plain, strings.TrimRight(embeddedBanner, "\n")) {
+		t.Fatal("help does not contain the embedded operator banner")
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatal("non-terminal help contains ANSI escape sequences")
+	}
+	for _, required := range []string{"USAGE", "CONNECTION", "TRANSPORT", "MODULE OPTIONS", "EVIDENCE & MAINTENANCE", "-h, --help", "EXAMPLES"} {
+		if !strings.Contains(plain, required) {
+			t.Fatalf("help is missing %q", required)
+		}
+	}
+}
+
+func TestCLIHelpNarrowWrappingKeepsWordsReadable(t *testing.T) {
+	for _, width := range []string{"60", "40"} {
+		t.Setenv("COLUMNS", width)
+		var output strings.Builder
+		printFullHelp(&output)
+		limit := 60
+		if width == "40" {
+			limit = 40
+		}
+		for _, line := range strings.Split(output.String(), "\n") {
+			if strings.HasSuffix(line, "syste") || strings.HasSuffix(line, "targe") {
+				t.Fatalf("description was split mid-word: %q", line)
+			}
+			if len([]rune(line)) > limit {
+				t.Fatalf("help line exceeds narrow width %d: %q", limit, line)
+			}
+		}
+		if width == "60" && !strings.Contains(output.String(), "--module-options MODULE.KEY=VALUE\n") {
+			t.Fatal("long option was not moved to its own narrow-terminal line")
+		}
+	}
+}
+
+func TestCLIHelpColorPolicy(t *testing.T) {
+	if got := (cliTheme{}).paint("value", "1;92"); got != "value" {
+		t.Fatalf("plain theme emitted styling: %q", got)
+	}
+	colored := (cliTheme{enabled: true}).paint("value", "1;92")
+	if !strings.Contains(colored, "\x1b[1;92m") {
+		t.Fatalf("enabled theme did not style output: %q", colored)
+	}
+}

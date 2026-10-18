@@ -38,6 +38,16 @@ func (m *multiFlag) Set(value string) error {
 }
 
 func main() {
+	configureCLIFlagSet()
+	args := os.Args[1:]
+	if len(args) == 1 && hasHelpArgument(args) {
+		printFullHelp(os.Stdout)
+		return
+	}
+	if len(args) == 0 {
+		printShortUsage(os.Stderr)
+		os.Exit(2)
+	}
 	target := flag.String("target", "", "target address or hostname")
 	domain := flag.String("domain", "", "Active Directory domain")
 	username := flag.String("username", "", "username")
@@ -51,7 +61,7 @@ func main() {
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
 	if *target == "" || *domain == "" || *username == "" {
-		fmt.Fprintln(os.Stderr, "usage: pwnflow --target ADDRESS --domain DOMAIN --username USER")
+		printShortUsage(os.Stderr)
 		os.Exit(2)
 	}
 	passwordValue := *passwordFlag
@@ -211,6 +221,9 @@ func main() {
 	if err := db.UpsertTarget(ctx, cfg.Domain, cfg.Target); err != nil {
 		fail(err)
 	}
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stdout, renderBanner(newCLITheme(os.Stdout), cliWidth(os.Stdout)))
+	}
 	if err := tui.Run(ctx, cfg, db, version, dependencyReasons); err != nil && !errors.Is(err, tui.ErrQuit) {
 		fail(err)
 	}
@@ -261,4 +274,8 @@ func trustTerminal() (io.Reader, io.Writer) {
 	return terminal, terminal
 }
 
-func fail(err error) { fmt.Fprintln(os.Stderr, "pwnflow:", err); os.Exit(1) }
+func fail(err error) {
+	theme := newCLITheme(os.Stderr)
+	fmt.Fprintln(os.Stderr, cliError(theme, "pwnflow: "+err.Error()))
+	os.Exit(1)
+}
