@@ -31,6 +31,8 @@ var (
 	severityMediumStyle   = lipgloss.NewStyle().Foreground(amber).Bold(true)
 	severityLowStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#D8D36A"))
 	severityInfoStyle     = lipgloss.NewStyle().Foreground(infoBlue)
+	watcherInfoStyle      = lipgloss.NewStyle().Foreground(infoBlue).Bold(true)
+	abortedStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8C42")).Bold(true)
 )
 
 func selectionPrefix(selected bool) string {
@@ -66,10 +68,16 @@ func lifecycleStyle(value string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "completed", "complete":
 		return lipgloss.NewStyle().Foreground(green).Bold(true)
-	case "failed", "unavailable", "cancelled", "aborted":
+	case "failed", "unavailable":
 		return lipgloss.NewStyle().Foreground(red).Bold(true)
-	case "queued", "skipped":
+	case "aborted":
+		return abortedStyle
+	case "cancelled":
+		return lipgloss.NewStyle().Foreground(red)
+	case "queued":
 		return lipgloss.NewStyle().Foreground(amber)
+	case "skipped":
+		return dim
 	case "running":
 		return lipgloss.NewStyle().Foreground(infoBlue).Bold(true)
 	default:

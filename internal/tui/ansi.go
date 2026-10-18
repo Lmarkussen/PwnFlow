@@ -96,6 +96,10 @@ func wrapPaneStyle(style lipgloss.Style, value string, width int) string {
 func highlightOutput(input string) string {
 	lines := strings.Split(input, "\n")
 	for i, line := range lines {
+		if styled, ok := styleWatcherLogPrefix(line); ok {
+			lines[i] = styled
+			continue
+		}
 		if strings.Contains(line, "[+]") {
 			lines[i] = strings.ReplaceAll(line, "[+]", lipgloss.NewStyle().Foreground(green).Render("[+]"))
 		} else if strings.Contains(line, "[-]") {
@@ -105,6 +109,72 @@ func highlightOutput(input string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// styleWatcherLogPrefix only recognizes a level at the beginning of a line or
+// immediately after a timestamp. Arbitrary words later in command output are
+// intentionally left alone.
+func styleWatcherLogPrefix(line string) (string, bool) {
+	leading := len(line) - len(strings.TrimLeft(line, " \t"))
+	trimmed := line[leading:]
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return line, false
+	}
+	levelIndex := 0
+	if strings.HasPrefix(fields[0], "[") && strings.HasSuffix(fields[0], "]") {
+		levelIndex = 1
+	} else if len(fields) > 2 && strings.Contains(fields[0], "-") && strings.Contains(fields[1], ":") {
+		levelIndex = 2
+	}
+	if levelIndex >= len(fields) {
+		return line, false
+	}
+	level := strings.Trim(fields[levelIndex], "[]:")
+	style := watcherLogLevelStyle(level)
+	if style == nil {
+		return line, false
+	}
+	offset := leading
+	for index := 0; index < levelIndex; index++ {
+		position := strings.Index(trimmed[offset-leading:], fields[index])
+		if position < 0 {
+			return line, false
+		}
+		offset += position + len(fields[index])
+		for offset < len(line) && (line[offset] == ' ' || line[offset] == '\t') {
+			offset++
+		}
+	}
+	levelStart := offset
+	levelEnd := levelStart + len(fields[levelIndex])
+	if levelEnd > len(line) {
+		return line, false
+	}
+	prefix := line[:levelStart]
+	if levelIndex == 2 || (levelIndex == 1 && strings.HasPrefix(fields[0], "[")) {
+		prefix = dim.Render(prefix)
+	}
+	return prefix + style.Render(line[levelStart:levelEnd]) + line[levelEnd:], true
+}
+
+func watcherLogLevelStyle(level string) *lipgloss.Style {
+	var style lipgloss.Style
+	switch strings.ToUpper(level) {
+	case "DEBUG":
+		style = dim
+	case "INFO":
+		style = watcherInfoStyle
+	case "WARN", "WARNING":
+		style = warn
+	case "ERROR", "FATAL":
+		style = severityCriticalStyle
+	case "SUCCESS":
+		style = lipgloss.NewStyle().Foreground(green).Bold(true)
+	default:
+		return nil
+	}
+	return &style
 }
 
 func isPrintable(r rune) bool { return r == '\n' || r == '\r' || r == '\t' || !unicode.IsControl(r) }

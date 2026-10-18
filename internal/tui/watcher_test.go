@@ -164,3 +164,50 @@ func TestWatcherQUsesSafeConfirmationDuringActiveBatch(t *testing.T) {
 		t.Fatalf("active watcher Q did not explain the safe action: %q", m.status)
 	}
 }
+
+func TestWatcherProgressAndLogPresentationAreWidthSafe(t *testing.T) {
+	for _, width := range []int{160, 120, 100, 80, 60} {
+		line := watcherProgressLine(29, 39, width-6)
+		if ansi.StringWidthWc(line) > width-6 {
+			t.Fatalf("progress line exceeds width %d: %q", width, ansi.Strip(line))
+		}
+	}
+	for _, input := range []string{
+		"2026-10-18 12:34:56 INFO collection started",
+		"2026-10-18 12:34:56 WARN collection incomplete",
+		"2026-10-18 12:34:56 ERROR collection failed",
+		"ordinary output containing INFO later",
+	} {
+		formatted := displayOutput(input, 120)
+		if ansi.Strip(formatted) != input {
+			t.Fatalf("log formatting changed content: %q", formatted)
+		}
+	}
+}
+
+func TestWatcherDashboardFitsSupportedTerminalSizes(t *testing.T) {
+	module := viewTestModule{}
+	for _, width := range []int{160, 120, 100, 80, 60} {
+		for _, height := range []int{60, 45, 30, 24, 18} {
+			m := newModel(context.Background(), config.Config{Domain: "example.test"}, nil, []modules.Module{module}, []int64{1}, 1, "test")
+			m.modules = []modules.Module{module}
+			m.moduleKeys = []int{0}
+			m.batch = runner.NewBatchRun([]runner.BatchItem{{Index: 0, Module: module, Buffer: runner.NewBuffer(128)}})
+			m.watcher = true
+			m.width, m.height = width, height
+			m.watcherListViewport = newWatcherViewport()
+			m.watcherViewport = newWatcherViewport()
+			m.resizeWatcher()
+			rendered := ansi.Strip(m.watcherView())
+			lines := strings.Split(rendered, "\n")
+			if len(lines) > height {
+				t.Fatalf("dashboard height %dx%d rendered %d lines", width, height, len(lines))
+			}
+			for lineNumber, line := range lines {
+				if ansi.StringWidthWc(line) > width {
+					t.Fatalf("dashboard line %d exceeds %dx%d: %d > %d: %q", lineNumber, width, height, ansi.StringWidthWc(line), width, line)
+				}
+			}
+		}
+	}
+}

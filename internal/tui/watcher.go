@@ -18,13 +18,19 @@ func (m *model) resizeWatcher() {
 	if m.watcherListViewport.Width == 0 {
 		m.watcherListViewport = viewport.New(1, 1)
 	}
-	// The watcher shows its status line above the panes, so the reservation grows by
-	// that one line and the panes still fit the terminal.
-	listHeight := (m.height - 12) / 2
-	if listHeight < 3 {
-		listHeight = 3
+	// Reserve the fixed dashboard chrome first: title, four summary rows, the
+	// contextual status line, footer, pane borders, and the separator between
+	// panes. The remaining space belongs to the two viewports. This keeps the
+	// dashboard inside the terminal even at its smallest supported height.
+	available := m.height - 16
+	if available < 2 {
+		available = 2
 	}
-	outputHeight := m.height - 10 - listHeight
+	listHeight := available / 2
+	if listHeight < 1 {
+		listHeight = 1
+	}
+	outputHeight := available - listHeight
 	if outputHeight < 1 {
 		outputHeight = 1
 	}
@@ -85,24 +91,36 @@ func (m *model) refreshWatcherList() {
 		m.watcherListCursor = 0
 	}
 	var content strings.Builder
-	nameWidth := max(16, m.watcherListViewport.Width-34)
+	statusColumn := watcherStatusColumnWidth(states, m.watcherListViewport.Width)
 	for index, state := range states {
 		selected := index == m.watcherListCursor && m.watcherFocus == focusModules
+		status := watcherDisplayStatus(state, statusColumn)
+		icon := watcherIcon(state.Status) + " "
+		nameWidth := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(icon)-statusColumn-1)
 		name := ansi.TruncateWc(state.Module.Name(), nameWidth, "…")
-		status := watcherStatus(state)
-		statusWidth := ansi.StringWidthWc(status)
-		if statusWidth > max(8, m.watcherListViewport.Width/3) {
-			status = strings.Fields(status)[0]
-			statusWidth = ansi.StringWidthWc(status)
-		}
-		available := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-statusWidth-2)
-		name = ansi.TruncateWc(name, available, "…")
-		padding := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(name)-statusWidth)
-		content.WriteString(selectionPrefix(selected) + selectionLabel(name, selected) + strings.Repeat(" ", padding) + lifecycleStyle(state.Status).Render(status) + "\n")
+		padding := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(icon)-ansi.StringWidthWc(name)-statusColumn)
+		content.WriteString(selectionPrefix(selected) + lifecycleStyle(state.Status).Render(icon) + selectionLabel(name, selected) + strings.Repeat(" ", padding) + lifecycleStyle(state.Status).Render(status) + "\n")
 	}
 	m.watcherListContent = strings.TrimSuffix(content.String(), "\n")
 	m.watcherListViewport.SetContent(m.watcherListContent)
 	m.ensureWatcherListCursorVisible()
+}
+
+func watcherStatusColumnWidth(states []runner.BatchState, width int) int {
+	limit := max(8, width/3)
+	column := 8
+	for _, state := range states {
+		column = max(column, ansi.StringWidthWc(watcherStatus(state)))
+	}
+	return min(column, limit)
+}
+
+func watcherDisplayStatus(state runner.BatchState, width int) string {
+	status := watcherStatus(state)
+	if ansi.StringWidthWc(status) <= width {
+		return status
+	}
+	return ansi.TruncateWc(status, width, "…")
 }
 
 func (m *model) ensureWatcherListCursorVisible() {
@@ -250,14 +268,39 @@ func (m *model) watcherView() string {
 	}
 	listTitle := paneHeader("MODULE EXECUTION HISTORY", m.watcherFocus == focusModules, headerWidth)
 	outputTitle := paneHeader(fmt.Sprintf("OUTPUT // %s", module.Name()), m.watcherFocus == focusOutput, headerWidth)
-	return title.Render("PwnFlow // EXECUTION WATCHER") + "\n\n" +
-		m.batchSummary() + fmt.Sprintf("Selected: %s   Elapsed: %s\n", module.Name(), elapsed) +
+	return watcherTitle() + "\n" +
+		m.batchSummary() + m.watcherSelectionSummary(module.Name(), elapsed) +
 		// The status line is where a request to abort is asked and answered, so the
 		// watcher has to show it: the confirmation is useless if it is invisible.
 		m.watcherStatusLine() +
 		listStyle.Render(listTitle+"\n"+m.watcherListViewport.View()) + "\n" +
 		outputStyle.Render(outputTitle+"\n"+m.watcherViewport.View()) + "\n" +
 		dim.Render(m.watcherFooter())
+}
+
+func watcherTitle() string {
+	return title.Render("PwnFlow // EXECUTION WATCHER")
+}
+
+func (m *model) watcherSelectionSummary(moduleName string, elapsed string) string {
+	active := "IDLE"
+	if m.batch != nil {
+		states, activeIndex, _, _ := m.batch.Snapshot()
+		if activeIndex >= 0 && activeIndex < len(states) {
+			active = states[activeIndex].Module.Name() + " — " + watcherStatus(states[activeIndex])
+		} else if m.running {
+			active = "RUNNING"
+		}
+	}
+	width := max(20, m.width-6)
+	active = ansi.TruncateWc(active, max(8, width-8), "…")
+	states := m.watcherStates()
+	selectedStatus := "IDLE"
+	if m.watcherListCursor >= 0 && m.watcherListCursor < len(states) {
+		selectedStatus = watcherStatus(states[m.watcherListCursor])
+	}
+	selected := ansi.TruncateWc(moduleName+" — "+selectedStatus, max(8, width-10), "…")
+	return fmt.Sprintf("Active:   %s\nSelected: %s\nElapsed:  %s\n", watcherInfoStyle.Render(active), selectedLabelStyle.Render(selected), dim.Render(elapsed))
 }
 
 // watcherStatusLine renders the operator-facing status inside the watcher, amber
@@ -291,10 +334,11 @@ func (m *model) watcherFooter() string {
 }
 
 func (m *model) batchSummary() string {
+	width := max(20, m.width-6)
 	if m.batch == nil {
-		return "Mode: IDLE   Progress: 0/0\n"
+		return fmt.Sprintf("%s  %s\n%s\n%s\n", title.Render("MODE"), dim.Render("IDLE"), watcherProgressLine(0, 0, width), dim.Render("COMPLETED 0   RUNNING 0   QUEUED 0   FAILED 0   SKIPPED 0"))
 	}
-	states, active, _, _ := m.batch.Snapshot()
+	states, _, _, _ := m.batch.Snapshot()
 	completed, running, failed, unavailable, cancelled, skipped, queued := 0, 0, 0, 0, 0, 0, 0
 	for _, state := range states {
 		switch state.Status {
@@ -315,20 +359,45 @@ func (m *model) batchSummary() string {
 		}
 	}
 	progress := completed + failed + unavailable + cancelled + skipped
-	barWidth := 24
-	filled := 0
-	if len(states) > 0 {
-		filled = progress * barWidth / len(states)
-	}
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-	activeName := "-"
-	if active >= 0 && active < len(states) {
-		activeName = states[active].Module.Name()
-	}
 	requested := m.batchRequested
 	if requested == 0 {
 		requested = len(states)
 	}
+	mode := ansi.TruncateWc(m.batchName, max(8, width/3), "…")
+	modeLine := fmt.Sprintf("%s  %s    %s", title.Render("MODE"), lifecycleStyle(statusForBatch(running, failed, len(states), progress)).Render(mode), dim.Render(ansi.TruncateWc(m.cfg.Domain, max(8, width/3), "…")))
 	resolution := fmt.Sprintf("Requested: %d   Executed: %d   Planned-skip: %d", requested, len(states), len(m.batchSkipped))
-	return fmt.Sprintf("Mode: %s   Target: %s\n%s\nProgress: [%s] %d/%d   Completed: %d   Running: %d   Failed: %d   Skipped: %d   Queued: %d   Active: %s\n", m.batchName, m.cfg.Domain, resolution, bar, progress, len(states), completed, running, failed, skipped, queued, activeName)
+	metrics := fmt.Sprintf("COMPLETED %d   RUNNING %d   QUEUED %d   FAILED %d   SKIPPED %d", completed, running, queued, failed, skipped)
+	return modeLine + "\n" + watcherProgressLine(progress, len(states), width) + "\n" + dim.Render(resolution) + "\n" + watcherMetricLine(metrics, width) + "\n"
+}
+
+func statusForBatch(running, failed, total, finished int) string {
+	if running > 0 {
+		return "running"
+	}
+	if failed > 0 {
+		return "failed"
+	}
+	if total > 0 && finished == total {
+		return "completed"
+	}
+	return "queued"
+}
+
+func watcherProgressLine(done, total, width int) string {
+	barWidth := max(8, min(32, width-34))
+	filled := 0
+	percent := 0
+	if total > 0 {
+		filled = done * barWidth / total
+		percent = done * 100 / total
+	}
+	bar := lifecycleStyle("completed").Render(strings.Repeat("█", filled)) + dim.Render(strings.Repeat("░", barWidth-filled))
+	return fmt.Sprintf("%s %d/%d  [%s] %3d%%", title.Render("PROGRESS"), done, total, bar, percent)
+}
+
+func watcherMetricLine(metrics string, width int) string {
+	if ansi.StringWidthWc(metrics) <= width {
+		return metrics
+	}
+	return ansi.TruncateWc(metrics, width, "…")
 }
