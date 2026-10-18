@@ -81,9 +81,12 @@ func unsupportedACLRightCount(rights map[string]int) int {
 }
 
 type inlineEvidence struct {
-	section string
-	lines   []string
-	error   string
+	section              string
+	lines                []string
+	error                string
+	sourceRecordCount    int
+	uniqueMaterialCount  int
+	duplicateRecordCount int
 }
 
 var pxeInlineVariable = regexp.MustCompile(`(?i)\b(OSDJoinAccount|OSDJoinPassword|OSDLocalAdminPassword)\b\s*(?:[:=\-]|=>)?\s*(.*)$`)
@@ -144,7 +147,13 @@ func loadInlineEvidence(cfg config.Config, finding storage.Finding) inlineEviden
 		return result
 	}
 	result.section = "RECOVERED KERBEROS MATERIAL"
-	result.lines = extractKerberosInline(lines, metadata, finding)
+	records := kerberosInlineRecords(lines, metadata, finding)
+	result.lines = uniqueStrings(records)
+	result.sourceRecordCount = metadataInt(metadata, "record_count")
+	result.uniqueMaterialCount = len(result.lines)
+	if len(records) > result.uniqueMaterialCount {
+		result.duplicateRecordCount = len(records) - result.uniqueMaterialCount
+	}
 	if len(result.lines) == 0 {
 		result.error = "Recovered Kerberos material could not be loaded from the referenced artifact."
 	}
@@ -250,9 +259,14 @@ func extractPXEXMLInline(lines, variables []string) []string {
 }
 
 func extractKerberosInline(lines []string, metadata map[string]any, finding storage.Finding) []string {
+	return uniqueStrings(kerberosInlineRecords(lines, metadata, finding))
+}
+
+func kerberosInlineRecords(lines []string, metadata map[string]any, finding storage.Finding) []string {
 	numbers := intSlice(metadata["record_line_numbers"])
 	principal, _ := metadata["principal"].(string)
 	result := make([]string, 0, len(numbers))
+	domains := map[string]bool{}
 	for _, number := range numbers {
 		if number < 1 || number > len(lines) {
 			continue
@@ -261,14 +275,33 @@ func extractKerberosInline(lines []string, metadata map[string]any, finding stor
 		if !strings.HasPrefix(strings.ToLower(line), "$krb5tgs$") && !strings.HasPrefix(strings.ToLower(line), "$krb5asrep$") {
 			continue
 		}
-		if principal != "" && !strings.EqualFold(principal, "unresolved principal") && !strings.EqualFold(principal, kerberosPrincipalInline(line)) {
+		observedPrincipal := kerberosPrincipalInline(line)
+		if principal != "" && !strings.EqualFold(principal, "unresolved principal") && !kerberosPrincipalMatches(principal, observedPrincipal) {
 			continue
 		}
-		if !containsString(result, line) {
-			result = append(result, line)
+		if at := strings.LastIndexByte(observedPrincipal, '@'); at >= 0 {
+			domains[strings.ToLower(observedPrincipal[at+1:])] = true
+		}
+		result = append(result, line)
+	}
+	if !principalHasDomain(principal) && len(domains) > 1 {
+		return nil
+	}
+	return result
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if !containsString(result, value) {
+			result = append(result, value)
 		}
 	}
 	return result
+}
+
+func principalHasDomain(value string) bool {
+	return strings.Contains(value, "\\") || strings.Contains(value, "@")
 }
 
 func kerberosPrincipalInline(line string) string {
@@ -289,9 +322,36 @@ func kerberosPrincipalInline(line string) string {
 		return strings.TrimSpace(strings.SplitN(parts[1], ":", 2)[0])
 	}
 	if strings.HasPrefix(strings.ToLower(line), "$krb5tgs$") && len(parts) > 0 {
-		return strings.TrimSpace(parts[0])
+		principal := strings.TrimSpace(parts[0])
+		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+			principal += "@" + strings.TrimSpace(parts[1])
+		}
+		return principal
 	}
 	return ""
+}
+
+func kerberosPrincipalMatches(expected, observed string) bool {
+	normalize := func(value string) (string, string, bool) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		value = strings.Trim(value, "\\\"")
+		if slash := strings.LastIndexByte(value, '\\'); slash >= 0 {
+			return value[slash+1:], value[:slash], true
+		}
+		if at := strings.LastIndexByte(value, '@'); at >= 0 {
+			return value[:at], value[at+1:], true
+		}
+		return value, "", false
+	}
+	expectedName, expectedDomain, expectedQualified := normalize(expected)
+	observedName, observedDomain, observedQualified := normalize(observed)
+	if expectedName == "" || expectedName != observedName {
+		return false
+	}
+	if expectedQualified {
+		return observedQualified && expectedDomain == observedDomain
+	}
+	return true
 }
 
 func stringSlice(value any) []string {

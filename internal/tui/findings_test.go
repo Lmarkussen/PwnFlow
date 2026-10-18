@@ -868,7 +868,7 @@ func TestSelectedFindingFamiliesUseEvidenceSpecificPresentation(t *testing.T) {
 		{
 			name:      "Kerberos material",
 			finding:   storage.Finding{FindingInput: storage.FindingInput{FindingType: "kerberos_ticket_material_collected", AffectedObject: "svc-sql@sccm.lab", EvidenceJSON: `{"material_type":"kerberoast","material_collected":true,"principal":"svc-sql@sccm.lab","record_count":1,"payload":"synthetic-secret"}`}},
-			condition: "secret material is intentionally not displayed", impact: "not prove", remediation: "protected artifact",
+			condition: "matching material is limited to this principal", impact: "not prove", remediation: "protected artifact",
 		},
 	}
 	for _, test := range tests {
@@ -1425,7 +1425,7 @@ func TestAdministrativeTieringArrowBackRestoresTierSelection(t *testing.T) {
 	}
 }
 
-func TestKerberosFindingDetailProtectsInlineMaterial(t *testing.T) {
+func TestKerberosFindingDetailRendersScopedInlineMaterial(t *testing.T) {
 	finding := storage.Finding{FindingInput: storage.FindingInput{
 		Title:           "Kerberoast material collected",
 		FindingType:     "kerberos_ticket_material_collected",
@@ -1449,10 +1449,10 @@ func TestKerberosFindingDetailProtectsInlineMaterial(t *testing.T) {
 		},
 	}
 	view := ansi.Strip(m.View())
-	if strings.Contains(view, "REDACTED_MATERIAL_A") || strings.Contains(view, "REDACTED_MATERIAL_B") {
-		t.Fatal("Kerberos material leaked into the ordinary Finding detail")
+	if !strings.Contains(view, "REDACTED_MATERIAL_A") || !strings.Contains(view, "REDACTED_MATERIAL_B") {
+		t.Fatal("account-specific Kerberos material was not rendered")
 	}
-	for _, expected := range []string{"sccm.lab\\svc-sql", "Matching material records: 2", "Raw material: PROTECTED", "original evidence"} {
+	for _, expected := range []string{"sccm.lab\\svc-sql", "Unique material entries: 2", "Duplicate records: 0", "original artifact"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("protected Kerberos detail omitted %q: %s", expected, view)
 		}
@@ -1484,5 +1484,70 @@ func TestFindingsCategoryBackRestoresStableRootSelection(t *testing.T) {
 	m.handleFindingsKey("esc")
 	if m.findingCategory != "" || m.findingCursor != 0 {
 		t.Fatalf("second category back did not restore Active Directory: category=%q cursor=%d", m.findingCategory, m.findingCursor)
+	}
+}
+
+func TestFindingsADCSSequencePreservesRootIdentityAcrossCategories(t *testing.T) {
+	rows := []storage.Finding{
+		{ID: 1, FindingInput: storage.FindingInput{FindingType: "adcs_esc_esc1", Title: "Template condition", Severity: "high"}},
+		{ID: 2, FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Title: "Tier 0 context", Severity: "informational"}},
+		{ID: 3, FindingInput: storage.FindingInput{FindingType: "ad_acl_evidence_inventory", Title: "ACL inventory", Severity: "informational"}},
+		{ID: 4, FindingInput: storage.FindingInput{FindingType: "kerberos_ticket_material_collected", Title: "Kerberos material", Severity: "medium"}},
+	}
+	m := &model{
+		findingsView: true, findingCategoryView: true, findingCategories: buildFindingCategories(rows),
+		findingAllRows: rows, findingRows: rows, findingsLoaded: true, width: 120, height: 30,
+	}
+	categoryIndex := func(key string) int {
+		for index, category := range m.findingCategories {
+			if category.Key == key {
+				return index
+			}
+		}
+		return -1
+	}
+	adcsIndex := categoryIndex("adcs")
+	activeDirectoryIndex := categoryIndex("active_directory")
+	if adcsIndex < 0 || activeDirectoryIndex < 0 {
+		t.Fatalf("fixture categories missing: %+v", m.findingCategories)
+	}
+	m.findingCursor = adcsIndex
+	m.handleFindingsKey("right")
+	if m.findingCategory != "adcs" || !m.findingSubcategoryView {
+		t.Fatalf("AD CS did not open: category=%q subcategories=%t", m.findingCategory, m.findingSubcategoryView)
+	}
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "adcs_template" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("right")
+	if m.findingCategory != "adcs" || m.findingSubcategory != "adcs_template" {
+		t.Fatalf("AD CS subcategory did not open: category=%q subcategory=%q", m.findingCategory, m.findingSubcategory)
+	}
+	m.handleFindingsKey("right")
+	if !m.findingDetail {
+		t.Fatal("AD CS Finding detail did not open")
+	}
+	for step := 0; step < 3; step++ {
+		m.handleFindingsKey("left")
+	}
+	if m.findingCategory != "" || m.findingCursor != adcsIndex {
+		t.Fatalf("AD CS return lost root selection: category=%q cursor=%d want=%d", m.findingCategory, m.findingCursor, adcsIndex)
+	}
+	m.findingCursor = activeDirectoryIndex
+	m.handleFindingsKey("enter")
+	if m.findingCategory != "active_directory" {
+		t.Fatalf("Active Directory did not open: %q", m.findingCategory)
+	}
+	m.handleFindingsKey("esc")
+	if m.findingCategory != "" || m.findingCursor != activeDirectoryIndex {
+		t.Fatalf("Active Directory return lost root selection: category=%q cursor=%d want=%d", m.findingCategory, m.findingCursor, activeDirectoryIndex)
+	}
+	m.findingCursor = adcsIndex
+	m.handleFindingsKey("right")
+	m.handleFindingsKey("left")
+	if m.findingCategory != "" || m.findingCursor != adcsIndex {
+		t.Fatalf("repeated Right/Left changed AD CS root selection: category=%q cursor=%d want=%d", m.findingCategory, m.findingCursor, adcsIndex)
 	}
 }

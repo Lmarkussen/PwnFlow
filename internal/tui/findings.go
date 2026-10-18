@@ -356,7 +356,7 @@ func (m *model) restoreFindingCategorySelection() {
 			}
 		}
 	}
-	m.findingCursor = min(max(0, m.findingCursor), max(0, len(m.findingCategories)-1))
+	m.findingCursor = min(max(0, m.findingCategoryCursor), max(0, len(m.findingCategories)-1))
 }
 
 func (m *model) restoreFindingSubcategorySelection() {
@@ -544,12 +544,24 @@ func (m *model) findingsViewRender() string {
 				detail.WriteString(warn.Render(m.inlineEvidence.error) + "\n")
 			} else if isKerberosMaterialFinding(finding) {
 				metadata := findingMetadata(finding)
-				count := metadataInt(metadata, "record_count")
-				if count > 0 {
-					detail.WriteString(fmt.Sprintf("Matching material records: %d\n", count))
+				sourceCount := m.inlineEvidence.sourceRecordCount
+				if sourceCount == 0 {
+					sourceCount = metadataInt(metadata, "record_count")
 				}
-				detail.WriteString("Raw material: PROTECTED — available in original evidence\n")
-				detail.WriteString(dim.Render("Use E to inspect the complete source artifact; it may contain additional accounts." + "\n"))
+				if sourceCount > 0 {
+					detail.WriteString(fmt.Sprintf("Matching source records: %d\n", sourceCount))
+				}
+				uniqueCount := m.inlineEvidence.uniqueMaterialCount
+				if uniqueCount == 0 && len(m.inlineEvidence.lines) > 0 {
+					uniqueCount = len(m.inlineEvidence.lines)
+				}
+				detail.WriteString(fmt.Sprintf("Unique material entries: %d\n", uniqueCount))
+				detail.WriteString(fmt.Sprintf("Duplicate records: %d\n", m.inlineEvidence.duplicateRecordCount))
+				detail.WriteString("\nCOLLECTED KERBEROS MATERIAL\n")
+				for index, line := range m.inlineEvidence.lines {
+					detail.WriteString(fmt.Sprintf("  Hash %d:\n    %s\n", index+1, line))
+				}
+				detail.WriteString(dim.Render("E opens the complete original artifact; it may contain additional accounts." + "\n"))
 			} else {
 				page := max(1, m.findingPageSize()-10)
 				endEvidence := min(len(m.inlineEvidence.lines), m.inlineEvidenceTop+page)
@@ -1191,9 +1203,9 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		count := metadataInt(metadata, "record_count")
 		scope := "The original evidence artifact may contain additional qualifying records."
 		if count > 0 {
-			return fmt.Sprintf("NetExec recorded %s associated with %s (%d source record(s) for this principal). This Finding represents one principal; %s Secret material is intentionally not displayed.", kind, principal, count, scope)
+			return fmt.Sprintf("NetExec recorded %s associated with %s (%d source record(s) for this principal). This Finding represents one principal; %s Matching material is limited to this principal.", kind, principal, count, scope)
 		}
-		return fmt.Sprintf("NetExec recorded %s associated with %s. %s Secret material is intentionally not displayed.", kind, principal, scope)
+		return fmt.Sprintf("NetExec recorded %s associated with %s. %s Matching material is limited to this principal.", kind, principal, scope)
 	case typ == "ad_user_description_keyword_observed":
 		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
 		attribute := fallbackText(metadataString(metadata, "attribute"), "account information")
@@ -1585,7 +1597,7 @@ func specificFindingImpact(finding storage.Finding) string {
 	case strings.HasPrefix(typ, "ad_domain_policy_"):
 		return "The reported value is a domain-default policy observation. It may be overridden by fine-grained or endpoint-specific policy; it does not by itself prove weak credentials, compromise or effective policy for every account."
 	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
-		return "The source artifact contains roast material associated with the identified principal. The material is protected and not displayed; collection does not prove that it was cracked or used."
+		return "The source artifact contains roast material associated with the identified principal. The displayed material is limited to that principal; collection does not prove that it was cracked or used."
 	case typ == "ad_user_description_keyword_observed":
 		return "A credential-related term was observed in directory metadata. This is an indicator to inspect the account information safely, not confirmed credential exposure."
 	case typ == "gpo_evidence_inventory":

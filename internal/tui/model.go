@@ -33,6 +33,7 @@ type model struct {
 	findingCategory              string
 	findingCategorySelection     string
 	findingCategoryTop           int
+	findingCategoryCursor        int
 	findingSubcategoryView       bool
 	findingTieringView           bool
 	findingTieringParent         bool

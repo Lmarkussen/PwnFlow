@@ -634,6 +634,7 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.findingSubcategory = ""
 			m.restoreFindingCategorySelection()
 			m.findingTop = m.findingCategoryTop
+			return m, nil
 		case "up", "k":
 			m.findingCursor--
 		case "down", "j":
@@ -716,6 +717,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			if len(m.findingCategories) > 0 && m.findingCursor >= 0 && m.findingCursor < len(m.findingCategories) {
 				selected := m.findingCategories[m.findingCursor]
 				m.findingCategorySelection = selected.Key
+				m.findingCategoryCursor = m.findingCursor
+				m.findingCategoryTop = m.findingTop
 				m.findingCategory = selected.Key
 				m.findingTieringView = false
 				m.findingTieringParent = false
