@@ -356,6 +356,15 @@ func TestRawACLsRouteToEvidenceInventory(t *testing.T) {
 	}
 }
 
+func TestLegacyACLSeverityRemainsReadableInLegacySubcategory(t *testing.T) {
+	row := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_acl_genericall", Title: "Legacy GenericAll", Severity: "medium", SourceTool: "RustHound-CE",
+	}}
+	if got := findingSubcategoryKey(row); got != "acl" {
+		t.Fatalf("legacy ACL severity was silently reclassified: %q", got)
+	}
+}
+
 func TestOriginalEvidenceViewerPreservesSyntheticSecretAndRejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	artifactDir := filepath.Join(root, "results", "example.test", "artifacts")

@@ -132,7 +132,7 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl_replication_rights"
-	case strings.HasPrefix(typ, "ad_acl_"):
+	case strings.HasPrefix(typ, "ad_acl_") && strings.EqualFold(finding.Severity, "informational"):
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "adcs_"):
 		if strings.Contains(strings.ToLower(finding.EvidenceJSON), `"object_type":"ca"`) {
