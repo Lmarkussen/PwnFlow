@@ -550,6 +550,15 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.running = false
 		return m, tea.Quit
 	}
+	// Findings uses the same hierarchy transitions for both keyboard pairs.
+	// Normalize the aliases before any view-specific handling so selection and
+	// scroll restoration remain exactly those of Enter and Esc.
+	switch key {
+	case "right":
+		key = "enter"
+	case "left":
+		key = "esc"
+	}
 	if m.evidenceView {
 		switch key {
 		case "esc":

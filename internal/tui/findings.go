@@ -561,7 +561,7 @@ func (m *model) findingsViewRender() string {
 		m.findingDetailTop = min(max(0, m.findingDetailTop), maxDetailTop)
 		endDetail := min(len(detailLines), m.findingDetailTop+detailPageSize)
 		content.WriteString(strings.Join(detailLines[m.findingDetailTop:endDetail], "\n"))
-		content.WriteString(dim.Render("\n↑/↓ Scroll    PgUp/PgDn Change Finding    E Evidence    Esc Back    Q Quit"))
+		content.WriteString(dim.Render("\n↑/↓ Scroll    PgUp/PgDn Change Finding    ←/Esc Back    E Evidence    Q Quit"))
 		return paneStyle(false).Width(width).Render(content.String())
 	}
 	if len(m.findingRows) == 0 {
@@ -583,7 +583,7 @@ func (m *model) findingsViewRender() string {
 		}
 	}
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
-	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back    Q Quit"))
+	content.WriteString(dim.Render("\n\n→/Enter Open    ←/Esc Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -625,7 +625,7 @@ func (m *model) findingTieringOverview(width int) string {
 		}
 		content.WriteString("   " + dim.Render(wrapPaneText(row.description, max(20, width-7))) + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open Tier    Esc = Back    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Tier    ←/Esc Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -1960,7 +1960,7 @@ func (m *model) evidenceViewRender(width int) string {
 		}
 		content.WriteString(fmt.Sprintf("\nLines %d-%d of %d", min(m.evidenceTop+1, len(m.evidenceLines)), end, len(m.evidenceLines)))
 	}
-	content.WriteString(dim.Render("\n\nUp/Down PageUp/PageDown   Esc Back to Finding   Q Quit"))
+	content.WriteString(dim.Render("\n\nUp/Down PageUp/PageDown   ←/Esc Back to Finding   Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -2048,7 +2048,7 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		}
 		content.WriteString(warn.Render(message) + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open    Esc = Back    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open    ←/Esc Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
@@ -2110,7 +2110,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Category    ←/Esc Close    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

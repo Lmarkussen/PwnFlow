@@ -220,7 +220,7 @@ func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
 func TestFindingsFooterUsesOpenBackAndQuit(t *testing.T) {
 	model := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
 	frame := ansi.Strip(model.View())
-	if !strings.Contains(frame, "Enter = Open Category    Esc = Close") {
+	if !strings.Contains(frame, "→/Enter Open Category    ←/Esc Close") {
 		t.Fatalf("root footer missing: %s", frame)
 	}
 	if !strings.Contains(frame, "Q Quit") {
@@ -1366,5 +1366,48 @@ func TestTierContextFindingRendersObservedIdentitiesAndLimits(t *testing.T) {
 	}
 	if !strings.Contains(specificFindingImpact(finding), "host-local administrator") {
 		t.Fatal("tier impact used generic or privileged wording")
+	}
+}
+
+func TestFindingsArrowAliasesFollowEnterAndEsc(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Title: "Tier 0", Severity: "informational"}}}
+	m := &model{findingsView: true, findingCategoryView: true, findingCategories: []findingCategory{{Key: "active_directory", Name: "Active Directory"}}, findingAllRows: rows, findingRows: rows, findingsLoaded: true, width: 120, height: 30}
+	m.handleFindingsKey("right")
+	if !m.findingSubcategoryView || m.findingCategory != "active_directory" {
+		t.Fatal("right did not open Active Directory")
+	}
+	for index, subcategory := range m.findingSubcategories {
+		if subcategory.Key == "tiering" {
+			m.findingCursor = index
+		}
+	}
+	m.handleFindingsKey("right")
+	if !m.findingTieringView {
+		t.Fatal("right did not open Administrative Tiering")
+	}
+	m.handleFindingsKey("right")
+	if m.findingTieringView || m.findingSubcategory != "tier0_context" {
+		t.Fatal("right did not open Tier 0 Finding scope")
+	}
+	m.handleFindingsKey("right")
+	if !m.findingDetail {
+		t.Fatal("right did not open actual Finding detail")
+	}
+	m.handleFindingsKey("left")
+	if m.findingDetail || m.findingSubcategory != "tier0_context" {
+		t.Fatal("left did not return from Finding detail")
+	}
+	m.handleFindingsKey("left")
+	if !m.findingTieringView {
+		t.Fatal("left did not return to Administrative Tiering")
+	}
+	m.handleFindingsKey("left")
+	if m.findingTieringView || !m.findingSubcategoryView || m.findingCategory != "active_directory" {
+		t.Fatal("left did not return to Active Directory")
+	}
+	root := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
+	_, command := root.handleFindingsKey("left")
+	if command != nil {
+		t.Fatal("left at Findings root unexpectedly quit the application")
 	}
 }
