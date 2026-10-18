@@ -1012,26 +1012,28 @@ func TestFindingsRowsKeepAffectedObjectColumnStableAcrossSelection(t *testing.T)
 		{FindingInput: storage.FindingInput{Title: "AD Privileged ACL Evidence Inventory", Severity: "informational", AffectedObject: "RustHound direct ACL inventory"}},
 		{FindingInput: storage.FindingInput{Title: "AD Privileged ACL Evidence Inventory", Severity: "informational", AffectedObject: "RustHound direct ACL inventory"}},
 	}
-	positions := make([]int, 0, len(rows))
-	for selected := range rows {
-		m := &model{findingsView: true, findingViewMode: "all", findingRows: rows, findingCursor: selected, width: 120, height: 24}
-		lines := strings.Split(ansi.Strip(m.View()), "\n")
-		found := false
-		for _, line := range lines {
-			if index := strings.Index(line, "RustHound direct ACL inventory"); index >= 0 {
-				positions = append(positions, index)
-				if ansi.StringWidthWc(line) > 120 {
-					t.Fatalf("finding row overflowed panel width: %d", ansi.StringWidthWc(line))
+	for _, width := range []int{160, 120, 100, 80, 60} {
+		positions := make([]int, 0, len(rows))
+		for selected := range rows {
+			m := &model{findingsView: true, findingViewMode: "all", findingRows: rows, findingCursor: selected, width: width, height: 24}
+			lines := strings.Split(ansi.Strip(m.View()), "\n")
+			found := false
+			for _, line := range lines {
+				if index := strings.Index(line, "RustHound direc"); index >= 0 {
+					positions = append(positions, index)
+					if ansi.StringWidthWc(line) > width {
+						t.Fatalf("finding row overflowed panel width %d: %d", width, ansi.StringWidthWc(line))
+					}
+					found = true
+					break
 				}
-				found = true
-				break
+			}
+			if !found {
+				t.Fatalf("affected-object column missing at width %d for selected row %d:\n%s", width, selected, ansi.Strip(m.View()))
 			}
 		}
-		if !found {
-			t.Fatalf("affected-object column missing for selected row %d:\n%s", selected, ansi.Strip(m.View()))
+		if positions[0] != positions[1] || positions[1] != positions[2] {
+			t.Fatalf("affected-object column moved with selection at width %d: positions=%v", width, positions)
 		}
-	}
-	if positions[0] != positions[1] || positions[1] != positions[2] {
-		t.Fatalf("affected-object column moved with selection: positions=%v", positions)
 	}
 }
