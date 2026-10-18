@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -46,25 +47,42 @@ func TestPrompt112BInputRequiredMarkerStaysOnOneLine(t *testing.T) {
 }
 
 func TestPrompt112BFindingsCategoryUsesCombinedNavigableCount(t *testing.T) {
-	m := &model{findingsView: true, findingCategoryView: true, width: 120, height: 30, findingCursor: 0, findingCategories: []findingCategory{{Name: "Active Directory ACLs", Description: "Direct control relationships and object permissions", Findings: 1386, Observations: 0, Highest: "high"}}}
-	frame := ansi.Strip(m.View())
-	if strings.Contains(frame, "OBSERVED") || strings.Contains(frame, "observations") {
-		t.Fatalf("category overview still exposes a separate observations column:\n%s", frame)
-	}
-	if !strings.Contains(frame, "FINDINGS") || !strings.Contains(frame, "1386") || strings.Contains(frame, " 5 ") {
-		t.Fatalf("combined category count missing:\n%s", frame)
-	}
-	header := ""
-	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(line, "CATEGORY") && strings.Contains(line, "FINDINGS") {
-			header = line
-			break
+	severities := []string{"critical", "high", "medium", "low", "informational"}
+	for _, width := range []int{160, 120, 100, 80, 60} {
+		categories := make([]findingCategory, 0, len(severities))
+		for index, severity := range severities {
+			categories = append(categories, findingCategory{Name: "Active Directory ACLs", Description: "Direct control relationships and object permissions", Findings: 1386 + index, Highest: severity})
 		}
-	}
-	findingsColumn := strings.Index(header, "FINDINGS")
-	severityColumn := strings.Index(header, "SEVERITY")
-	if findingsColumn < 0 || severityColumn <= findingsColumn {
-		t.Fatalf("category headers are not ordered/aligned:\n%s", header)
+		m := &model{findingsView: true, findingCategoryView: true, width: width, height: 40, findingCursor: 0, findingCategories: categories}
+		frame := ansi.Strip(m.View())
+		if strings.Contains(frame, "OBSERVED") || strings.Contains(frame, "observations") {
+			t.Fatalf("category overview still exposes a separate observations column at width %d:\n%s", width, frame)
+		}
+		for _, category := range categories {
+			for _, line := range strings.Split(frame, "\n") {
+				if strings.Contains(line, category.Name) && strings.Contains(line, fmt.Sprintf("%d", category.Findings)) {
+					if !strings.Contains(line, strings.ToUpper(category.Highest)) {
+						t.Fatalf("severity wrapped away from category at width %d: %q\n%s", width, line, frame)
+					}
+					break
+				}
+			}
+		}
+		header := ""
+		for _, line := range strings.Split(frame, "\n") {
+			if strings.Contains(line, "CATEGORY") && (strings.Contains(line, "FINDINGS") || strings.Contains(line, "COUNT")) {
+				header = line
+				break
+			}
+		}
+		if !strings.Contains(header, "CATEGORY") || (!strings.Contains(header, "FINDINGS") && !strings.Contains(header, "COUNT")) || !strings.Contains(header, "SEV") && !strings.Contains(header, "SEVERITY") {
+			t.Fatalf("category headers are incomplete at width %d: %q", width, header)
+		}
+		for _, line := range strings.Split(frame, "\n") {
+			if ansi.StringWidthWc(line) > width {
+				t.Fatalf("rendered line exceeds terminal width %d: %d %q", width, ansi.StringWidthWc(line), line)
+			}
+		}
 	}
 }
 

@@ -1227,25 +1227,35 @@ func (m *model) findingCategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
-	categoryWidth := max(16, width-10-12-6)
+	// The category row includes the two-cell selection prefix, two inter-column
+	// gaps, and a severity field wide enough for INFORMATIONAL. The surrounding
+	// pane consumes its border and horizontal padding, so calculate from the
+	// actual inner width rather than the nominal pane width.
+	innerWidth := max(1, width-4)
+	countWidth := 10
+	severityWidth := 12
+	categoryWidth := max(16, innerWidth-2-1-countWidth-2-severityWidth)
 	if width >= 80 {
-		content.WriteString(dim.Render(fmt.Sprintf("%-*s %10s  %12s", categoryWidth, "CATEGORY", "FINDINGS", "SEVERITY")) + "\n")
+		content.WriteString(dim.Render(fmt.Sprintf("  %-*s %*s  %*s", categoryWidth, "CATEGORY", countWidth, "FINDINGS", severityWidth, "SEVERITY")) + "\n")
 		content.WriteString(dim.Render("────────────────────────────────────────────────────────────────────────") + "\n\n")
 	} else {
-		content.WriteString(dim.Render(fmt.Sprintf("%-*s %6s  %s", categoryWidth, "CATEGORY", "COUNT", "SEV")) + "\n\n")
+		countWidth = 6
+		categoryWidth = max(16, innerWidth-2-1-countWidth-2-severityWidth)
+		content.WriteString(dim.Render(fmt.Sprintf("  %-*s %*s  %*s", categoryWidth, "CATEGORY", countWidth, "COUNT", severityWidth, "SEV")) + "\n\n")
 	}
 	for index, category := range m.findingCategories {
 		selected := index == m.findingCursor
 		var line string
 		count := category.Findings + category.Observations
+		severityText := strings.ToUpper(strings.TrimSpace(category.Highest))
 		if width >= 80 {
 			name := truncateFinding(category.Name, categoryWidth)
 			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, categoryWidth-ansi.StringWidthWc(name)))
-			line = fmt.Sprintf("%s%s %10d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%12s", category.Highest)))
+			line = fmt.Sprintf("%s%s %10d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%12s", severityText)))
 		} else {
 			name := truncateFinding(category.Name, categoryWidth)
 			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, categoryWidth-ansi.StringWidthWc(name)))
-			line = fmt.Sprintf("%s%s %6d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(category.Highest))
+			line = fmt.Sprintf("%s%s %6d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%12s", severityText)))
 		}
 		content.WriteString(line + "\n")
 		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(10, categoryWidth-3))) + "\n")
