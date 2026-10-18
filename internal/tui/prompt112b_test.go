@@ -29,25 +29,42 @@ func TestPrompt112BOnlyFocusedPanelHasActiveArrow(t *testing.T) {
 }
 
 func TestPrompt112BInputRequiredMarkerStaysOnOneLine(t *testing.T) {
-	m := &model{width: 44, height: 30, modules: []modules.Module{statusModule{id: "input", name: "A very long module name that must truncate", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, status: modules.StatusInputRequired}}, selectedModules: map[string]bool{}, focus: focusModules, cursor: 0}
-	m.resizeOutput()
-	frame := ansi.Strip(m.View())
-	if strings.Contains(frame, "INPUT-\nREQ") || strings.Contains(frame, "\nREQ") {
-		t.Fatalf("input marker wrapped:\n%s", frame)
-	}
-	if !strings.Contains(frame, "INPUT") {
-		t.Fatalf("compact input marker missing:\n%s", frame)
+	for _, width := range []int{120, 80, 44} {
+		m := &model{width: width, height: 30, modules: []modules.Module{
+			statusModule{id: "dacl", name: "Read Object DACL", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, status: modules.StatusInputRequired},
+			statusModule{id: "computers", name: "Find Computers by Text", family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, status: modules.StatusInputRequired},
+		}, selectedModules: map[string]bool{}, focus: focusModules, cursor: 0}
+		m.resizeOutput()
+		frame := ansi.Strip(m.View())
+		if strings.Contains(frame, "INPUT-\nREQ") || strings.Contains(frame, "\nREQ") {
+			t.Fatalf("input marker wrapped at width %d:\n%s", width, frame)
+		}
+		if strings.Count(frame, "INPUT") != 2 && strings.Count(frame, "INPUT-REQ") != 2 {
+			t.Fatalf("both input markers were not rendered at width %d:\n%s", width, frame)
+		}
 	}
 }
 
 func TestPrompt112BFindingsCategoryUsesCombinedNavigableCount(t *testing.T) {
-	m := &model{findingsView: true, findingCategoryView: true, width: 100, height: 30, findingCursor: 0, findingCategories: []findingCategory{{Name: "Active Directory", Findings: 2, Observations: 3, Highest: "high"}}}
+	m := &model{findingsView: true, findingCategoryView: true, width: 120, height: 30, findingCursor: 0, findingCategories: []findingCategory{{Name: "Active Directory ACLs", Description: "Direct control relationships and object permissions", Findings: 1386, Observations: 0, Highest: "high"}}}
 	frame := ansi.Strip(m.View())
 	if strings.Contains(frame, "OBSERVED") || strings.Contains(frame, "observations") {
 		t.Fatalf("category overview still exposes a separate observations column:\n%s", frame)
 	}
-	if !strings.Contains(frame, "FINDINGS") || !strings.Contains(frame, " 5 ") {
+	if !strings.Contains(frame, "FINDINGS") || !strings.Contains(frame, "1386") || strings.Contains(frame, " 5 ") {
 		t.Fatalf("combined category count missing:\n%s", frame)
+	}
+	header := ""
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, "CATEGORY") && strings.Contains(line, "FINDINGS") {
+			header = line
+			break
+		}
+	}
+	findingsColumn := strings.Index(header, "FINDINGS")
+	severityColumn := strings.Index(header, "SEVERITY")
+	if findingsColumn < 0 || severityColumn <= findingsColumn {
+		t.Fatalf("category headers are not ordered/aligned:\n%s", header)
 	}
 }
 

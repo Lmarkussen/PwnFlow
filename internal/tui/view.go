@@ -58,7 +58,11 @@ func (m *model) View() string {
 			stateDisplay = strings.Fields(stateDisplay)[0]
 		}
 		stateWidth := ansi.StringWidthWc(stateDisplay)
-		nameWidth := max(10, width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(mark)-stateWidth-3)
+		// paneStyle consumes the border and horizontal padding around the row
+		// content. Budget against the inner width, otherwise Lip Gloss wraps the
+		// status onto a second physical line at the pane edge.
+		rowWidth := max(1, width-4)
+		nameWidth := max(8, rowWidth-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(mark)-stateWidth-3)
 		name := ansi.TruncateWc(module.Name(), nameWidth, "…")
 		nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(1, nameWidth-ansi.StringWidthWc(name)))
 		left.WriteString(fmt.Sprintf("%s%s %s %s\n", selectionPrefix(selected), mark, nameField, lifecycleStyle(state).Render(stateDisplay)))
