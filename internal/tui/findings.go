@@ -588,19 +588,28 @@ func (m *model) findingsViewRender() string {
 }
 
 func (m *model) findingTieringOverview(width int) string {
-	count := 0
+	counts := map[string]int{"tier0_context": 0, "tier1_context": 0, "tier2_context": 0}
 	for _, finding := range m.findingAllRows {
-		if findingCategoryKey(finding) == "active_directory" && findingTierScopeKey(finding) != "" {
-			count++
+		if findingCategoryKey(finding) == "active_directory" {
+			if scope := findingTierScopeKey(finding); scope != "" {
+				counts[scope]++
+			}
 		}
 	}
 	rows := []struct {
 		name, description, status string
 		count                     int
 	}{
-		{"Tier 0 — Identity Control Plane", "Source-backed identity-control plane context", "INFORMATIONAL", count},
-		{"Tier 1 — Server Administration", "Future server-administration evidence scope", "NOT ASSESSED", 0},
-		{"Tier 2 — Workstation Administration", "Future workstation-administration evidence scope", "NOT ASSESSED", 0},
+		{"Tier 0 — Identity Control Plane", "Source-backed identity-control plane context", "", counts["tier0_context"]},
+		{"Tier 1 — Server Administration", "Declared server-administration evidence scope", "", counts["tier1_context"]},
+		{"Tier 2 — Workstation Administration", "Declared workstation-administration evidence scope", "", counts["tier2_context"]},
+	}
+	for index := range rows {
+		if rows[index].count > 0 {
+			rows[index].status = "INFORMATIONAL"
+		} else {
+			rows[index].status = "NOT ASSESSED"
+		}
 	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // ADMINISTRATIVE TIERING") + "\n")
@@ -1182,6 +1191,8 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		return formatProtectedAccountsCondition(metadata, finding)
 	case typ == "ad_tier0_context_evidence":
 		return formatTier0ContextCondition(metadata, finding)
+	case typ == "ad_tier1_context_evidence" || typ == "ad_tier2_context_evidence":
+		return formatTierContextCondition(finding)
 	}
 	return ""
 }
@@ -1379,6 +1390,72 @@ func formatTier0ContextCondition(metadata map[string]any, finding storage.Findin
 	return strings.Join(lines, "\n")
 }
 
+func formatTierContextCondition(finding storage.Finding) string {
+	var metadata map[string]any
+	if json.Unmarshal([]byte(finding.EvidenceJSON), &metadata) != nil {
+		return "Administrative tier evidence is unavailable in the stored observation. See E for the source report."
+	}
+	tier := metadataInt(metadata, "tier")
+	if tier == 0 {
+		if strings.Contains(strings.ToLower(finding.FindingType), "tier2") {
+			tier = 2
+		} else {
+			tier = 1
+		}
+	}
+	lines := []string{fmt.Sprintf("TIER %d ADMINISTRATIVE CONTEXT EVIDENCE OVERVIEW", tier), "INFORMATIONAL"}
+	if finding.SourceExecution > 0 {
+		lines = append(lines, "SOURCE", fmt.Sprintf("  RustHound-CE — Execution %d", finding.SourceExecution))
+	}
+	if policy := stringValue(metadata["policy_id"]); policy != "" {
+		lines = append(lines, "TIER POLICY", "  Policy: "+policy, "  Status: DECLARED / EXTERNALLY DOCUMENTED")
+	}
+	if groups, ok := metadata["declared_groups"].([]any); ok && len(groups) > 0 {
+		lines = append(lines, "OBSERVED DIRECTORY IDENTITIES")
+		for i, raw := range groups {
+			if i >= 12 {
+				lines = append(lines, "  Additional groups are available through E.")
+				break
+			}
+			if g, ok := raw.(map[string]any); ok {
+				lines = append(lines, "  Group: "+fallbackText(stringValue(g["name"]), stringValue(g["id"])))
+			}
+		}
+	}
+	if paths, ok := metadata["membership_paths"].([]any); ok && len(paths) > 0 {
+		lines = append(lines, "OBSERVED MEMBERSHIP")
+		for i, raw := range paths {
+			if i >= 16 {
+				lines = append(lines, "  Additional membership paths are available through E.")
+				break
+			}
+			if p, ok := raw.(map[string]any); ok {
+				vals, _ := p["path"].([]any)
+				names := make([]string, 0, len(vals))
+				for _, v := range vals {
+					if s, ok := v.(string); ok {
+						names = append(names, s)
+					}
+				}
+				if len(names) > 0 {
+					lines = append(lines, "  "+strings.Join(names, " → ")+" ("+fallbackText(stringValue(p["classification"]), "observed")+")")
+				}
+			}
+		}
+	}
+	if targets, ok := metadata["targets"].([]any); ok && len(targets) > 0 {
+		lines = append(lines, "DECLARED ADMINISTRATIVE SCOPE")
+		for _, raw := range targets {
+			if t, ok := raw.(map[string]any); ok {
+				d, _ := t["declared"].(map[string]any)
+				lines = append(lines, "  Target: "+fallbackText(stringValue(d["name"]), stringValue(d["ip"]))+" ("+fallbackText(stringValue(t["status"]), "unresolved")+")")
+			}
+		}
+	}
+	lines = append(lines, "ADMINISTRATIVE ACCESS VERIFICATION", "  Host-local Administrators membership: NOT VERIFIED", "  Effective administrative authorization: NOT VERIFIED", "LIMITATIONS", "  Declared tier is not verified host authority.", "  Cross-tier policy violation: NOT ESTABLISHED.")
+	return strings.Join(lines, "\n")
+}
+
 func appendProtectedPreview(lines *[]string, heading string, value any) {
 	objects, ok := value.([]any)
 	if !ok || len(objects) == 0 {
@@ -1469,6 +1546,8 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "The collected adminCount attributes and protected-group membership relationships identify accounts and groups that warrant administrative protection review. Differences may reflect historical membership or incomplete collection, but do not establish current SDProp protection or misconfiguration."
 	case typ == "ad_tier0_context_evidence":
 		return "The collected directory evidence identifies accounts, groups and configured relationships associated with Active Directory's identity-control plane. These relationships support privilege-boundary review but do not establish effective administrative authorization, compromise or tier-policy violations."
+	case typ == "ad_tier1_context_evidence" || typ == "ad_tier2_context_evidence":
+		return "The collected directory memberships and declared administrative scope identify server or workstation administration context for review. They do not establish host-local administrator membership, effective authorization or a tier-policy violation."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
@@ -1513,6 +1592,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Review the observed adminCount values, protected-group membership paths and AdminSDHolder evidence. Validate current membership, complete security descriptors and SDProp behavior with approved AD administration tools before making access-control changes."
 	case typ == "ad_tier0_context_evidence":
 		return "Review the listed Tier 0-associated identities, membership paths, ACL relationships and replication-right configuration. Validate intended administrative roles and effective permissions with approved AD administration methods before drawing security conclusions or changing privileges."
+	case typ == "ad_tier1_context_evidence" || typ == "ad_tier2_context_evidence":
+		return "Review the declared tier assignments and observed membership paths. Validate host-local Administrators membership and effective access with approved administration methods before changing privileges."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

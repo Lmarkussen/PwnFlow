@@ -589,10 +589,10 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "end":
 			m.findingCursor = 2
 		case "enter":
-			if m.findingCursor == 0 {
+			if m.findingCursor >= 0 && m.findingCursor <= 2 {
 				m.findingTieringView = false
 				m.findingTieringParent = true
-				m.findingSubcategory = "tier0_context"
+				m.findingSubcategory = []string{"tier0_context", "tier1_context", "tier2_context"}[m.findingCursor]
 				m.findingCategoryView = false
 				m.findingSubcategoryView = false
 				m.findingCursor, m.findingTop = 0, 0

@@ -352,8 +352,24 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 		return nil, inventoryErr
 	}
 	var tier0Input *storage.FindingInput
+	var tierContextInputs []storage.FindingInput
 	if protectedErr == nil {
 		_, tier0Input, _ = AnalyzeTier0Context(ctx, job.ArtifactPath, inventory, protectedReport, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	}
+	if resultsRoot != "" {
+		for tier := 1; tier <= 2; tier++ {
+			report, tierInput, tierErr := AnalyzeTierContext(ctx, job.ArtifactPath, resultsRoot, inventory, job.AssessmentID, job.ExecutionID, tier, job.ObservedAt)
+			if tierErr != nil || tierInput == nil {
+				continue
+			}
+			reportPath, _, writeErr := WriteTierContextArtifacts(resultsRoot, report)
+			if writeErr != nil {
+				continue
+			}
+			tierInput.ArtifactPath = reportPath
+			tierInput.ArtifactRef = "/"
+			tierContextInputs = append(tierContextInputs, *tierInput)
+		}
 	}
 	if inventoryInputs != nil {
 		artifact := job.ArtifactPath
@@ -419,6 +435,7 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 	if tier0Input != nil {
 		inputs = append(inputs, *tier0Input)
 	}
+	inputs = append(inputs, tierContextInputs...)
 	return inputs, nil
 }
 

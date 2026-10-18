@@ -1337,3 +1337,17 @@ func TestAdministrativeTieringParentEmptyAndFutureScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestAdministrativeTieringRoutesTierOneAndTwo(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Severity: "informational"}}, {FindingInput: storage.FindingInput{FindingType: "ad_tier1_context_evidence", Severity: "informational"}}, {FindingInput: storage.FindingInput{FindingType: "ad_tier2_context_evidence", Severity: "informational"}}}
+	for _, cursor := range []struct {
+		cursor int
+		want   string
+	}{{1, "tier1_context"}, {2, "tier2_context"}} {
+		m := &model{findingTieringView: true, findingCursor: cursor.cursor, findingAllRows: rows, findingRows: rows, findingsLoaded: true, findingCategory: "active_directory", width: 120, height: 30}
+		m.handleFindingsKey("enter")
+		if m.findingSubcategory != cursor.want {
+			t.Fatalf("cursor %d routed to %q, want %q", cursor.cursor, m.findingSubcategory, cursor.want)
+		}
+	}
+}
