@@ -89,6 +89,9 @@ func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, 
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return nil, fmt.Errorf("GPO evidence manifest is invalid: %w", err)
 	}
+	if len(manifest.GPOs) == 0 && len(manifest.Files) == 0 {
+		return nil, fmt.Errorf("GPO evidence contains no usable metadata or SYSVOL files")
+	}
 	metadata, _ := os.ReadFile(metadataPath)
 	links, _ := os.ReadFile(linksPath)
 	if len(metadata) == 0 || len(links) == 0 {

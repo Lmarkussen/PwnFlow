@@ -90,3 +90,18 @@ func TestAnalyzeGPOEvidenceInventoryIsInformationalAndTraceable(t *testing.T) {
 		t.Fatal("secret-bearing text entered observation")
 	}
 }
+
+func TestAnalyzeGPOEvidenceDoesNotFabricateEmptyObservation(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"GPO_metadata.json", "GPO_links.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "GPO_evidence_manifest.json"), []byte(`{"gpos":[],"files":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AnalyzeSpecialized(context.Background(), filepath.Join(dir, "GPO_metadata.json"), "AD GPO Evidence", 1, 78, nowForTest()); err == nil {
+		t.Fatal("empty collection produced an observation")
+	}
+}
