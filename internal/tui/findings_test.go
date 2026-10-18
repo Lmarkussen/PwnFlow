@@ -1195,3 +1195,28 @@ func TestProtectedAccountsFindingShowsIdentitiesAndLimitations(t *testing.T) {
 		t.Fatal("protected-account remediation treated aggregate evidence as one principal")
 	}
 }
+
+func TestProtectedAccountsHistoricalFindingHydratesExactExecutionArtifact(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "AD_protected_accounts_evidence.json")
+	payload := `{"source_execution_id":31,"users":[{"name":"alice","id":"S-1-5-21-1-2-3-1100","admin_count":"true","membership":"observed"}],"groups":[{"name":"Domain Admins","id":"S-1-5-21-1-2-3-512","admin_count":"true","membership":"not_observed"}],"membership_paths":[{"path":["alice","Domain Admins"],"classification":"direct"}],"admin_sd_holder":{"distinguished_name":"CN=ADMINSDHOLDER,CN=SYSTEM,DC=SCCM,DC=LAB","aces":[]}}`
+	if err := os.WriteFile(artifact, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType:     "ad_protected_accounts_admincount_evidence",
+		SourceExecution: 31,
+		EvidenceJSON:    fmt.Sprintf(`{"admincount_users":1,"admincount_groups":1,"structured_artifact":%q}`, artifact),
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"alice", "Domain Admins", "alice → Domain Admins", "CN=ADMINSDHOLDER"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("historical artifact fallback missing %q: %s", expected, condition)
+		}
+	}
+	mismatched := finding
+	mismatched.SourceExecution = 99
+	mismatchedCondition := findingCondition(mismatched)
+	if strings.Contains(mismatchedCondition, "alice") || !strings.Contains(mismatchedCondition, "Users with adminCount=true: 1") {
+		t.Fatalf("cross-execution artifact fallback was used: %s", mismatchedCondition)
+	}
+}

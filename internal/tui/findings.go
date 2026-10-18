@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -576,7 +577,7 @@ func findingCondition(finding storage.Finding) string {
 	if typ == "ad_replication_rights_evidence_overview" {
 		return formatReplicationRightsOverview(finding)
 	}
-	metadata := findingMetadata(finding)
+	metadata := protectedFindingMetadata(finding)
 	if condition := specificFindingCondition(finding, metadata); condition != "" {
 		return condition
 	}
@@ -1188,6 +1189,9 @@ func formatProtectedAccountsCondition(metadata map[string]any, finding storage.F
 		}
 		lines = append(lines, "  Complete security descriptor: NOT VERIFIED", "  SDProp application: NOT VERIFIED")
 	}
+	if unavailable := metadataString(metadata, "identity_preview_unavailable"); unavailable != "" {
+		lines = append(lines, "Identity preview unavailable: "+unavailable+". Full evidence remains available through E.")
+	}
 	if value := metadataInt(metadata, "omitted_membership_paths"); value > 0 {
 		lines = append(lines, fmt.Sprintf("Membership paths omitted by bounds: %d", value))
 	}
@@ -1575,6 +1579,81 @@ func findingMetadata(finding storage.Finding) map[string]any {
 		_ = json.Unmarshal([]byte(finding.EvidenceJSON), &metadata)
 	}
 	return metadata
+}
+
+func protectedFindingMetadata(finding storage.Finding) map[string]any {
+	metadata := findingMetadata(finding)
+	if strings.ToLower(finding.FindingType) != "ad_protected_accounts_admincount_evidence" || metadata["admincount_user_examples"] != nil {
+		return metadata
+	}
+	path := metadataString(metadata, "structured_artifact")
+	if path == "" {
+		metadata["identity_preview_unavailable"] = "structured artifact reference is missing"
+		return metadata
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		metadata["identity_preview_unavailable"] = "referenced structured artifact is unavailable"
+		return metadata
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		metadata["identity_preview_unavailable"] = "referenced structured artifact is invalid"
+		return metadata
+	}
+	sourceExecution, ok := report["source_execution_id"].(float64)
+	if !ok || int64(sourceExecution) != finding.SourceExecution {
+		metadata["identity_preview_unavailable"] = "structured artifact execution does not match the Finding execution"
+		return metadata
+	}
+	users := protectedMetadataAdminExamples(report["users"])
+	groups := protectedMetadataAdminExamples(report["groups"])
+	metadata["admincount_user_examples"] = users
+	metadata["admincount_group_examples"] = groups
+	metadata["membership_examples"] = report["membership_paths"]
+	metadata["attribute_membership_differences"] = protectedMetadataDifferences(report)
+	if holder, ok := report["admin_sd_holder"]; ok {
+		metadata["admin_sdholder"] = holder
+	}
+	metadata["identity_preview_source"] = path
+	return metadata
+}
+
+func protectedMetadataAdminExamples(value any) []any {
+	objects, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]any, 0, len(objects))
+	for _, raw := range objects {
+		object, ok := raw.(map[string]any)
+		if ok && stringValue(object["admin_count"]) == "true" {
+			result = append(result, object)
+		}
+	}
+	return result
+}
+
+func protectedMetadataDifferences(report map[string]any) []any {
+	var result []any
+	for _, key := range []string{"users", "groups"} {
+		objects, ok := report[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, raw := range objects {
+			object, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			adminCount := stringValue(object["admin_count"])
+			membership := stringValue(object["membership"])
+			if adminCount == "true" && membership == "not_observed" || adminCount == "false" && membership == "observed" || adminCount == "unknown" {
+				result = append(result, object)
+			}
+		}
+	}
+	return result
 }
 
 func metadataString(metadata map[string]any, key string) string {
