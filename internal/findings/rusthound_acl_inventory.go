@@ -45,6 +45,7 @@ type ACLInventoryReport struct {
 	RawACLsInspected    int                          `json:"raw_acls_inspected"`
 	SupportedACLs       int                          `json:"supported_acls"`
 	NormalizedRelations int                          `json:"normalized_relationships"`
+	OmittedRelations    int                          `json:"omitted_relationships"`
 	HighValueTargets    []ACLInventoryTarget         `json:"high_value_targets"`
 	Relationships       []ACLInventoryRelationship   `json:"relationships"`
 	Unresolved          []ACLInventoryUnresolved     `json:"unresolved_identities"`
@@ -200,6 +201,10 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 				}
 				report.RawACLsInspected++
 				right := aceString(ace, "RightName")
+				if strings.TrimSpace(right) == "" {
+					report.MalformedEntries++
+					continue
+				}
 				key := normalize(right)
 				if !inventoryRights[key] {
 					report.UnsupportedRights[right]++
@@ -248,6 +253,7 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 				}
 				rel := ACLInventoryRelationship{PrincipalID: principalID, PrincipalName: principalName, PrincipalType: principalType, TargetID: target.ID, TargetName: objectLabel(target.collectedObject), TargetType: target.Type, TargetClass: target.Class, Permission: right, Decision: decision, Inheritance: inheritance, ObjectType: objectType, InheritedObjectType: inheritedObjectType, Classification: classification, Occurrences: 1, Artifact: file, ArtifactRef: artifactRef}
 				if !appendRelationship(&report, rel) {
+					report.OmittedRelations++
 					report.Status = "partial"
 					report.Limitations = append(report.Limitations, "Maximum relationship-detail limit reached; additional normalized relationships were counted but not listed.")
 				}
@@ -407,7 +413,7 @@ func FormatACLInventoryReport(report ACLInventoryReport) string {
 	fmt.Fprintln(&b, "             PWNFLOW AD PRIVILEGED ACL EVIDENCE INVENTORY")
 	fmt.Fprintln(&b, "======================================================================")
 	fmt.Fprintf(&b, "\nDOMAIN: %s\nSOURCE EXECUTION: %d\nSOURCE ARTIFACT: %s\nSTATUS: %s\nANALYZED: %s\n", report.Domain, report.SourceExecutionID, report.SourceArtifact, report.Status, report.AnalysisTimestamp.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "\nObjects inspected: %d\nRaw ACL records inspected: %d\nSupported ACL records: %d\nNormalized relationships: %d\nHigh-value targets: %d\nUnresolved identities: %d\nUnsupported rights: %d\nMalformed entries: %d\n", report.ObjectsInspected, report.RawACLsInspected, report.SupportedACLs, report.NormalizedRelations, len(report.HighValueTargets), len(report.Unresolved), unsupportedCount(report.UnsupportedRights), report.MalformedEntries)
+	fmt.Fprintf(&b, "\nObjects inspected: %d\nRaw ACL records inspected: %d\nSupported ACL records: %d\nNormalized relationships: %d\nOmitted relationships: %d\nHigh-value targets: %d\nUnresolved identities: %d\nUnsupported rights: %d\nMalformed entries: %d\n", report.ObjectsInspected, report.RawACLsInspected, report.SupportedACLs, report.NormalizedRelations, report.OmittedRelations, len(report.HighValueTargets), len(report.Unresolved), unsupportedCount(report.UnsupportedRights), report.MalformedEntries)
 	fmt.Fprintln(&b, "\n----------------------------------------------------------------------\nOBSERVED RELATIONSHIPS\n----------------------------------------------------------------------")
 	for _, target := range report.HighValueTargets {
 		fmt.Fprintf(&b, "\nTarget: %s\nIdentity: %s\nType: %s\n", target.Name, target.ID, target.ObjectType)
