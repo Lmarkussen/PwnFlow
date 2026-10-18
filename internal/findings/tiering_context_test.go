@@ -35,7 +35,7 @@ func TestAnalyzeTierContextUsesDeclaredPolicyAndObservedMembership(t *testing.T)
 	if err := os.MkdirAll(policyDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	policy := TierAssignmentPolicy{SchemaVersion: 1, PolicyID: "lab-tier-policy", Version: "1", Domain: "SCCM.LAB", DomainSID: domainSID, Source: "fixture-manifest", Assignments: []TierAssignment{{Tier: 1, GroupID: groupSID, Label: "server administration", Target: TierTarget{Name: "MSSQL.SCCM.LAB", IP: "10.1.10.42"}}}}
+	policy := TierAssignmentPolicy{SchemaVersion: 1, PolicyID: "lab-tier-policy", Version: "1", Domain: "SCCM.LAB", DomainSID: domainSID, Source: "fixture-manifest", Assignments: []TierAssignment{{Tier: 1, GroupID: groupSID, Label: "server administration", Target: TierTarget{Name: "MSSQL.SCCM.LAB", IP: "192.0.2.42"}}}}
 	data, _ := json.Marshal(policy)
 	if err := os.WriteFile(filepath.Join(policyDir, "tier_policy.json"), data, 0600); err != nil {
 		t.Fatal(err)

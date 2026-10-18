@@ -1355,7 +1355,7 @@ func TestAdministrativeTieringRoutesTierOneAndTwo(t *testing.T) {
 func TestTierContextFindingRendersObservedIdentitiesAndLimits(t *testing.T) {
 	finding := storage.Finding{FindingInput: storage.FindingInput{
 		FindingType: "ad_tier1_context_evidence", SourceExecution: 82, Severity: "informational",
-		EvidenceJSON: `{"tier":1,"policy_id":"lab-tier-policy","declared_groups":[{"id":"S-1-5-21-1-2-3-1152","name":"PF-T1-Admins"}],"membership_paths":[{"path":["PF-T1-Admin","PF-T1-Admins"],"classification":"direct"}],"targets":[{"declared":{"name":"MSSQL.SCCM.LAB","ip":"10.1.10.42"},"status":"unresolved"}]}`,
+		EvidenceJSON: `{"tier":1,"policy_id":"lab-tier-policy","declared_groups":[{"id":"S-1-5-21-1-2-3-1152","name":"PF-T1-Admins"}],"membership_paths":[{"path":["PF-T1-Admin","PF-T1-Admins"],"classification":"direct"}],"targets":[{"declared":{"name":"MSSQL.SCCM.LAB","ip":"192.0.2.42"},"status":"unresolved"}]}`,
 	}}
 
 	detail := findingCondition(finding)
