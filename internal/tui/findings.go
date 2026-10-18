@@ -1175,7 +1175,12 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 	case typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected":
 		kind := fallbackText(metadataString(metadata, "material_type"), "Kerberos material")
 		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
-		return fmt.Sprintf("NetExec recorded %s associated with %s. Secret material is intentionally not displayed.", kind, principal)
+		count := metadataInt(metadata, "record_count")
+		scope := "The original evidence artifact may contain additional qualifying records."
+		if count > 0 {
+			return fmt.Sprintf("NetExec recorded %s associated with %s (%d source record(s) for this principal). This Finding represents one principal; %s Secret material is intentionally not displayed.", kind, principal, count, scope)
+		}
+		return fmt.Sprintf("NetExec recorded %s associated with %s. %s Secret material is intentionally not displayed.", kind, principal, scope)
 	case typ == "ad_user_description_keyword_observed":
 		principal := fallbackText(metadataString(metadata, "principal"), fallbackText(finding.AffectedObject, "principal identity unavailable in source evidence"))
 		attribute := fallbackText(metadataString(metadata, "attribute"), "account information")
@@ -2037,19 +2042,76 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
 	empty := len(m.findingSubcategories) == 0
+	selectedSubcategory := ""
 	if !empty {
 		index := min(max(0, m.findingCursor), len(m.findingSubcategories)-1)
+		selectedSubcategory = m.findingSubcategories[index].Key
 		empty = m.findingSubcategories[index].Findings == 0 && m.findingSubcategories[index].Observations == 0
 	}
 	if empty {
-		message := "No records in this category. Analysis status: " + fallbackText(m.findingsAnalysisStatus, "NOT ASSESSED") + "."
+		message := "No records in this category. Analysis status: " + m.findingSubcategoryAssessmentStatus(selectedSubcategory) + "."
 		if m.findingCategory == "kerberos" && len(m.findingSubcategories) > 0 && m.findingCursor < len(m.findingSubcategories) && m.findingSubcategories[m.findingCursor].Key == "kerberos_material" {
-			message = "No collected Kerberos-material records are associated with this assessment. This does not establish that no material exists; the relevant collector may not have run or may have produced no qualifying records."
+			message = m.kerberosMaterialEmptyMessage()
 		}
 		content.WriteString(warn.Render(message) + "\n")
 	}
 	content.WriteString(dim.Render("\n→/Enter Open    ←/Esc Back    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) kerberosMaterialEmptyMessage() string {
+	for _, finding := range m.findingAllRows {
+		typ := strings.ToLower(finding.FindingType)
+		if strings.HasPrefix(typ, "kerberoastable_account") || strings.HasPrefix(typ, "asrep_roastable_account") {
+			return "No normalized Kerberos-material records are associated with this assessment, although related roastability evidence exists. This does not establish that material was absent; inspect the producing execution and original artifact."
+		}
+	}
+	return "No collected Kerberos-material records are associated with this assessment. This does not establish that no material exists; the relevant collector may not have run or may have produced no qualifying records."
+}
+
+func (m *model) findingSubcategoryAssessmentStatus(subcategory string) string {
+	if m.db == nil || m.targetID <= 0 {
+		return fallbackText(m.findingsAnalysisStatus, "NOT ASSESSED")
+	}
+	tool := ""
+	matcher := func(string) bool { return false }
+	switch subcategory {
+	case "kerberos_material", "kerberoastable", "asrep":
+		tool = "NetExec (nxc)"
+		matcher = func(name string) bool {
+			n := strings.ToLower(name)
+			return strings.Contains(n, "kerberoast") || strings.Contains(n, "as-rep")
+		}
+	case "domain_security_policy":
+		tool = "NetExec (nxc)"
+		matcher = func(name string) bool {
+			n := strings.ToLower(name)
+			return strings.Contains(n, "password policy") || strings.Contains(n, "machine account quota") || strings.Contains(n, "fine-grained password policy")
+		}
+	case "spn":
+		tool = "ghostSPN"
+		matcher = func(string) bool { return true }
+	case "acl", "acl_inventory", "acl_replication_rights":
+		tool = "RustHound-CE"
+		matcher = func(string) bool { return true }
+	default:
+		return fallbackText(m.findingsAnalysisStatus, "NOT ASSESSED")
+	}
+	executions, err := m.db.ExecutionsForTool(m.ctx, m.targetID, tool)
+	if err != nil {
+		return fallbackText(m.findingsAnalysisStatus, "NOT ASSESSED")
+	}
+	matched := false
+	for _, execution := range executions {
+		if matcher(execution.ModuleName) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return "NOT ASSESSED"
+	}
+	return "ASSESSED — NO QUALIFYING EVIDENCE"
 }
 
 func findingsStatusLabel(db *storage.DB, ctx context.Context, assessmentID int64) string {

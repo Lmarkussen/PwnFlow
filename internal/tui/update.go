@@ -583,8 +583,11 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	if m.findingTieringView {
 		switch key {
 		case "esc":
+			m.findingTieringSelection = min(max(0, m.findingCursor), 2)
+			m.findingTieringTop = m.findingTop
 			m.findingTieringView = false
-			m.findingCursor = 0
+			m.findingCursor = m.findingTieringSelection
+			m.findingTop = m.findingTieringTop
 			m.findingSubcategoryView = true
 			m.findingSubcategory = ""
 			m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
@@ -599,6 +602,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.findingCursor = 2
 		case "enter":
 			if m.findingCursor >= 0 && m.findingCursor <= 2 {
+				m.findingTieringSelection = m.findingCursor
+				m.findingTieringTop = m.findingTop
 				m.findingTieringView = false
 				m.findingTieringParent = true
 				m.findingSubcategory = []string{"tier0_context", "tier1_context", "tier2_context"}[m.findingCursor]
@@ -648,7 +653,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 					m.ensureFindingNavigationMemory()
 					m.findingSubcategorySelections[m.findingCategory] = selected.Key
 					m.findingTieringView = true
-					m.findingCursor = 0
+					m.findingCursor = min(max(0, m.findingTieringSelection), 2)
+					m.findingTop = m.findingTieringTop
 					return m, nil
 				}
 				m.ensureFindingNavigationMemory()
@@ -788,7 +794,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 					m.findingCategoryView = true
 					m.findingSubcategoryView = true
 					m.findingTieringView = true
-					m.findingCursor = 0
+					m.findingCursor = min(max(0, m.findingTieringSelection), 2)
+					m.findingTop = m.findingTieringTop
 					return m, nil
 				}
 				m.findingSubcategory = ""

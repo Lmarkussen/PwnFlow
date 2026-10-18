@@ -272,7 +272,12 @@ func extractKerberosInline(lines []string, metadata map[string]any, finding stor
 }
 
 func kerberosPrincipalInline(line string) string {
-	value := line[strings.IndexByte(line, '$')+1:]
+	value := line
+	if strings.HasPrefix(strings.ToLower(value), "$krb5asrep$") {
+		value = value[len("$krb5asrep$"):]
+	} else if strings.HasPrefix(strings.ToLower(value), "$krb5tgs$") {
+		value = value[len("$krb5tgs$"):]
+	}
 	if start := strings.IndexByte(value, '*'); start >= 0 {
 		value = value[start+1:]
 		if end := strings.IndexByte(value, '*'); end >= 0 {

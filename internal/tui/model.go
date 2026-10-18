@@ -36,6 +36,8 @@ type model struct {
 	findingSubcategoryView       bool
 	findingTieringView           bool
 	findingTieringParent         bool
+	findingTieringSelection      int
+	findingTieringTop            int
 	findingSubcategory           string
 	findingSubcategories         []findingSubcategory
 	findingSubcategorySelections map[string]string

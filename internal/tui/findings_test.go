@@ -1411,3 +1411,16 @@ func TestFindingsArrowAliasesFollowEnterAndEsc(t *testing.T) {
 		t.Fatal("left at Findings root unexpectedly quit the application")
 	}
 }
+
+func TestAdministrativeTieringArrowBackRestoresTierSelection(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "ad_tier0_context_evidence", Severity: "informational"}}, {FindingInput: storage.FindingInput{FindingType: "ad_tier1_context_evidence", Severity: "informational"}}, {FindingInput: storage.FindingInput{FindingType: "ad_tier2_context_evidence", Severity: "informational"}}}
+	m := &model{findingsView: true, findingTieringView: true, findingCursor: 1, findingAllRows: rows, findingRows: rows, findingsLoaded: true, findingCategory: "active_directory", width: 120, height: 30}
+	m.handleFindingsKey("right")
+	if m.findingSubcategory != "tier1_context" {
+		t.Fatalf("opened %q, want tier1_context", m.findingSubcategory)
+	}
+	m.handleFindingsKey("left")
+	if !m.findingTieringView || m.findingCursor != 1 {
+		t.Fatalf("tier selection was not restored: tiering=%t cursor=%d", m.findingTieringView, m.findingCursor)
+	}
+}
