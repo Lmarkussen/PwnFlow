@@ -290,7 +290,7 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs = append(authInputs, securityInputs...)
 		inputs = append(inputs, policyInputs...)
 		inputs = append(inputs, parserInputs...)
-	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
+	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "masscan":
 		inputs, err = AnalyzeMasscan(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
@@ -339,7 +339,7 @@ func ParserVersionFor(tool string) string {
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
 		return netExecSecurityParserVersion
-	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner":
+	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		return specializedParserVersion
 	case "masscan":
 		return masscanParserVersion
@@ -360,8 +360,13 @@ func DiscoverArtifact(tool, outputPath string) string {
 	if outputPath == "" {
 		return ""
 	}
-	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "masscan": true}
+	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true}
 	if specializedTool[strings.ToLower(tool)] {
+		if strings.EqualFold(tool, "AD GPO Evidence") {
+			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
+				return filepath.Dir(outputPath)
+			}
+		}
 		if strings.EqualFold(tool, "masscan") {
 			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
 				return outputPath

@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/gpoevidence"
 	"github.com/pwnflow/pwnflow/internal/runner"
 )
 
@@ -1097,6 +1098,9 @@ func (m *model) syncBatch() tea.Cmd {
 						executionID, err := m.db.RecordExecutionID(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
 						if err == nil {
 							m.batchExecutionIDs = append(m.batchExecutionIDs, executionID)
+							if state.Module.ID() == "ad-gpo-evidence" {
+								_ = gpoevidence.WriteSummary(m.cfg.ResultsRoot(), m.cfg.Domain, executionID)
+							}
 						}
 						if err == nil && m.findings != nil {
 							module := state.Module

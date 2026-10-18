@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,9 @@ const specializedParserVersion = "specialized-artifacts-v1"
 const maxSpecializedArtifactBytes = 64 << 20
 
 func AnalyzeSpecialized(ctx context.Context, artifactPath, source string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
+	if strings.EqualFold(source, "AD GPO Evidence") {
+		return analyzeGPOEvidence(ctx, artifactPath, assessmentID, executionID, now)
+	}
 	info, err := os.Stat(artifactPath)
 	if err != nil {
 		return nil, err
@@ -50,6 +54,66 @@ func AnalyzeSpecialized(ctx context.Context, artifactPath, source string, assess
 	default:
 		return nil, nil
 	}
+}
+
+func analyzeGPOEvidence(ctx context.Context, artifactPath string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
+	if artifactPath == "" {
+		return nil, fmt.Errorf("GPO evidence artifact is empty")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	directory := artifactPath
+	if info, statErr := os.Stat(artifactPath); statErr == nil && !info.IsDir() {
+		directory = filepath.Dir(artifactPath)
+	}
+	manifestPath := filepath.Join(directory, "GPO_evidence_manifest.json")
+	metadataPath := filepath.Join(directory, "GPO_metadata.json")
+	linksPath := filepath.Join(directory, "GPO_links.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("GPO evidence manifest unavailable: %w", err)
+	}
+	var manifest struct {
+		GPOs []struct {
+			GPOGUID   string `json:"gpo_guid"`
+			Status    string `json:"status"`
+			Retrieved int    `json:"retrieved_files"`
+			Failed    int    `json:"failed_files"`
+			Limited   int    `json:"limited_files"`
+		} `json:"gpos"`
+		Files []struct {
+			Status string `json:"status"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return nil, fmt.Errorf("GPO evidence manifest is invalid: %w", err)
+	}
+	metadata, _ := os.ReadFile(metadataPath)
+	links, _ := os.ReadFile(linksPath)
+	if len(metadata) == 0 || len(links) == 0 {
+		return nil, fmt.Errorf("GPO evidence metadata or links artifact is unavailable")
+	}
+	complete, partial := 0, 0
+	for _, gpo := range manifest.GPOs {
+		if gpo.Status == "complete" {
+			complete++
+		} else {
+			partial++
+		}
+	}
+	failed, limited := 0, 0
+	for _, file := range manifest.Files {
+		if file.Status == "failed" || file.Status == "permission_denied" {
+			failed++
+		}
+		if file.Status == "limited" {
+			limited++
+		}
+	}
+	evidence, _ := json.Marshal(map[string]any{"execution_id": executionID, "gpos_discovered": len(manifest.GPOs), "gpos_complete": complete, "gpos_partial": partial, "sysvol_files": len(manifest.Files), "file_failures": failed, "file_limits": limited, "metadata": metadataPath, "links": linksPath, "manifest": manifestPath, "applicability": "not_verified", "wmi_filters": "references preserved; runtime results not evaluated", "security_filtering": "raw evidence only; effective rights not calculated"})
+	description := fmt.Sprintf("Collected %d GPO(s) and %d preserved SYSVOL file record(s) from execution %d. Complete GPOs: %d; partial/limited GPOs: %d; file failures: %d; file limits: %d. Authoritative artifacts: %s, %s, %s, and %sSYSVOL/. Configured links are not proof of applicability; WMI runtime results, effective security filtering and client-side policy application were not verified.", len(manifest.GPOs), len(manifest.Files), executionID, complete, partial, failed, limited, filepath.Base(metadataPath), filepath.Base(linksPath), filepath.Base(manifestPath), filepath.Base(directory)+string(os.PathSeparator))
+	return []storage.FindingInput{specializedFinding(assessmentID, executionID, "gpo_evidence_inventory", "AD Group Policy Evidence Inventory", description, "informational", "", string(evidence), metadataPath, "GPO_metadata.json; GPO_links.json; GPO_evidence_manifest.json; SYSVOL/<GPO-GUID>/", now)}, nil
 }
 
 func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
@@ -207,6 +271,9 @@ func sourceForType(typ string) string {
 		return "ghostSPN"
 	}
 	if strings.HasPrefix(typ, "gpo") {
+		if typ == "gpo_evidence_inventory" {
+			return "AD GPO Evidence"
+		}
 		return "gpoParser"
 	}
 	if strings.HasPrefix(typ, "mssql_encryption") {

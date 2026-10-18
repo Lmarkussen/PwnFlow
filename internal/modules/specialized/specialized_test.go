@@ -108,3 +108,18 @@ func TestMSSQLRelaySemanticFailureDoesNotLookSuccessful(t *testing.T) {
 		t.Fatalf("unrelated tool output was classified as mssqlrelay failure: %v", err)
 	}
 }
+
+func TestExtractJSONPayloadIgnoresDiagnosticPreamble(t *testing.T) {
+	payload, ok := extractJSONPayload([]byte("retrieving {GPO}\n{\"gpos\":[{\"name\":\"synthetic\"}]}\n"))
+	if !ok || string(payload) != `{"gpos":[{"name":"synthetic"}]}` {
+		t.Fatalf("payload=%q ok=%v", payload, ok)
+	}
+}
+
+func TestExtractJSONPayloadRejectsMalformedOrDiagnosticOnlyOutput(t *testing.T) {
+	for _, input := range []string{"retrieving {GPO}", "{\"gpos\":[", "diagnostic [not-json]"} {
+		if _, ok := extractJSONPayload([]byte(input)); ok {
+			t.Fatalf("accepted invalid payload %q", input)
+		}
+	}
+}

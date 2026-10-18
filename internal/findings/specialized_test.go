@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,5 +61,32 @@ func TestAnalyzeSpecializedGPOCacheJSON(t *testing.T) {
 	findings, err := AnalyzeSpecialized(context.Background(), path, "gpoParser", 1, 2, nowForTest())
 	if err != nil || len(findings) != 2 {
 		t.Fatalf("unexpected GPO cache findings: %#v %v", findings, err)
+	}
+}
+
+func TestAnalyzeGPOEvidenceInventoryIsInformationalAndTraceable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "GPO_metadata.json"), []byte(`{"gpos":[{"guid":"ABC"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "GPO_links.json"), []byte(`{"sources":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "GPO_evidence_manifest.json"), []byte(`{"gpos":[{"gpo_guid":"ABC","status":"partial","retrieved_files":1,"failed_files":1,"limited_files":0}],"files":[{"status":"complete"},{"status":"failed"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "collection.log"), []byte("inventory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := AnalyzeSpecialized(context.Background(), filepath.Join(dir, "collection.log"), "AD GPO Evidence", 1, 77, nowForTest())
+	if err != nil || len(inputs) != 1 {
+		t.Fatalf("inputs=%#v err=%v", inputs, err)
+	}
+	input := inputs[0]
+	if input.Title != "AD Group Policy Evidence Inventory" || input.Severity != "informational" || input.SourceExecution != 77 || input.ArtifactPath != filepath.Join(dir, "GPO_metadata.json") {
+		t.Fatalf("unexpected observation: %#v", input)
+	}
+	if strings.Contains(input.Description, "password") {
+		t.Fatal("secret-bearing text entered observation")
 	}
 }

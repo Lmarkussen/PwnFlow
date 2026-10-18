@@ -1,7 +1,9 @@
 package specialized
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -132,12 +134,8 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 		if writeErr := os.WriteFile(stdoutPath, output, 0o600); writeErr != nil {
 			return writeErr
 		}
-		if err == nil {
-			if _, statErr := os.Stat(outputPath); os.IsNotExist(statErr) {
-				if writeErr := os.WriteFile(outputPath, []byte("[]\n"), 0o600); writeErr != nil {
-					return writeErr
-				}
-			}
+		if normalizeErr := normalizeJSONArtifact(outputPath); normalizeErr != nil && err == nil {
+			err = normalizeErr
 		}
 	} else if writeErr := os.WriteFile(outputPath, output, 0o600); writeErr != nil {
 		return writeErr
@@ -155,6 +153,44 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 		return semanticErr
 	}
 	return nil
+}
+
+func normalizeJSONArtifact(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("structured output was not produced")
+		}
+		return err
+	}
+	if json.Valid(data) {
+		return nil
+	}
+	rawPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".raw"
+	if err := os.WriteFile(rawPath, data, 0o600); err != nil {
+		return err
+	}
+	if payload, ok := extractJSONPayload(data); ok {
+		temp := path + ".tmp"
+		if err := os.WriteFile(temp, payload, 0o600); err != nil {
+			return err
+		}
+		return os.Rename(temp, path)
+	}
+	return fmt.Errorf("structured output is not valid JSON; raw output preserved at %s", filepath.Base(rawPath))
+}
+
+func extractJSONPayload(data []byte) ([]byte, bool) {
+	for index, value := range data {
+		if value != '{' && value != '[' {
+			continue
+		}
+		candidate := bytes.TrimSpace(data[index:])
+		if json.Valid(candidate) {
+			return append([]byte(nil), candidate...), true
+		}
+	}
+	return nil, false
 }
 
 // semanticAssessmentError catches the mssqlrelay 1.1 failure mode where the
