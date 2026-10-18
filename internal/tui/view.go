@@ -10,6 +10,9 @@ import (
 )
 
 func (m *model) View() string {
+	if m.searchMode && m.searchKind == "modules" {
+		return m.searchViewRender(max(40, m.width-4))
+	}
 	if m.watcher {
 		return m.watcherView()
 	}
@@ -44,18 +47,19 @@ func (m *model) View() string {
 	}
 	for i := windowTop; i < len(m.modules) && i < windowTop+windowRows; i++ {
 		module := m.modules[i]
+		selected := i == m.cursor
 		mark := "[ ]"
 		if m.selectedModules[m.modules[i].ID()] {
 			mark = lipgloss.NewStyle().Foreground(green).Bold(true).Render("[x]")
-		}
-		if i == m.cursor {
-			mark = "> " + mark
 		}
 		state := m.moduleState(i)
 		// An available module carries no suffix: a label that says "fine" on
 		// every row is noise, and the two labels that do appear - ADMIN-REQ and
 		// UNAVAILABLE - have to stand out from the names beside them.
-		left.WriteString(strings.TrimRight(fmt.Sprintf("%s %-30s %s", mark, module.Name(), state), " ") + "\n")
+		nameWidth := max(12, width-16)
+		name := ansi.TruncateWc(module.Name(), nameWidth, "…")
+		nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(1, nameWidth-ansi.StringWidthWc(name)))
+		left.WriteString(strings.TrimRight(fmt.Sprintf("%s%s %s %s", selectionPrefix(selected), mark, nameField, lifecycleStyle(state).Render(state)), " ") + "\n")
 	}
 	if !compact {
 		left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
@@ -105,11 +109,8 @@ func (m *model) navigationView() string {
 		)
 	}
 	for index, row := range rows {
-		prefix := "  "
-		if index == m.navigationRow {
-			prefix = "> "
-		}
-		line := fmt.Sprintf("%s%-14s  ◀ %s ▶", prefix, row.label, row.value)
+		selected := index == m.navigationRow
+		line := fmt.Sprintf("%s%-14s  ◀ %s ▶", selectionPrefix(selected), row.label, selectionLabel(row.value, selected))
 		if index == m.navigationRow && m.focus == focusNavigation {
 			line = title.Render(line)
 		}

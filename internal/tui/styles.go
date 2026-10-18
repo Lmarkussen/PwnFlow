@@ -11,6 +11,8 @@ var (
 	green     = lipgloss.Color("#00FF87")
 	muted     = lipgloss.Color("#789485")
 	focusBlue = lipgloss.Color("#42A5FF")
+	infoBlue  = lipgloss.Color("#62D8FF")
+	red       = lipgloss.Color("#FF5F6D")
 	// amber marks a decision the operator has to make. It is deliberately unlike
 	// the green used for progress and results, so a privilege confirmation cannot be
 	// mistaken for one of them.
@@ -20,6 +22,60 @@ var (
 	focus = lipgloss.NewStyle().Bold(true).Foreground(focusBlue)
 	warn  = lipgloss.NewStyle().Bold(true).Foreground(amber)
 )
+
+var (
+	selectedArrowStyle    = lipgloss.NewStyle().Foreground(focusBlue).Bold(true)
+	selectedLabelStyle    = lipgloss.NewStyle().Foreground(green).Bold(true)
+	severityCriticalStyle = lipgloss.NewStyle().Foreground(red).Bold(true)
+	severityHighStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF7A7A")).Bold(true)
+	severityMediumStyle   = lipgloss.NewStyle().Foreground(amber).Bold(true)
+	severityLowStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#D8D36A"))
+	severityInfoStyle     = lipgloss.NewStyle().Foreground(infoBlue)
+)
+
+func selectionPrefix(selected bool) string {
+	if selected {
+		return selectedArrowStyle.Render(">") + " "
+	}
+	return "  "
+}
+
+func selectionLabel(label string, selected bool) string {
+	if selected {
+		return selectedLabelStyle.Render(label)
+	}
+	return label
+}
+
+func severityStyle(value string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return severityCriticalStyle
+	case "high":
+		return severityHighStyle
+	case "medium":
+		return severityMediumStyle
+	case "low":
+		return severityLowStyle
+	default:
+		return severityInfoStyle
+	}
+}
+
+func lifecycleStyle(value string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "completed", "complete":
+		return lipgloss.NewStyle().Foreground(green).Bold(true)
+	case "failed", "unavailable", "cancelled", "aborted":
+		return lipgloss.NewStyle().Foreground(red).Bold(true)
+	case "queued", "skipped":
+		return lipgloss.NewStyle().Foreground(amber)
+	case "running":
+		return lipgloss.NewStyle().Foreground(infoBlue).Bold(true)
+	default:
+		return dim
+	}
+}
 
 const focusText = "[FOCUS]"
 

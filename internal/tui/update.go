@@ -15,6 +15,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/gpoanalysis"
 	"github.com/pwnflow/pwnflow/internal/modules/gpoevidence"
 	"github.com/pwnflow/pwnflow/internal/runner"
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 var ErrQuit = errors.New("quit")
@@ -206,6 +207,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.searchMode {
+		return m.handleSearchKey(msg)
+	}
 	if m.findingsView {
 		return m.handleFindingsKey(key)
 	}
@@ -242,7 +246,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "authenticating sudo for " + strings.Join(m.elevationModules, ", ") + "; complete sudo's own prompt"
 			return m, sudoAuthenticate(exec.Command("sudo", "-v"))
-		case "ctrl+c", "q":
+		case "ctrl+c", "q", "Q":
 			// Fall through to the process-wide handlers, so those keys keep working.
 		default:
 			if m.renewing {
@@ -285,7 +289,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			m.cancelPlan()
 			return m, nil
-		case "q":
+		case "q", "Q":
 			// Fall through to the process-wide handlers.
 		default:
 			return m, m.declinePlan()
@@ -299,7 +303,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "y", "Y":
 			return m, m.confirmWatcherAbort()
-		case "ctrl+c", "q":
+		case "ctrl+c", "q", "Q":
 			// These keep their process-wide meaning: give up the question and let the
 			// handler below act on it.
 			m.watcherAbortConfirm = false
@@ -312,7 +316,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
-	case "q":
+	case "q", "Q":
 		if m.running && !m.batchComplete() {
 			m.quitConfirm = true
 			m.status = "batch is running; cancel and quit? [y/N]"
@@ -366,6 +370,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshFindings()
 			return m, nil
 		}
+	case "ctrl+s":
+		m.startSearch("modules")
+		return m, nil
 	}
 
 	if m.watcher {
@@ -531,7 +538,69 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.closeSearch()
+		return m, nil
+	case "up", "k":
+		m.searchCursor--
+	case "down", "j":
+		m.searchCursor++
+	case "home":
+		m.searchCursor = 0
+	case "end":
+		if m.searchKind == "modules" {
+			m.searchCursor = len(m.searchModuleResults) - 1
+		} else {
+			m.searchCursor = len(m.searchFindingResults) - 1
+		}
+	case "enter":
+		if m.searchKind == "modules" && len(m.searchModuleResults) > 0 {
+			m.cursor = m.searchModuleResults[m.searchCursor]
+			m.closeSearch()
+			m.scrollModuleList()
+			return m, nil
+		}
+		if m.searchKind == "findings" && len(m.searchFindingResults) > 0 {
+			m.findingRows = append([]storage.Finding(nil), m.searchFindingResults...)
+			m.findingCursor = m.searchCursor
+			m.findingTop = 0
+			m.findingCategoryView = false
+			m.findingSubcategoryView = false
+			m.findingDetail = true
+			m.searchFindingReturn = true
+			m.searchMode = false
+			return m, m.beginFindingInlineEvidence()
+		}
+		return m, nil
+	}
+	var command tea.Cmd
+	m.searchInput, command = m.searchInput.Update(msg)
+	m.refreshSearchResults()
+	if m.searchKind == "modules" {
+		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchModuleResults)-1))
+	} else {
+		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchFindingResults)-1))
+	}
+	return m, command
+}
+
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if key == "q" || key == "Q" {
+		if m.running && !m.batchComplete() {
+			m.quitConfirm = true
+			m.status = "batch is running; cancel and quit? [y/N]"
+			return m, nil
+		}
+		m.running = false
+		return m, tea.Quit
+	}
+	if key == "ctrl+s" && !m.evidenceView {
+		m.startSearch("findings")
+		return m, nil
+	}
 	if m.evidenceView {
 		switch key {
 		case "esc":
@@ -672,6 +741,12 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.inlineEvidence = inlineEvidence{}
 			m.inlineEvidenceTop = 0
 			m.inlineEvidenceLoading = false
+			if key == "esc" && m.searchFindingReturn {
+				m.searchMode = true
+				m.searchKind = "findings"
+				m.searchInput.Focus()
+				return m, nil
+			}
 			return m, nil
 		case "up", "k":
 			m.findingCursor--

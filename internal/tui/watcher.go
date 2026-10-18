@@ -72,12 +72,20 @@ func (m *model) refreshWatcherList() {
 		m.watcherListCursor = 0
 	}
 	var content strings.Builder
+	nameWidth := max(16, m.watcherListViewport.Width-34)
 	for index, state := range states {
-		prefix := "  "
-		if index == m.watcherListCursor {
-			prefix = "> "
+		selected := index == m.watcherListCursor
+		name := ansi.TruncateWc(state.Module.Name(), nameWidth, "…")
+		status := watcherStatus(state)
+		statusWidth := ansi.StringWidthWc(status)
+		if statusWidth > max(8, m.watcherListViewport.Width/3) {
+			status = strings.Fields(status)[0]
+			statusWidth = ansi.StringWidthWc(status)
 		}
-		content.WriteString(prefix + watcherStateLine(state) + "\n")
+		available := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-statusWidth-2)
+		name = ansi.TruncateWc(name, available, "…")
+		padding := max(1, m.watcherListViewport.Width-ansi.StringWidthWc(selectionPrefix(selected))-ansi.StringWidthWc(name)-statusWidth)
+		content.WriteString(selectionPrefix(selected) + selectionLabel(name, selected) + strings.Repeat(" ", padding) + lifecycleStyle(state.Status).Render(status) + "\n")
 	}
 	m.watcherListContent = strings.TrimSuffix(content.String(), "\n")
 	m.watcherListViewport.SetContent(m.watcherListContent)
@@ -254,11 +262,11 @@ func (m *model) watcherStatusLine() string {
 // watcherFooter advertises the watcher's keys, including the abort binding, and
 // drops the least important hint before it would wrap on a narrow terminal.
 func (m *model) watcherFooter() string {
-	full := "Tab focus   ↑↓/PgUp/PgDn navigate or scroll   Home/End   x abort selected   Ctrl+W/Esc close"
+	full := "Tab focus   ↑↓/PgUp/PgDn navigate or scroll   Home/End   x abort selected   Q quit   Ctrl+W/Esc close"
 	if ansi.StringWidthWc(full)+2 <= max(1, m.width) {
 		return full
 	}
-	short := "↑↓ navigate   x abort selected   Ctrl+W/Esc close"
+	short := "↑↓ navigate   x abort selected   Q quit   Ctrl+W/Esc close"
 	if ansi.StringWidthWc(short)+2 <= max(1, m.width) {
 		return short
 	}

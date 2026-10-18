@@ -461,6 +461,9 @@ func severityRank(value string) int {
 
 func (m *model) findingsViewRender() string {
 	width := max(40, m.width-4)
+	if m.searchMode && m.searchKind == "findings" {
+		return m.searchViewRender(width)
+	}
 	if m.evidenceView {
 		return m.evidenceViewRender(width)
 	}
@@ -497,6 +500,7 @@ func (m *model) findingsViewRender() string {
 			}
 		}
 		content.WriteString("\n" + findingSection("SECURITY IMPACT", findingImpact(finding), width-4))
+		content.WriteString(findingSection("RECOMMENDED ACTION", findingRemediation(finding), width-4))
 		content.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
 		content.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
 		content.WriteString(dim.Render("E View Original Evidence   Esc Back   Up/Down Change finding"))
@@ -507,45 +511,162 @@ func (m *model) findingsViewRender() string {
 	} else {
 		for index := m.findingTop; index < end; index++ {
 			finding := m.findingRows[index]
-			prefix := "  "
-			if index == m.findingCursor {
-				prefix = "> "
-			}
+			selected := index == m.findingCursor
 			object := displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)
-			line := fmt.Sprintf("%s%-11s %-42s %s", prefix, strings.ToUpper(finding.Severity), truncateFinding(finding.Title, 42), truncateFinding(object, 28))
-			if index == m.findingCursor {
-				line = lipgloss.NewStyle().Bold(true).Render(line)
-			}
+			titleWidth := max(12, min(42, width-40))
+			objectWidth := max(12, width-titleWidth-22)
+			severityText := strings.ToUpper(finding.Severity)
+			severityField := severityStyle(finding.Severity).Render(severityText) + strings.Repeat(" ", max(1, 11-ansi.StringWidthWc(severityText)))
+			line := fmt.Sprintf("%s%s %-*s %s", selectionPrefix(selected), severityField, titleWidth, selectionLabel(truncateFinding(finding.Title, titleWidth), selected), truncateFinding(object, objectWidth))
 			content.WriteString(line + "\n")
 		}
 	}
 	content.WriteString(fmt.Sprintf("\n%d visible records (total database results are filtered)  rows %d-%d", len(m.findingRows), min(m.findingTop+1, len(m.findingRows)), min(end, len(m.findingRows))))
-	content.WriteString(dim.Render("\n\nEnter = Open    Esc = Back"))
+	content.WriteString(dim.Render("\n\nEnter = Open    Ctrl+S = Search    Esc = Back"))
+	return paneStyle(false).Width(width).Render(content.String())
+}
+
+func (m *model) startSearch(kind string) {
+	m.searchMode = true
+	m.searchKind = kind
+	m.searchCursor = 0
+	m.searchFindingReturn = false
+	m.searchInput = newSearchInput()
+	m.searchInput.Focus()
+	if kind == "findings" {
+		if !m.findingsLoaded && m.db != nil {
+			m.refreshFindings()
+		}
+		m.searchFindingRows = append([]storage.Finding(nil), m.findingRows...)
+		m.searchFindingCursor = m.findingCursor
+		m.searchFindingTop = m.findingTop
+		m.searchFindingCategoryView = m.findingCategoryView
+		m.searchFindingSubcategoryView = m.findingSubcategoryView
+		m.searchFindingCategory = m.findingCategory
+		m.searchFindingSubcategory = m.findingSubcategory
+		m.searchFindingCategories = append([]findingCategory(nil), m.findingCategories...)
+		m.searchFindingSubcategories = append([]findingSubcategory(nil), m.findingSubcategories...)
+		m.searchFindingSource = append([]storage.Finding(nil), m.findingAllRows...)
+		if len(m.searchFindingSource) == 0 {
+			m.searchFindingSource = append([]storage.Finding(nil), m.findingRows...)
+		}
+		m.searchFindingResults = append([]storage.Finding(nil), m.searchFindingSource...)
+	}
+	m.refreshSearchResults()
+}
+
+func (m *model) refreshSearchResults() {
+	query := strings.ToLower(strings.TrimSpace(m.searchInput.Value()))
+	if m.searchKind == "modules" {
+		m.searchModuleResults = m.searchModuleResults[:0]
+		for index, module := range m.modules {
+			text := strings.ToLower(strings.Join([]string{module.Name(), module.ID(), string(module.Category()), module.Description()}, "\x00"))
+			if query == "" || strings.Contains(text, query) {
+				m.searchModuleResults = append(m.searchModuleResults, index)
+			}
+		}
+		m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchModuleResults)-1))
+		return
+	}
+	m.searchFindingResults = filterFindingSearchResults(m.searchFindingSource, query)
+	m.searchCursor = min(max(0, m.searchCursor), max(0, len(m.searchFindingResults)-1))
+}
+
+func filterFindingSearchResults(rows []storage.Finding, query string) []storage.Finding {
+	if query == "" {
+		return append([]storage.Finding(nil), rows...)
+	}
+	result := make([]storage.Finding, 0, len(rows))
+	for _, finding := range rows {
+		text := strings.ToLower(strings.Join([]string{
+			finding.Title, finding.FindingType, finding.SourceTool,
+			finding.AffectedObject, finding.AffectedObjectID,
+			finding.RelatedObject, finding.RelatedObjectID,
+			findingCategoryKey(finding), findingSubcategoryKey(finding),
+		}, "\x00"))
+		if strings.Contains(text, query) {
+			result = append(result, finding)
+		}
+	}
+	return result
+}
+
+func (m *model) restoreSearchFindingContext() {
+	m.findingRows = append([]storage.Finding(nil), m.searchFindingRows...)
+	m.findingCursor = m.searchFindingCursor
+	m.findingTop = m.searchFindingTop
+	m.findingCategoryView = m.searchFindingCategoryView
+	m.findingSubcategoryView = m.searchFindingSubcategoryView
+	m.findingCategory = m.searchFindingCategory
+	m.findingSubcategory = m.searchFindingSubcategory
+	m.findingCategories = append([]findingCategory(nil), m.searchFindingCategories...)
+	m.findingSubcategories = append([]findingSubcategory(nil), m.searchFindingSubcategories...)
+	m.searchFindingRows = nil
+	m.searchFindingResults = nil
+	m.searchFindingSource = nil
+	m.searchFindingCategories = nil
+	m.searchFindingSubcategories = nil
+}
+
+func (m *model) closeSearch() {
+	if m.searchKind == "findings" {
+		m.restoreSearchFindingContext()
+	}
+	m.searchMode = false
+	m.searchKind = ""
+	m.searchCursor = 0
+	m.searchModuleResults = nil
+	m.searchFindingReturn = false
+}
+
+func (m *model) searchViewRender(width int) string {
+	var content strings.Builder
+	content.WriteString(title.Render("PwnFlow // SEARCH") + "\n\n")
+	content.WriteString(m.searchInput.View() + "\n")
+	content.WriteString(dim.Render("Enter open/select   Esc cancel   Up/Down move") + "\n\n")
+	if m.searchKind == "modules" {
+		if len(m.searchModuleResults) == 0 {
+			content.WriteString(warn.Render("No matching modules.") + "\n")
+		} else {
+			for resultIndex, moduleIndex := range m.searchModuleResults {
+				selected := resultIndex == m.searchCursor
+				module := m.modules[moduleIndex]
+				content.WriteString(fmt.Sprintf("%s%s  %s\n", selectionPrefix(selected), selectionLabel(module.Name(), selected), dim.Render(string(module.Category()))))
+			}
+		}
+	} else if len(m.searchFindingResults) == 0 {
+		content.WriteString(warn.Render("No matching findings.") + "\n")
+	} else {
+		limit := max(1, m.findingPageSize())
+		start := 0
+		if m.searchCursor >= limit {
+			start = m.searchCursor - limit + 1
+		}
+		end := min(len(m.searchFindingResults), start+limit)
+		for index := start; index < end; index++ {
+			finding := m.searchFindingResults[index]
+			selected := index == m.searchCursor
+			object := displayFindingObject(finding.AffectedObject, finding.AffectedObjectID)
+			severityText := strings.ToUpper(finding.Severity)
+			severityField := severityStyle(finding.Severity).Render(severityText) + strings.Repeat(" ", max(1, 9-ansi.StringWidthWc(severityText)))
+			content.WriteString(fmt.Sprintf("%s%s  %s  %s\n", selectionPrefix(selected), severityField, selectionLabel(truncateFinding(finding.Title, max(20, width-65)), selected), dim.Render(truncateFinding(object, 28))))
+		}
+	}
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
 func findingDetailHeader(finding storage.Finding, width int) string {
 	titleText := strings.ToUpper(finding.Title)
 	severity := strings.ToUpper(finding.Severity)
-	severityStyle := lipgloss.NewStyle().Bold(true)
-	switch strings.ToLower(finding.Severity) {
-	case "critical", "high":
-		severityStyle = severityStyle.Foreground(amber)
-	case "medium":
-		severityStyle = severityStyle.Foreground(lipgloss.Color("#FFD54F"))
-	case "low":
-		severityStyle = severityStyle.Foreground(lipgloss.Color("#D8C36A"))
-	default:
-		severityStyle = severityStyle.Foreground(focusBlue)
-	}
+	severityDisplayStyle := severityStyle(finding.Severity)
 	if width < 1 {
 		width = 1
 	}
-	line := titleText + "  " + severityStyle.Render(severity)
+	line := titleText + "  " + severityDisplayStyle.Render(severity)
 	if ansi.StringWidthWc(line) <= width {
-		return lipgloss.NewStyle().Bold(true).Render(titleText) + "  " + severityStyle.Render(severity)
+		return lipgloss.NewStyle().Bold(true).Render(titleText) + "  " + severityDisplayStyle.Render(severity)
 	}
-	return lipgloss.NewStyle().Bold(true).Render(wrapPaneText(titleText, width)) + "\n" + severityStyle.Render(severity)
+	return lipgloss.NewStyle().Bold(true).Render(wrapPaneText(titleText, width)) + "\n" + severityDisplayStyle.Render(severity)
 }
 
 func findingCondition(finding storage.Finding) string {
@@ -620,7 +741,7 @@ func findingAttributes(finding storage.Finding, width int) string {
 		return ""
 	}
 	var content strings.Builder
-	content.WriteString(lipgloss.NewStyle().Bold(true).Render("AFFECTED ASSETS") + "\n")
+	content.WriteString(infoBlueStyle().Bold(true).Render("AFFECTED ASSETS") + "\n")
 	content.WriteString(wrapPaneText(strings.Join(lines, "\n"), width) + "\n")
 	return content.String()
 }
@@ -629,7 +750,22 @@ func findingSection(name, value string, width int) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
 	}
-	return "\n" + lipgloss.NewStyle().Bold(true).Render(name) + "\n" + wrapPaneText(value, width) + "\n"
+	return "\n" + findingSectionStyle(name).Render(name) + "\n" + wrapPaneText(value, width) + "\n"
+}
+
+func infoBlueStyle() lipgloss.Style { return lipgloss.NewStyle().Foreground(infoBlue).Bold(true) }
+
+func findingSectionStyle(name string) lipgloss.Style {
+	switch name {
+	case "SECURITY IMPACT":
+		return severityMediumStyle
+	case "RECOMMENDED ACTION":
+		return lipgloss.NewStyle().Foreground(green).Bold(true)
+	case "LIMITATIONS":
+		return lipgloss.NewStyle().Foreground(amber).Bold(true)
+	default:
+		return infoBlueStyle()
+	}
 }
 
 func findingEvidenceSummary(finding storage.Finding) string {
@@ -1183,15 +1319,20 @@ func findingRemediation(finding storage.Finding) string {
 func (m *model) findingSubcategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
-	content.WriteString(dim.Render("Select a security condition group; evidence remains in its findings.") + "\n\n")
+	content.WriteString(dim.Render("Select a security condition group; evidence remains in its findings.") + "\n")
+	if width >= 80 {
+		content.WriteString(dim.Render(fmt.Sprintf("%-34s %8s  %8s", "SUBCATEGORY", "FINDINGS", "OBSERVED")) + "\n\n")
+	} else {
+		content.WriteString(dim.Render("SUBCATEGORY                         F/O") + "\n\n")
+	}
 	for index, subcategory := range m.findingSubcategories {
-		prefix := "  "
-		if index == m.findingCursor {
-			prefix = "> "
-		}
-		line := fmt.Sprintf("%s%-30s %8d findings  %8d observations", prefix, subcategory.Name, subcategory.Findings, subcategory.Observations)
-		if index == m.findingCursor {
-			line = lipgloss.NewStyle().Bold(true).Render(line)
+		selected := index == m.findingCursor
+		var line string
+		if width >= 80 {
+			line = fmt.Sprintf("%s%-30s %8d findings  %8d observations", selectionPrefix(selected), selectionLabel(subcategory.Name, selected), subcategory.Findings, subcategory.Observations)
+		} else {
+			nameWidth := max(12, width-18)
+			line = fmt.Sprintf("%s%-*s %d/%d", selectionPrefix(selected), nameWidth, selectionLabel(truncateFinding(subcategory.Name, nameWidth), selected), subcategory.Findings, subcategory.Observations)
 		}
 		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
@@ -1207,22 +1348,28 @@ func (m *model) findingSubcategoryOverview(width int) string {
 		}
 		content.WriteString(warn.Render(message) + "\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open    Esc = Back"))
+	content.WriteString(dim.Render("\nEnter = Open    Ctrl+S = Search    Esc = Back"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
 func (m *model) findingCategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
-	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n\n")
+	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
+	if width >= 80 {
+		content.WriteString(dim.Render(fmt.Sprintf("%-31s %8s  %8s  %-12s", "CATEGORY", "FINDINGS", "OBSERVED", "HIGHEST")) + "\n")
+		content.WriteString(dim.Render("────────────────────────────────────────────────────────────────────────") + "\n\n")
+	} else {
+		content.WriteString(dim.Render("CATEGORY                         F/O  HIGH") + "\n\n")
+	}
 	for index, category := range m.findingCategories {
-		prefix := "  "
-		if index == m.findingCursor {
-			prefix = "> "
-		}
-		line := fmt.Sprintf("%s%-27s %8d findings  %8d observations  %-12s", prefix, category.Name, category.Findings, category.Observations, category.Highest)
-		if index == m.findingCursor {
-			line = lipgloss.NewStyle().Bold(true).Render(line)
+		selected := index == m.findingCursor
+		var line string
+		if width >= 80 {
+			line = fmt.Sprintf("%s%-27s %8d findings  %8d observations  %s", selectionPrefix(selected), selectionLabel(category.Name, selected), category.Findings, category.Observations, severityStyle(category.Highest).Render(fmt.Sprintf("%-12s", category.Highest)))
+		} else {
+			nameWidth := max(12, width-18)
+			line = fmt.Sprintf("%s%-*s %d/%d %s", selectionPrefix(selected), nameWidth, selectionLabel(truncateFinding(category.Name, nameWidth), selected), category.Findings, category.Observations, severityStyle(category.Highest).Render(category.Highest))
 		}
 		content.WriteString(line + "\n")
 		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(20, width-7))) + "\n")
@@ -1230,7 +1377,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close"))
+	content.WriteString(dim.Render("\nEnter = Open Category    Esc = Close    Ctrl+S = Search"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

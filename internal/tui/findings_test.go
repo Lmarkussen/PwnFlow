@@ -188,10 +188,8 @@ func TestFindingsFooterUsesOnlyOpenAndClose(t *testing.T) {
 	if !strings.Contains(frame, "Enter = Open Category    Esc = Close") {
 		t.Fatalf("root footer missing: %s", frame)
 	}
-	for _, unwanted := range []string{"Search", "Findings", "Observations", "All"} {
-		if strings.Contains(frame, unwanted) {
-			t.Fatalf("findings footer still advertises %q: %s", unwanted, frame)
-		}
+	if !strings.Contains(frame, "Ctrl+S = Search") {
+		t.Fatalf("findings footer does not advertise search: %s", frame)
 	}
 }
 
