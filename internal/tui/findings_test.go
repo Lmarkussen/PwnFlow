@@ -575,7 +575,7 @@ func TestInlineEvidenceLoadsCompleteKerberosRecord(t *testing.T) {
 	}}
 	loaded := loadInlineEvidence(config.Config{Root: root, Domain: "example.test"}, finding)
 	if loaded.error != "" || len(loaded.lines) != 1 || loaded.lines[0] != record {
-		t.Fatalf("full Kerberos record was not preserved: %#v error=%q", loaded.lines, loaded.error)
+		t.Fatalf("full Kerberos record was not preserved: count=%d error=%q", len(loaded.lines), loaded.error)
 	}
 }
 

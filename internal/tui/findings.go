@@ -561,6 +561,9 @@ func (m *model) findingsViewRender() string {
 				for index, line := range m.inlineEvidence.lines {
 					detail.WriteString(fmt.Sprintf("  Hash %d:\n    %s\n", index+1, line))
 				}
+				if m.inlineEvidence.accountScopedPath != "" {
+					detail.WriteString("Account-scoped evidence: " + m.inlineEvidence.accountScopedPath + "\n")
+				}
 				detail.WriteString(dim.Render("E opens the complete original artifact; it may contain additional accounts." + "\n"))
 			} else {
 				page := max(1, m.findingPageSize()-10)

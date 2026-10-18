@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pwnflow/pwnflow/internal/config"
@@ -56,10 +57,24 @@ func TestLoadKerberosInlineReportsScopedCounts(t *testing.T) {
 	}}
 	loaded := loadInlineEvidence(config.Config{Root: root, Domain: "example.test"}, finding)
 	if loaded.error != "" || len(loaded.lines) != 1 || loaded.lines[0] != matching {
-		t.Fatalf("unexpected scoped material: lines=%#v error=%q", loaded.lines, loaded.error)
+		t.Fatalf("unexpected scoped material count or load error: count=%d error=%q", len(loaded.lines), loaded.error)
 	}
 	if loaded.sourceRecordCount != 2 || loaded.uniqueMaterialCount != 1 || loaded.duplicateRecordCount != 1 {
 		t.Fatalf("unexpected material counts: source=%d unique=%d duplicates=%d", loaded.sourceRecordCount, loaded.uniqueMaterialCount, loaded.duplicateRecordCount)
+	}
+	if loaded.accountScopedPath == "" {
+		t.Fatal("account-scoped evidence report was not created")
+	}
+	report, err := os.ReadFile(filepath.Join(root, "results", "example.test", loaded.accountScopedPath))
+	if err != nil {
+		t.Fatal("account-scoped evidence report was not readable")
+	}
+	info, err := os.Stat(filepath.Join(root, "results", "example.test", loaded.accountScopedPath))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal("account-scoped evidence report does not have restricted permissions")
+	}
+	if !strings.Contains(string(report), matching) || strings.Contains(string(report), other) {
+		t.Fatal("account-scoped report did not preserve only the matched record")
 	}
 }
 

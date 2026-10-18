@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -87,6 +88,7 @@ type inlineEvidence struct {
 	sourceRecordCount    int
 	uniqueMaterialCount  int
 	duplicateRecordCount int
+	accountScopedPath    string
 }
 
 var pxeInlineVariable = regexp.MustCompile(`(?i)\b(OSDJoinAccount|OSDJoinPassword|OSDLocalAdminPassword)\b\s*(?:[:=\-]|=>)?\s*(.*)$`)
@@ -156,6 +158,56 @@ func loadInlineEvidence(cfg config.Config, finding storage.Finding) inlineEviden
 	}
 	if len(result.lines) == 0 {
 		result.error = "Recovered Kerberos material could not be loaded from the referenced artifact."
+		return result
+	}
+	result.accountScopedPath = writeKerberosScopedEvidence(path, cfg.ResultsRoot(), finding, metadata, result.lines)
+	return result
+}
+
+func writeKerberosScopedEvidence(sourcePath, resultsRoot string, finding storage.Finding, metadata map[string]any, lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	identity := fmt.Sprintf("%d\x00%s\x00%d\x00%s", finding.ID, finding.ArtifactPath, finding.SourceExecution, metadataString(metadata, "principal"))
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))[:16]
+	name := "finding-" + digest + "-account-scoped.txt"
+	directory := filepath.Join(filepath.Dir(sourcePath), "account-scoped")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return ""
+	}
+	report := strings.Builder{}
+	report.WriteString("PwnFlow derived account-scoped Kerberos evidence\n")
+	report.WriteString("This file contains only records matched to the Finding principal.\n")
+	report.WriteString("Original source artifact: " + finding.ArtifactPath + "\n")
+	report.WriteString(fmt.Sprintf("Source execution: %d\n", finding.SourceExecution))
+	report.WriteString("Principal: " + metadataString(metadata, "principal") + "\n")
+	report.WriteString("Material type: " + metadataString(metadata, "material_type") + "\n")
+	report.WriteString("Source line references: " + strings.Join(intStrings(intSlice(metadata["record_line_numbers"])), ", ") + "\n")
+	report.WriteString("\nCOLLECTED MATERIAL\n")
+	for _, line := range lines {
+		report.WriteString(line + "\n")
+	}
+	target := filepath.Join(directory, name)
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return ""
+	}
+	_, writeErr := file.WriteString(report.String())
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return ""
+	}
+	relative, err := filepath.Rel(resultsRoot, target)
+	if err != nil || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return filepath.ToSlash(relative)
+}
+
+func intStrings(values []int) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, strconv.Itoa(value))
 	}
 	return result
 }
