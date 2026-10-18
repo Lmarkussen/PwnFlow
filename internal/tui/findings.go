@@ -51,6 +51,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"delegation": {{"delegation", "Delegation", "Delegation configurations and related observations"}},
 	"active_directory": {
 		{"protected_accounts", "Protected Accounts", "Observed adminCount and protected-group membership context"},
+		{"tier0_context", "Tier 0 Administrative Context", "Observed identity-control plane identities and relationships"},
 		{"gpo", "Group Policy", "Evidence-backed Group Policy configuration conditions"},
 		{"domain_security_policy", "Domain Security Policy", "Domain-default password and machine-account policy observations"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
@@ -92,6 +93,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
+		return "active_directory"
+	case strings.HasPrefix(typ, "ad_tier0_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_gpo_privilege_"):
 		return "active_directory"
@@ -135,6 +138,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
 		return "protected_accounts"
+	case strings.HasPrefix(typ, "ad_tier0_"):
+		return "tier0_context"
 	case strings.HasPrefix(typ, "ad_privileged_acl_"):
 		return "acl_inventory"
 	case strings.HasPrefix(typ, "ad_replication_rights_"):
@@ -1112,6 +1117,8 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		return formatGPOPrivilegeCondition(metadata, finding)
 	case typ == "ad_protected_accounts_admincount_evidence":
 		return formatProtectedAccountsCondition(metadata, finding)
+	case typ == "ad_tier0_context_evidence":
+		return formatTier0ContextCondition(metadata, finding)
 	}
 	return ""
 }
@@ -1196,6 +1203,116 @@ func formatProtectedAccountsCondition(metadata map[string]any, finding storage.F
 		lines = append(lines, fmt.Sprintf("Membership paths omitted by bounds: %d", value))
 	}
 	lines = append(lines, "Effective protection: NOT VERIFIED", "AdminSDHolder descriptor completeness and SDProp application: NOT VERIFIED")
+	return strings.Join(lines, "\n")
+}
+
+func formatTier0ContextCondition(metadata map[string]any, finding storage.Finding) string {
+	lines := []string{"TIER 0 ADMINISTRATIVE CONTEXT EVIDENCE OVERVIEW", "INFORMATIONAL"}
+	if finding.SourceExecution > 0 {
+		lines = append(lines, fmt.Sprintf("SOURCE: RustHound-CE — Execution %d", finding.SourceExecution))
+	}
+	if domain := metadataString(metadata, "domain"); domain != "" {
+		lines = append(lines, "DOMAIN CONTROL CONTEXT", "  Domain: "+domain)
+	}
+	if controllers, ok := metadata["domain_controllers"].([]any); ok && len(controllers) > 0 {
+		lines = append(lines, "  Domain Controllers:")
+		for _, raw := range controllers {
+			controller, ok := raw.(map[string]any)
+			if ok {
+				lines = append(lines, "    "+fallbackText(stringValue(controller["name"]), stringValue(controller["id"])))
+			}
+		}
+	}
+	if groups, ok := metadata["tier0_groups"].([]any); ok && len(groups) > 0 {
+		lines = append(lines, "TIER 0-ASSOCIATED GROUPS")
+		for index, raw := range groups {
+			if index >= 12 {
+				lines = append(lines, "  Additional Tier 0 groups are available through E.")
+				break
+			}
+			group, ok := raw.(map[string]any)
+			if ok {
+				lines = append(lines, "  "+fallbackText(stringValue(group["name"]), stringValue(group["id"]))+" ("+fallbackText(stringValue(group["role"]), "validated identity-control role")+")")
+			}
+		}
+	}
+	if paths, ok := metadata["membership_paths"].([]any); ok && len(paths) > 0 {
+		lines = append(lines, "OBSERVED MEMBERSHIP")
+		for index, raw := range paths {
+			if index >= 12 {
+				lines = append(lines, "  Additional membership paths are available through E.")
+				break
+			}
+			path, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			values, _ := path["path"].([]any)
+			names := make([]string, 0, len(values))
+			for _, value := range values {
+				if name, ok := value.(string); ok {
+					names = append(names, name)
+				}
+			}
+			if len(names) > 0 {
+				lines = append(lines, "  "+strings.Join(names, " → ")+" ("+fallbackText(stringValue(path["classification"]), "observed")+")")
+			}
+		}
+	}
+	if acls, ok := metadata["acl_relationships"].([]any); ok && len(acls) > 0 {
+		lines = append(lines, "ACL CONFIGURATION CONTEXT")
+		for index, raw := range acls {
+			if index >= 8 {
+				lines = append(lines, "  Additional ACL relationships are available through E.")
+				break
+			}
+			acl, ok := raw.(map[string]any)
+			if ok {
+				lines = append(lines, fmt.Sprintf("  %s → %s → %s", fallbackText(stringValue(acl["principal_name"]), stringValue(acl["principal_id"])), stringValue(acl["permission"]), fallbackText(stringValue(acl["target_name"]), stringValue(acl["target_id"]))))
+			}
+		}
+		lines = append(lines, "  Effective authorization: NOT VERIFIED")
+	}
+	if roots, ok := metadata["replication_rights"].([]any); ok && len(roots) > 0 {
+		lines = append(lines, "REPLICATION RIGHTS")
+		shown := 0
+		for _, rawRoot := range roots {
+			root, ok := rawRoot.(map[string]any)
+			if !ok {
+				continue
+			}
+			principals, _ := root["principals"].([]any)
+			for _, rawPrincipal := range principals {
+				principal, ok := rawPrincipal.(map[string]any)
+				if !ok {
+					continue
+				}
+				rights, _ := principal["rights"].([]any)
+				for _, rawRight := range rights {
+					if shown >= 8 {
+						break
+					}
+					right, ok := rawRight.(map[string]any)
+					if ok {
+						lines = append(lines, fmt.Sprintf("  %s — %s: %s", fallbackText(stringValue(principal["name"]), stringValue(principal["id"])), stringValue(right["right"]), strings.ToUpper(stringValue(right["status"]))))
+						shown++
+					}
+				}
+			}
+		}
+		lines = append(lines, "  DCSync capability: NOT VERIFIED")
+	}
+	if users, ok := metadata["admincount_users"].([]any); ok && len(users) > 0 {
+		lines = append(lines, "ADMINCOUNT / ADMINSDHOLDER")
+		lines = append(lines, fmt.Sprintf("  Tier 0-associated adminCount=true users: %d", len(users)))
+	}
+	if holder, ok := metadata["admin_sd_holder"].(map[string]any); ok {
+		lines = append(lines, "  AdminSDHolder: "+fallbackText(stringValue(holder["distinguished_name"]), stringValue(holder["id"])))
+		if aces, ok := holder["aces"].([]any); ok {
+			lines = append(lines, fmt.Sprintf("  Observed ACEs: %d", len(aces)))
+		}
+	}
+	lines = append(lines, "LIMITATIONS", "  Tier 1/2 authority: NOT ASSESSED", "  Cross-tier violations: NOT ESTABLISHED", "  Effective administrative rights: NOT VERIFIED")
 	return strings.Join(lines, "\n")
 }
 
@@ -1287,6 +1404,8 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "RustHound observed supported ACL relationships for the identified GPOs, while separately collected policy metadata supplied configured-link context. The GUID correlation is evidence context only; effective GPO authorization, SYSVOL access and policy application were not verified."
 	case typ == "ad_protected_accounts_admincount_evidence":
 		return "The collected adminCount attributes and protected-group membership relationships identify accounts and groups that warrant administrative protection review. Differences may reflect historical membership or incomplete collection, but do not establish current SDProp protection or misconfiguration."
+	case typ == "ad_tier0_context_evidence":
+		return "The collected directory evidence identifies accounts, groups and configured relationships associated with Active Directory's identity-control plane. These relationships support privilege-boundary review but do not establish effective administrative authorization, compromise or tier-policy violations."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
@@ -1329,6 +1448,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Review the observed GPO ACL principal/right combinations and configured links. Validate effective GPC and SYSVOL permissions, intended policy scope and actual processing with approved AD administration tools before changing policy access."
 	case typ == "ad_protected_accounts_admincount_evidence":
 		return "Review the observed adminCount values, protected-group membership paths and AdminSDHolder evidence. Validate current membership, complete security descriptors and SDProp behavior with approved AD administration tools before making access-control changes."
+	case typ == "ad_tier0_context_evidence":
+		return "Review the listed Tier 0-associated identities, membership paths, ACL relationships and replication-right configuration. Validate intended administrative roles and effective permissions with approved AD administration methods before drawing security conclusions or changing privileges."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

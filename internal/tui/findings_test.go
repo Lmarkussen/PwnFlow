@@ -1220,3 +1220,21 @@ func TestProtectedAccountsHistoricalFindingHydratesExactExecutionArtifact(t *tes
 		t.Fatalf("cross-execution artifact fallback was used: %s", mismatchedCondition)
 	}
 }
+
+func TestTier0FindingRendersIdentityControlContext(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType:     "ad_tier0_context_evidence",
+		SourceExecution: 31,
+		Severity:        "informational",
+		EvidenceJSON:    `{"domain":"SCCM.LAB","domain_controllers":[{"name":"DC.SCCM.LAB","id":"S-1-5-21-1-2-3-1001"}],"tier0_groups":[{"name":"DOMAIN ADMINS@SCCM.LAB","id":"S-1-5-21-1-2-3-512","role":"Domain Admins"}],"membership_paths":[{"path":["ALICE@SCCM.LAB","DOMAIN ADMINS@SCCM.LAB"],"classification":"direct"}],"acl_relationships":[{"principal_name":"ALICE@SCCM.LAB","permission":"GetChangesAll","target_name":"SCCM.LAB","target_id":"S-1-5-21-1-2-3"}],"admin_sd_holder":{"distinguished_name":"CN=ADMINSDHOLDER,CN=SYSTEM,DC=SCCM,DC=LAB","aces":[{}]}}`,
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"ALICE@SCCM.LAB", "DOMAIN ADMINS@SCCM.LAB", "DC.SCCM.LAB", "ALICE@SCCM.LAB → DOMAIN ADMINS@SCCM.LAB", "GetChangesAll", "NOT VERIFIED", "NOT ASSESSED"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("tier 0 detail missing %q: %s", expected, condition)
+		}
+	}
+	if strings.Contains(condition, "Tier 1 → Tier 0") || strings.Contains(condition, "policy violation") {
+		t.Fatal("tier 0 overview made an unsupported boundary claim")
+	}
+}

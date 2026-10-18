@@ -44,9 +44,9 @@ type GroupPrincipal struct {
 }
 
 type groupObject struct {
-	ID, Name, SAM, Domain, DomainSID, Type, Artifact, Ref string
-	Deleted, Disabled                                     bool
-	Members                                               []string
+	ID, Name, SAM, Domain, DomainSID, Type, Artifact, Ref, DN string
+	Deleted, Disabled                                         bool
+	Members                                                   []string
 }
 
 type groupEdge struct{ Parent, Member, Artifact, Ref string }
@@ -216,7 +216,7 @@ func decodeGroupObject(raw json.RawMessage, kind, artifact string, index int) (g
 		return groupObject{}, err
 	}
 	props := rawObject(fields, "Properties")
-	object := groupObject{ID: rawString(fields, "ObjectIdentifier"), Name: rawString(props, "name"), SAM: rawString(props, "samaccountname"), Domain: rawString(props, "domain"), DomainSID: rawString(props, "domainsid"), Type: strings.TrimSuffix(kind, "s"), Artifact: artifact, Ref: fmt.Sprintf("/data/%d", index), Deleted: rawBool(props, "isdeleted") || rawBool(fields, "IsDeleted")}
+	object := groupObject{ID: rawString(fields, "ObjectIdentifier"), Name: rawString(props, "name"), SAM: rawString(props, "samaccountname"), Domain: rawString(props, "domain"), DomainSID: rawString(props, "domainsid"), Type: strings.TrimSuffix(kind, "s"), Artifact: artifact, Ref: fmt.Sprintf("/data/%d", index), DN: firstString(props, "distinguishedname", "distinguishedName", "dn"), Deleted: rawBool(props, "isdeleted") || rawBool(fields, "IsDeleted")}
 	if object.Type == "user" {
 		if value, known := rawBoolValue(props, "enabled"); !known {
 			object.Disabled = false

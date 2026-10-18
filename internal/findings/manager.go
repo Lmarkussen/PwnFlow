@@ -343,12 +343,17 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 		}
 		inputs = append(inputs, generalACLInventoryInput(generalReport, job.AssessmentID, reportPath, structuredPath, job.ObservedAt))
 	}
-	if _, protectedInput, protectedErr := AnalyzeProtectedAccounts(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt); protectedErr == nil && protectedInput != nil {
+	protectedReport, protectedInput, protectedErr := AnalyzeProtectedAccounts(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	if protectedErr == nil && protectedInput != nil {
 		inputs = append(inputs, *protectedInput)
 	}
 	inventory, inventoryInputs, inventoryErr := AnalyzeRustHoundACLInventory(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	if inventoryErr != nil {
 		return nil, inventoryErr
+	}
+	var tier0Input *storage.FindingInput
+	if protectedErr == nil {
+		_, tier0Input, _ = AnalyzeTier0Context(ctx, job.ArtifactPath, inventory, protectedReport, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	}
 	if inventoryInputs != nil {
 		artifact := job.ArtifactPath
@@ -410,6 +415,9 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 			inventoryInputs = append(inventoryInputs, *gpoInput)
 		}
 		inputs = append(inputs, inventoryInputs...)
+	}
+	if tier0Input != nil {
+		inputs = append(inputs, *tier0Input)
 	}
 	return inputs, nil
 }
