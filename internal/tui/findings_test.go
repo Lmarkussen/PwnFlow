@@ -699,6 +699,30 @@ func TestPrivilegedACLInventoryDetailShowsMembershipContext(t *testing.T) {
 	}
 }
 
+func TestReplicationRightsOverviewIsInformationalAndEvidenceSpecific(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "ad_replication_rights_evidence_overview", Title: "AD Replication Rights Evidence Overview", Severity: "informational",
+		SourceTool: "RustHound-CE", SourceExecution: 491, ArtifactPath: "results/AD_REPLICATION_RIGHTS_EVIDENCE.txt",
+		EvidenceJSON: `{"source_execution_id":491,"coverage":"partial","structured_artifact":"Enumeration/ActiveDirectory/ACL/execution-491/AD_replication_rights_evidence.json","domain_roots":[{"id":"S-1-5-21-1","name":"SCCM.LAB","principals":[{"id":"S-1-5-21-1-512","name":"Domain Admins","type":"Group","rights":[{"right":"GetChanges","status":"observed"},{"right":"GetChangesAll","status":"not_observed"},{"right":"GetChangesInFilteredSet","status":"not_observed"}],"membership_context":[]}]}]}`,
+	}}
+	condition := findingCondition(finding)
+	for _, expected := range []string{"SCCM.LAB", "Domain Admins", "GetChanges", "OBSERVED", "NOT_OBSERVED", "NOT VERIFIED"} {
+		if !strings.Contains(condition, expected) {
+			t.Fatalf("replication overview omitted %q: %s", expected, condition)
+		}
+	}
+	if strings.Contains(strings.ToLower(findingImpact(finding)), "dcsync-capable") || strings.Contains(strings.ToLower(findingImpact(finding)), "credential") {
+		t.Fatalf("impact overclaims: %s", findingImpact(finding))
+	}
+	if strings.Contains(findingRemediation(finding), "source tool's recommended hardening") {
+		t.Fatalf("replication remediation is generic: %s", findingRemediation(finding))
+	}
+	evidence := findingEvidenceSummary(finding)
+	if !strings.Contains(evidence, "AD_REPLICATION_RIGHTS_EVIDENCE.txt") || !strings.Contains(evidence, "AD_replication_rights_evidence.json") {
+		t.Fatalf("evidence summary incomplete: %s", evidence)
+	}
+}
+
 func TestPrivilegedACLInventoryEvidenceOpensHumanReport(t *testing.T) {
 	root := t.TempDir()
 	resultsRoot := filepath.Join(root, "results")

@@ -38,6 +38,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"acl": {
 		{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"},
 		{"acl_inventory", "ACL Evidence Inventory", "Informational direct ACL evidence and collection limitations"},
+		{"acl_replication_rights", "Replication Rights Evidence", "Observed domain-root replication-right relationships and completeness"},
 	},
 	"adcs": {
 		{"adcs_ca", "Vulnerable Certificate Authorities", "Explicit ESC conditions reported for certificate authorities"},
@@ -84,7 +85,7 @@ func findingCategoryKey(finding storage.Finding) string {
 	title := strings.ToLower(finding.Title)
 	source := strings.ToLower(finding.SourceTool)
 	switch {
-	case strings.HasPrefix(typ, "ad_privileged_acl_"):
+	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl"
 	case strings.HasPrefix(typ, "ad_user_description_"):
 		return "active_directory"
@@ -126,6 +127,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(typ, "ad_privileged_acl_"):
 		return "acl_inventory"
+	case strings.HasPrefix(typ, "ad_replication_rights_"):
+		return "acl_replication_rights"
 	case strings.HasPrefix(typ, "adcs_"):
 		if strings.Contains(strings.ToLower(finding.EvidenceJSON), `"object_type":"ca"`) {
 			return "adcs_ca"
@@ -551,6 +554,9 @@ func findingCondition(finding storage.Finding) string {
 	if typ == "ad_privileged_acl_evidence_inventory" {
 		return formatACLInventoryOverview(finding)
 	}
+	if typ == "ad_replication_rights_evidence_overview" {
+		return formatReplicationRightsOverview(finding)
+	}
 	metadata := findingMetadata(finding)
 	if condition := specificFindingCondition(finding, metadata); condition != "" {
 		return condition
@@ -649,6 +655,10 @@ func findingEvidenceSummary(finding storage.Finding) string {
 	if strings.HasPrefix(strings.ToLower(finding.FindingType), "adcs_esc_") {
 		return fmt.Sprintf("Certipy · Execution %d\nOriginal artifact: %s\nSource reference: %s", finding.SourceExecution, fallbackText(finding.ArtifactPath, "source artifact unavailable"), fallbackText(finding.ArtifactRef, "source reference unavailable"))
 	}
+	if strings.EqualFold(finding.FindingType, "ad_replication_rights_evidence_overview") {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured evidence: %s", finding.SourceTool, finding.SourceExecution, shortEvidencePath(finding.ArtifactPath), fallbackText(metadataString(metadata, "structured_artifact"), "execution-associated replication-rights JSON"))
+	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		structured := metadataString(metadata, "structured_artifact")
@@ -736,6 +746,9 @@ func findingLimitations(finding storage.Finding) string {
 		lines = append(lines, "Effective permissions, certificate issuance, authentication, impersonation and attack-path prerequisites were not independently verified.")
 		return strings.Join(lines, "\n")
 	}
+	if strings.EqualFold(finding.FindingType, "ad_replication_rights_evidence_overview") {
+		return "Effective replication authorization and DCSync capability were not evaluated. NOT OBSERVED means no matching supported relationship was found in the inspected evidence; it does not mean denied or absent. Allow/deny precedence, inheritance applicability, object-specific restrictions, group scope, SIDHistory, cross-domain authorization and token semantics remain unknown."
+	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		var lines []string
@@ -789,6 +802,54 @@ func metadataInt(metadata map[string]any, key string) int {
 	default:
 		return 0
 	}
+}
+
+func formatReplicationRightsOverview(finding storage.Finding) string {
+	metadata := findingMetadata(finding)
+	var b strings.Builder
+	fmt.Fprintf(&b, "RustHound execution %d recorded replication-related ACL relationships.\nCoverage: %s\nEffective replication authorization: NOT VERIFIED\n", finding.SourceExecution, fallbackText(metadataString(metadata, "coverage"), "unknown"))
+	roots, _ := metadata["domain_roots"].([]any)
+	if len(roots) == 0 {
+		return b.String() + "\nNo authoritative domain-root replication-right relationships were observed in this execution."
+	}
+	for _, rawRoot := range roots {
+		root, ok := rawRoot.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "\nDOMAIN ROOT\n%s [%s]\n", fallbackText(metadataString(root, "name"), metadataString(root, "id")), metadataString(root, "id"))
+		principals, _ := root["principals"].([]any)
+		for _, rawPrincipal := range principals {
+			principal, ok := rawPrincipal.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "\nPrincipal: %s [%s] (%s)\n", fallbackText(metadataString(principal, "name"), metadataString(principal, "id")), metadataString(principal, "id"), fallbackText(metadataString(principal, "type"), "unknown"))
+			rights, _ := principal["rights"].([]any)
+			for _, rawRight := range rights {
+				right, ok := rawRight.(map[string]any)
+				if !ok {
+					continue
+				}
+				fmt.Fprintf(&b, "  %-28s %s\n", metadataString(right, "right"), strings.ToUpper(metadataString(right, "status")))
+			}
+			members, _ := principal["membership_context"].([]any)
+			if len(members) == 0 {
+				b.WriteString("  Membership context: No membership context observed in this execution.\n")
+			} else {
+				b.WriteString("  Membership context:\n")
+				for _, rawMember := range members {
+					member, ok := rawMember.(map[string]any)
+					if !ok {
+						continue
+					}
+					b.WriteString("    - " + fallbackText(metadataString(member, "member_name"), metadataString(member, "member_id")) + " → MemberOf: " + metadataString(member, "acl_principal_name") + "\n")
+				}
+			}
+		}
+	}
+	b.WriteString("\nLIMITATIONS\nEffective rights were not calculated. NOT OBSERVED does not mean denied or absent. Membership context is informational.\n")
+	return b.String()
 }
 
 func formatACLInventoryOverview(finding storage.Finding) string {
@@ -976,6 +1037,8 @@ func specificFindingImpact(finding storage.Finding) string {
 	switch {
 	case typ == "ad_privileged_acl_evidence_inventory":
 		return "RustHound observed ACL entries referencing groups with collected member relationships. These observations identify principals and objects that warrant permission review, but do not establish effective authorization or exploitability."
+	case typ == "ad_replication_rights_evidence_overview":
+		return "RustHound recorded ACL relationships corresponding to Active Directory replication-related rights on the identified domain object. These observations identify principals and permissions that warrant authorization review, but do not establish effective replication access or DCSync capability."
 	case typ == "netexec_privileged_access":
 		return "The result indicates tool-reported administrative access in this protocol context; broader privileges, local administrator membership and domain-wide access were not independently verified."
 	case typ == "netexec_auth_success":
@@ -1012,6 +1075,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 	switch {
 	case typ == "ad_privileged_acl_evidence_inventory":
 		return "Review the listed ACL principals and permissions on the identified AD objects. Confirm whether each group should hold the observed rights, then validate effective permissions with approved AD administration tools before changing access controls."
+	case typ == "ad_replication_rights_evidence_overview":
+		return "Review the observed replication-related permissions on the identified domain root. Confirm which principals require those rights, validate effective permissions using approved AD administration methods, and remove unnecessary grants only after verifying their operational purpose."
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
 	case typ == "netexec_auth_success":

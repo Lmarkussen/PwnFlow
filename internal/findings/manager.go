@@ -335,9 +335,29 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 			if writeErr != nil {
 				return nil, writeErr
 			}
+			replicationReport, replicationInput := AnalyzeReplicationRights(inventory, job.AssessmentID, job.ObservedAt)
+			var replicationArtifact string
+			if replicationInput != nil {
+				var writeErr error
+				replicationArtifact, writeErr = WriteReplicationRightsArtifact(resultsRoot, replicationReport)
+				if writeErr != nil {
+					return nil, writeErr
+				}
+				if _, writeErr = WriteReplicationRightsReport(resultsRoot, replicationReport); writeErr != nil {
+					return nil, writeErr
+				}
+			}
 			for index := range inventoryInputs {
-				inventoryInputs[index].ArtifactPath = artifact
-				inventoryInputs[index].ArtifactRef = "/"
+				switch inventoryInputs[index].FindingType {
+				case "ad_privileged_acl_evidence_inventory":
+					inventoryInputs[index].ArtifactPath = artifact
+					inventoryInputs[index].ArtifactRef = "/"
+				case "ad_replication_rights_evidence_overview":
+					if replicationArtifact != "" {
+						inventoryInputs[index].ArtifactPath = replicationArtifact
+						inventoryInputs[index].ArtifactRef = "/"
+					}
+				}
 			}
 		}
 		inputs = append(inputs, inventoryInputs...)

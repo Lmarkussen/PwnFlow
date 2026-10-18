@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
@@ -47,11 +49,23 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 	if report.Relationships[2].Decision != "deny" || report.Relationships[2].Inheritance != "inherited" || report.Relationships[2].ObjectType != "object-guid" {
 		t.Fatalf("ACE semantics were not preserved: %+v", report.Relationships)
 	}
-	if len(inputs) != 1 || inputs[0].SourceExecution != 435 || inputs[0].Severity != "informational" {
-		t.Fatalf("unexpected finding input: %+v", inputs)
+	if len(inputs) != 2 {
+		t.Fatalf("expected ACL and replication findings, got %+v", inputs)
+	}
+	var aclInput, replicationInput storage.FindingInput
+	for _, input := range inputs {
+		if input.FindingType == "ad_privileged_acl_evidence_inventory" {
+			aclInput = input
+		}
+		if input.FindingType == "ad_replication_rights_evidence_overview" {
+			replicationInput = input
+		}
+	}
+	if aclInput.SourceExecution != 435 || aclInput.Severity != "informational" || replicationInput.SourceExecution != 435 || replicationInput.Severity != "informational" {
+		t.Fatalf("unexpected finding inputs: %+v", inputs)
 	}
 	var evidence map[string]any
-	if err := json.Unmarshal([]byte(inputs[0].EvidenceJSON), &evidence); err != nil {
+	if err := json.Unmarshal([]byte(aclInput.EvidenceJSON), &evidence); err != nil {
 		t.Fatal(err)
 	}
 	overview, ok := evidence["relationship_overview"].([]any)
@@ -67,8 +81,30 @@ func TestAnalyzeRustHoundACLInventoryPreservesDirectEvidence(t *testing.T) {
 			t.Fatalf("relationship overview omitted %q: %s", expected, overviewJSON)
 		}
 	}
-	if strings.Contains(strings.ToLower(inputs[0].Description), "effective") && strings.Contains(strings.ToLower(inputs[0].Description), "verified") {
+	if strings.Contains(strings.ToLower(aclInput.Description), "effective") && strings.Contains(strings.ToLower(aclInput.Description), "verified") {
 		t.Fatal("inventory observation overclaimed effective access")
+	}
+}
+
+func TestReplicationRightsCompletenessUsesDomainRootAndUnknownEffectiveState(t *testing.T) {
+	report := ACLInventoryReport{SchemaVersion: 1, Domain: "EXAMPLE.TEST", SourceExecutionID: 22, SourceArtifact: "rusthound", Status: "complete", InputArtifacts: []ACLInventorySourceArtifact{{Path: "domains.json", SHA256: "abc"}}, Relationships: []ACLInventoryRelationship{
+		{PrincipalID: "S-1-5-21-1-512", PrincipalName: "Domain Admins", PrincipalType: "Group", TargetID: "S-1-5-21-1", TargetName: "EXAMPLE.TEST", TargetType: "domains", TargetClass: "domain_root", Permission: "GetChangesAll", Decision: "unknown", Inheritance: "explicit", Artifact: "domains.json", ArtifactRef: "/data/0/Aces/0"},
+		{PrincipalID: "S-1-5-21-1-512", PrincipalName: "Domain Admins", PrincipalType: "Group", TargetID: "S-1-5-21-1", TargetName: "EXAMPLE.TEST", TargetType: "domains", TargetClass: "domain_root", Permission: "WriteDacl", Decision: "unknown", Inheritance: "explicit"},
+		{PrincipalID: "S-1-5-21-1-1101", PrincipalName: "alice", PrincipalType: "User", TargetID: "S-1-5-21-1-512", TargetName: "Domain Admins", TargetType: "groups", TargetClass: "privileged_group", Permission: "GetChanges", Decision: "unknown"},
+	}}
+	result, input := AnalyzeReplicationRights(report, 7, time.Unix(1, 0).UTC())
+	if input == nil || len(result.DomainRoots) != 1 || len(result.DomainRoots[0].Principals) != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	principal := result.DomainRoots[0].Principals[0]
+	if principal.Rights[0].Status != "not_observed" || principal.Rights[1].Status != "observed" || principal.Rights[2].Status != "not_observed" {
+		t.Fatalf("unexpected matrix: %+v", principal.Rights)
+	}
+	if result.EffectiveRightState != "NOT VERIFIED" || strings.Contains(strings.ToLower(input.Description), "dcsync-capable") {
+		t.Fatalf("effective-right claim leaked: %+v", input)
+	}
+	if !strings.Contains(FormatReplicationRightsReport(result), "NOT_OBSERVED") {
+		t.Fatal("report omitted not-observed semantics")
 	}
 }
 
