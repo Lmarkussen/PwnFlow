@@ -47,6 +47,11 @@ func TestFindingsSummaryFormatsCurrentFindingsWithoutSecrets(t *testing.T) {
 			t.Fatalf("summary missing %q:\n%s", want, report)
 		}
 	}
+	for _, want := range []string{"EXECUTIONS:", "COUNT SCOPE:   stored findings linked to these execution IDs"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("summary missing explicit count scope %q:\n%s", want, report)
+		}
+	}
 	for _, secret := range []string{"DoNotExport", "password\":", "Enumeration/NetExec/smb.txt"} {
 		if secret == "Enumeration/NetExec/smb.txt" {
 			continue

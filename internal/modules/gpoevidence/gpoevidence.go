@@ -234,7 +234,11 @@ func WriteSummary(resultsRoot, domain string, executionID int64) error {
 	}
 	var report strings.Builder
 	fmt.Fprintf(&report, "PwnFlow AD Group Policy Evidence Inventory\nDomain: %s\nProducing execution ID: %d\n\n", safeSummary(domain), executionID)
-	fmt.Fprintf(&report, "GPOs discovered: %d\nSYSVOL files retrieved: %d\nSYSVOL files with limitations: %d\nOverall evidence status: %s\n\n", len(manifest.GPOs), countManifestStatus(manifest.Files, "", "complete"), len(manifest.Files)-countManifestStatus(manifest.Files, "", "complete"), manifestStatus(manifest))
+	retrieved := countManifestStatus(manifest.Files, "", "complete")
+	limited := countManifestStatus(manifest.Files, "", "limited")
+	failed := countManifestStatus(manifest.Files, "", "failed")
+	other := len(uniqueManifestFiles(manifest.Files)) - retrieved - limited - failed
+	fmt.Fprintf(&report, "GPOs discovered: %d\nSYSVOL files retrieved: %d\nSYSVOL files failed: %d\nSYSVOL files limited: %d\nSYSVOL files otherwise unresolved: %d\nOverall evidence status: %s\n\n", len(manifest.GPOs), retrieved, failed, limited, other, manifestStatus(manifest))
 	report.WriteString("Per-GPO status:\n")
 	for _, gpo := range manifest.GPOs {
 		fmt.Fprintf(&report, "- %s: %s (listed=%d retrieved=%d failed=%d limited=%d)\n", gpo.GPOGUID, gpo.Status, gpo.Listed, gpo.Retrieved, gpo.Failed, gpo.Limited)
@@ -646,8 +650,8 @@ func depth(root, path string) int {
 }
 func countManifest(files []ManifestFile, guid string) int {
 	count := 0
-	for _, file := range files {
-		if guid == "" || file.GPOGUID == guid {
+	for _, file := range uniqueManifestFiles(files) {
+		if guid == "" || strings.EqualFold(file.GPOGUID, guid) {
 			count++
 		}
 	}
@@ -655,12 +659,26 @@ func countManifest(files []ManifestFile, guid string) int {
 }
 func countManifestStatus(files []ManifestFile, guid, status string) int {
 	count := 0
-	for _, file := range files {
-		if file.GPOGUID == guid && file.Status == status {
+	for _, file := range uniqueManifestFiles(files) {
+		if (guid == "" || strings.EqualFold(file.GPOGUID, guid)) && strings.EqualFold(file.Status, status) {
 			count++
 		}
 	}
 	return count
+}
+
+func uniqueManifestFiles(files []ManifestFile) []ManifestFile {
+	unique := make([]ManifestFile, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		key := strings.ToLower(strings.Join([]string{file.GPOGUID, file.SourcePath, file.StoredPath}, "\x00"))
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, file)
+	}
+	return unique
 }
 func validDomain(domain string) bool {
 	if domain == "" || strings.ContainsAny(domain, `/\\`) {

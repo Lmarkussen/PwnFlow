@@ -131,3 +131,49 @@ func TestWriteSummaryIsTraceableAndSecretFree(t *testing.T) {
 		t.Fatal("summary exposed secret wording")
 	}
 }
+
+func TestWriteSummaryAggregatesUniqueManifestFiles(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Enumeration", "ActiveDirectory", "GPO")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{
+		SchemaVersion: 1,
+		GPOs: []GPOSummary{
+			{GPOGUID: "A", Status: "complete", Retrieved: 5},
+			{GPOGUID: "B", Status: "complete", Retrieved: 2},
+			{GPOGUID: "C", Status: "complete", Retrieved: 2},
+		},
+		Files: []ManifestFile{},
+	}
+	for _, item := range []struct {
+		gpo, path string
+	}{
+		{"A", "GPT.INI"}, {"A", "Machine/Registry.pol"}, {"A", "Machine/a.xml"}, {"A", "Machine/b.xml"}, {"A", "User/c.xml"},
+		{"B", "GPT.INI"}, {"B", "Machine/Registry.pol"}, {"C", "GPT.INI"}, {"C", "Machine/Registry.pol"},
+	} {
+		manifest.Files = append(manifest.Files, ManifestFile{GPOGUID: item.gpo, SourcePath: item.path, StoredPath: item.gpo + "/" + item.path, Status: "complete"})
+	}
+	manifest.Files = append(manifest.Files, manifest.Files[0])
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "GPO_evidence_manifest.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSummary(root, "example.test", 43); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, "GPO_EVIDENCE_SUMMARY.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(summary)
+	for _, want := range []string{"SYSVOL files retrieved: 9", "SYSVOL files failed: 0", "SYSVOL files limited: 0", "SYSVOL files otherwise unresolved: 0"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary missing %q:\n%s", want, text)
+		}
+	}
+}

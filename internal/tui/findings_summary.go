@@ -194,7 +194,11 @@ func formatFindingsSummary(resultsRoot, domain string, generatedAt time.Time, ex
 	report.WriteString("======================================================================\n")
 	report.WriteString("                         PWNFLOW SECURITY SUMMARY\n")
 	report.WriteString("======================================================================\n\n")
-	fmt.Fprintf(&report, "DOMAIN:        %s\nASSESSMENT:    Default Enumeration\nGENERATED:     %s\nSTATUS:        %s\n\n", summarySafeText(domain), generatedAt.Format("2006-01-02 15:04:05 MST"), status)
+	executionScope := make([]string, 0, len(executions))
+	for _, execution := range executions {
+		executionScope = append(executionScope, fmt.Sprintf("%s (%s)", execution.ID, summarySafeText(execution.Module)))
+	}
+	fmt.Fprintf(&report, "DOMAIN:        %s\nASSESSMENT:    Default Enumeration\nGENERATED:     %s\nSTATUS:        %s\nEXECUTIONS:    %s\nCOUNT SCOPE:   stored findings linked to these execution IDs; one row per retained finding ID; historical/unlinked assessment rows are excluded\n\n", summarySafeText(domain), generatedAt.Format("2006-01-02 15:04:05 MST"), status, strings.Join(executionScope, ", "))
 	report.WriteString("----------------------------------------------------------------------\nOVERVIEW\n----------------------------------------------------------------------\n\n")
 	fmt.Fprintf(&report, "Critical findings:          %d\nHigh findings:              %d\nMedium findings:            %d\nLow findings:               %d\nInformational observations: %d\n\nTotal security findings:    %d\n\nModules completed:          %d\nModules failed:             %d\nModules unsupported:        %d\n\n", counts["critical"], counts["high"], counts["medium"], counts["low"], counts["informational"], counts["critical"]+counts["high"]+counts["medium"]+counts["low"], completed, failed, unsupported)
 
