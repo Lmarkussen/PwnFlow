@@ -306,6 +306,12 @@ func (m *Manager) analyze(queued queuedJob) {
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, status, ParserVersionFor(job.SourceTool), err.Error())
 		return
 	}
+	for index, input := range inputs {
+		if input.ArtifactPath == "" {
+			_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisFailed, ParserVersionFor(job.SourceTool), fmt.Sprintf("finding producer %q emitted an empty artifact path at input %d", input.FindingType, index))
+			return
+		}
+	}
 	if err := m.db.IngestFindings(m.ctx, inputs); err != nil {
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisFailed, ParserVersionFor(job.SourceTool), err.Error())
 		return
@@ -357,12 +363,12 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 				if writeErr != nil {
 					return nil, writeErr
 				}
-				gpoInput.ArtifactPath = gpoReportPath
-				gpoInput.ArtifactRef = "/"
 				gpoReportPath, writeErr = WriteGPOPrivilegeReport(resultsRoot, gpoReport)
 				if writeErr != nil {
 					return nil, writeErr
 				}
+				gpoInput.ArtifactPath = gpoReportPath
+				gpoInput.ArtifactRef = "/"
 			}
 			for index := range inventoryInputs {
 				switch inventoryInputs[index].FindingType {

@@ -374,3 +374,47 @@ func TestManagerIngestsNetExecSecurityDetectorsIntoSQLite(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeRustHoundJobAssignsOptionalGPOEvidenceBeforePersistence(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(root, "Enumeration", "RustHoundCE", "artifacts", "20261018-120000")
+	if err := os.MkdirAll(artifact, 0750); err != nil {
+		t.Fatal(err)
+	}
+	gpoDir := filepath.Join(root, "Enumeration", "ActiveDirectory", "GPO")
+	if err := os.MkdirAll(gpoDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	gpoID := "22222222-2222-2222-2222-222222222222"
+	if err := os.WriteFile(filepath.Join(artifact, "gpos.json"), []byte(`{"meta":{"type":"gpos","version":6},"data":[{"ObjectIdentifier":"22222222-2222-2222-2222-222222222222","Properties":{"name":"TEST-GPO@EXAMPLE.TEST","highvalue":false},"Aces":[{"PrincipalSID":"S-1-5-21-1-1-1-1100","PrincipalType":"Group","RightName":"WriteDacl","IsInherited":false}]}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gpoDir, "GPO_metadata.json"), []byte(`{"domain":"example.test","gpos":[{"guid":"11111111-1111-1111-1111-111111111111","object_guid":"`+gpoID+`","attributes":{"displayName":{"values":["TEST-GPO"]}}}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gpoDir, "GPO_applicability.json"), []byte(`{"domain":"example.test","collection_execution_id":9,"configured_relationships":[{"gpo_guid":"11111111-1111-1111-1111-111111111111","source_dn":"OU=Servers,DC=example,DC=test","source_type":"ou","target_container_dn":"OU=Servers,DC=example,DC=test","enabled":true,"enforced":false,"link_order":1,"classification":"configured_direct","applicability":"configured_only","source_artifact":"GPO_links.json"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := analyzeRustHoundJob(context.Background(), Job{AssessmentID: 1, ExecutionID: 8, SourceTool: "RustHound-CE", ArtifactPath: artifact, ObservedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acl, gpo bool
+	for _, input := range inputs {
+		if input.FindingType == "ad_privileged_acl_evidence_inventory" {
+			acl = true
+		}
+		if input.FindingType == "ad_gpo_privilege_relationship_evidence" {
+			gpo = true
+			if input.ArtifactPath == "" {
+				t.Fatal("GPO Finding has empty artifact path")
+			}
+		}
+		if input.ArtifactPath == "" {
+			t.Fatalf("producer %q emitted empty artifact path", input.FindingType)
+		}
+	}
+	if !acl || !gpo {
+		t.Fatalf("expected ACL and GPO inputs, acl=%v gpo=%v", acl, gpo)
+	}
+}
