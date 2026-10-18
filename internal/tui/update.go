@@ -111,6 +111,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.running && m.batchRecorded && !m.analysisPending && m.batchName == "Default Enumeration" && !m.adPrivilegedAccessExported {
 			m.exportADPrivilegedAccess()
 		}
+		if !m.running && m.batchRecorded && !m.analysisPending && !m.adPrivilegedACLExported {
+			m.exportADPrivilegedACL()
+		}
 		m.refreshWatcher()
 		m.refreshOutput()
 		// A privileged module waiting for renewed authorization is picked up here,
@@ -148,6 +151,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.exportCollectionQuality()
 			m.exportADPrivilegedAccess()
 		}
+		m.exportADPrivilegedACL()
 		return m, nil
 	case findingsReanalysisMsg:
 		m.findingsLoaded = false
@@ -1027,6 +1031,7 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.batchSummaryExported = false
 	m.collectionQualityExported = false
 	m.adPrivilegedAccessExported = false
+	m.adPrivilegedACLExported = false
 	m.batchExecutionIDs = nil
 	m.batchResultsPublished = false
 	m.analysisPending = false

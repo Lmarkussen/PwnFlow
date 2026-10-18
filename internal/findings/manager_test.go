@@ -58,8 +58,17 @@ func TestManagerIngestsRustHoundAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 {
+	if len(rows) != 2 {
 		t.Fatalf("findings=%d", len(rows))
+	}
+	var inventory int
+	for _, row := range rows {
+		if row.FindingType == "ad_privileged_acl_evidence_inventory" {
+			inventory++
+		}
+	}
+	if inventory != 1 {
+		t.Fatalf("inventory observations=%d", inventory)
 	}
 	var jobs int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM analysis_jobs`).Scan(&jobs); err != nil {

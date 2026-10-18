@@ -116,6 +116,7 @@ type model struct {
 	batchSummaryExported       bool
 	collectionQualityExported  bool
 	adPrivilegedAccessExported bool
+	adPrivilegedACLExported    bool
 	batchExecutionIDs          []int64
 	batchResultsPublished      bool
 

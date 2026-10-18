@@ -324,7 +324,35 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 	if _, groupInputs, groupErr := AnalyzeRustHoundGroups(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt); groupErr == nil {
 		inputs = append(inputs, groupInputs...)
 	}
+	inventory, inventoryInputs, inventoryErr := AnalyzeRustHoundACLInventory(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	if inventoryErr != nil {
+		return nil, inventoryErr
+	}
+	if inventoryInputs != nil {
+		resultsRoot := rustHoundResultsRoot(job.ArtifactPath)
+		if resultsRoot != "" {
+			artifact, writeErr := WriteACLInventoryArtifact(resultsRoot, inventory)
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			for index := range inventoryInputs {
+				inventoryInputs[index].ArtifactPath = artifact
+				inventoryInputs[index].ArtifactRef = "/"
+			}
+		}
+		inputs = append(inputs, inventoryInputs...)
+	}
 	return inputs, nil
+}
+
+func rustHoundResultsRoot(artifactPath string) string {
+	clean := filepath.Clean(artifactPath)
+	marker := string(filepath.Separator) + "Enumeration" + string(filepath.Separator) + "RustHoundCE" + string(filepath.Separator) + "artifacts"
+	index := strings.Index(clean, marker)
+	if index <= 0 {
+		return ""
+	}
+	return clean[:index]
 }
 
 func ParserVersionFor(tool string) string {
