@@ -237,6 +237,10 @@ func AnalyzeTierContext(ctx context.Context, inputPath, resultsRoot string, inve
 	}
 	for file := range artifacts {
 		result.SourceArtifacts = append(result.SourceArtifacts, file)
+		if data, hashErr := os.ReadFile(file); hashErr == nil {
+			hash := sha256.Sum256(data)
+			result.SourceHashes[file] = hex.EncodeToString(hash[:])
+		}
 	}
 	sort.Strings(result.SourceArtifacts)
 	result.DomainID = policy.DomainSID
