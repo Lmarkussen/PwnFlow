@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
@@ -137,5 +138,29 @@ func TestWatcherNonRunningMessageIsActionScoped(t *testing.T) {
 	message := ansi.Strip(m.watcherStatusLine())
 	if !strings.Contains(message, "Selected action: Module is not running") {
 		t.Fatalf("watcher status was not scoped to selected action: %q", message)
+	}
+}
+
+func TestWatcherQUsesGlobalQuitPathWhenIdle(t *testing.T) {
+	for _, focus := range []paneFocus{focusModules, focusOutput} {
+		m := &model{watcher: true, watcherFocus: focus, width: 100, height: 30}
+		_, command := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		if command == nil {
+			t.Fatalf("focus %d: q did not request quit", focus)
+		}
+		if m.running || m.quitConfirm {
+			t.Fatalf("focus %d: q changed state incorrectly: running=%t confirm=%t", focus, m.running, m.quitConfirm)
+		}
+	}
+}
+
+func TestWatcherQUsesSafeConfirmationDuringActiveBatch(t *testing.T) {
+	m := &model{watcher: true, watcherFocus: focusOutput, running: true, width: 100, height: 30}
+	_, command := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
+	if command != nil || !m.quitConfirm || !m.running {
+		t.Fatalf("active watcher Q bypassed safe confirmation: command=%v confirm=%t running=%t", command, m.quitConfirm, m.running)
+	}
+	if !strings.Contains(m.status, "cancel and quit") {
+		t.Fatalf("active watcher Q did not explain the safe action: %q", m.status)
 	}
 }

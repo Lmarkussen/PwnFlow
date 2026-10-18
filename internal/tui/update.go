@@ -308,18 +308,15 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.declineWatcherAbort()
 		}
 	}
+	if m.watcher && (key == "q" || key == "Q") {
+		return m, m.requestQuit()
+	}
 
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
 	case "q", "Q":
-		if m.running && !m.batchComplete() {
-			m.quitConfirm = true
-			m.status = "batch is running; cancel and quit? [y/N]"
-			return m, nil
-		}
-		m.running = false
-		return m, tea.Quit
+		return m, m.requestQuit()
 	case "ctrl+c":
 		if m.running && !m.batchComplete() {
 			m.cancelBatch()
@@ -527,6 +524,16 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshFindings()
 	}
 	return m, nil
+}
+
+func (m *model) requestQuit() tea.Cmd {
+	if m.running && !m.batchComplete() {
+		m.quitConfirm = true
+		m.status = "batch is running; cancel and quit? [y/N]"
+		return nil
+	}
+	m.running = false
+	return tea.Quit
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
