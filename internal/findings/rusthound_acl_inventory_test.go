@@ -3,6 +3,7 @@ package findings
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,6 +115,64 @@ func TestReplicationRightsCompletenessUsesDomainRootAndUnknownEffectiveState(t *
 	}
 	if !strings.Contains(FormatReplicationRightsReport(result), "NOT_OBSERVED") {
 		t.Fatal("report omitted not-observed semantics")
+	}
+}
+
+func TestReplicationRightsDeduplicatesPresentationPathsButRetainsEvidence(t *testing.T) {
+	relations := []ACLInventoryRelationship{}
+	for index, right := range trackedReplicationRights {
+		relations = append(relations, ACLInventoryRelationship{
+			PrincipalID: "G", PrincipalName: "Administrators", PrincipalType: "Group",
+			TargetID: "D", TargetName: "EXAMPLE.TEST", TargetType: "domains", TargetClass: "domain_root",
+			Permission: right, Decision: "unknown", Inheritance: "explicit", Artifact: "groups.json",
+			ArtifactRef: fmt.Sprintf("/data/0/Aces/%d", index),
+		})
+	}
+	contextFor := func(memberID, memberName, groupID, groupName, classification, permission, ref string) ACLMembershipContext {
+		return ACLMembershipContext{
+			MemberID: memberID, MemberName: memberName, MemberType: "users",
+			GroupPath:      []ACLMembershipHop{{ID: groupID, Name: groupName, Type: "groups", Artifact: "groups.json", ArtifactRef: "/data/1/Members"}},
+			ACLPrincipalID: "G", ACLPrincipalName: "Administrators", TargetID: "D", TargetName: "EXAMPLE.TEST",
+			TargetClass: "domain_root", Permission: permission, Decision: "unknown", Inheritance: "explicit",
+			Classification: classification, MembershipRefs: []string{ref}, MembershipArtifacts: []string{"groups.json"}, ACLArtifact: "groups.json", ACLArtifactRef: "/data/2/Aces/0",
+		}
+	}
+	contexts := []ACLMembershipContext{
+		contextFor("U1", "ADMINISTRATOR", "G", "Administrators", "observed_membership_context", "GetChanges", "/data/0/Members/0"),
+		contextFor("U1", "ADMINISTRATOR", "G", "Administrators", "observed_membership_context", "GetChangesAll", "/data/0/Members/0"),
+		contextFor("U1", "ADMINISTRATOR", "G", "Administrators", "observed_membership_context", "GetChangesInFilteredSet", "/data/0/Members/0"),
+		contextFor("U2", "ALICE", "G1", "Tier 1", "observed_nested_membership_context", "GetChanges", "/data/1/Members/0"),
+		contextFor("U2", "ALICE", "G2", "Tier 2", "observed_nested_membership_context", "GetChanges", "/data/2/Members/0"),
+		contextFor("U3", "ALICE", "G", "Administrators", "observed_membership_context", "GetChanges", "/data/3/Members/0"),
+	}
+	report := ACLInventoryReport{Domain: "EXAMPLE.TEST", SourceExecutionID: 493, SourceArtifact: "rusthound", Status: "complete", Relationships: relations, MembershipContext: contexts}
+	result, input := AnalyzeReplicationRights(report, 7, time.Unix(1, 0).UTC())
+	if input == nil || len(result.DomainRoots) != 1 || len(result.DomainRoots[0].Principals) != 1 {
+		t.Fatalf("unexpected replication result: %+v", result)
+	}
+	principal := result.DomainRoots[0].Principals[0]
+	if len(principal.MembershipContext) != 4 {
+		t.Fatalf("expected four distinct presentation paths, got %d: %+v", len(principal.MembershipContext), principal.MembershipContext)
+	}
+	if len(principal.MembershipEvidence) != 6 {
+		t.Fatalf("expected all six source contexts, got %d", len(principal.MembershipEvidence))
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "/data/0/Aces/0") || !strings.Contains(string(encoded), "/data/2/Aces/0") {
+		t.Fatalf("source ACE provenance was lost: %s", encoded)
+	}
+	if result.MembershipPathsShown != 4 || result.MembershipEvidenceRecords != 6 {
+		t.Fatalf("membership counts were not separated: shown=%d evidence=%d", result.MembershipPathsShown, result.MembershipEvidenceRecords)
+	}
+	text := FormatReplicationRightsReport(result)
+	if strings.Count(text, "- ADMINISTRATOR ->") != 1 {
+		t.Fatalf("administrator path was not presented once: %s", text)
+	}
+	if strings.Count(text, "GetChanges") < 3 || !strings.Contains(text, "GetChangesInFilteredSet") {
+		t.Fatalf("rights matrix was not retained: %s", text)
 	}
 }
 

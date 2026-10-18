@@ -19,20 +19,23 @@ const replicationRightsParserVersion = "rusthound-replication-rights-v1"
 var trackedReplicationRights = []string{"GetChanges", "GetChangesAll", "GetChangesInFilteredSet"}
 
 type ReplicationRightsReport struct {
-	SchemaVersion        int                          `json:"schema_version"`
-	ParserVersion        string                       `json:"parser_version"`
-	Domain               string                       `json:"domain,omitempty"`
-	SourceExecutionID    int64                        `json:"source_execution_id"`
-	SourceArtifact       string                       `json:"source_artifact"`
-	AnalysisTimestamp    time.Time                    `json:"analysis_timestamp"`
-	Status               string                       `json:"status"`
-	Coverage             string                       `json:"coverage"`
-	EffectiveRightState  string                       `json:"effective_replication_authorization"`
-	DomainRoots          []ReplicationDomainRoot      `json:"domain_roots"`
-	InputArtifacts       []ACLInventorySourceArtifact `json:"input_artifacts,omitempty"`
-	Limitations          []string                     `json:"limitations"`
-	Unresolved           []ACLInventoryRelationship   `json:"unresolved_relationships,omitempty"`
-	OmittedRelationships int                          `json:"omitted_relationships"`
+	SchemaVersion             int                          `json:"schema_version"`
+	ParserVersion             string                       `json:"parser_version"`
+	Domain                    string                       `json:"domain,omitempty"`
+	SourceExecutionID         int64                        `json:"source_execution_id"`
+	SourceArtifact            string                       `json:"source_artifact"`
+	AnalysisTimestamp         time.Time                    `json:"analysis_timestamp"`
+	Status                    string                       `json:"status"`
+	Coverage                  string                       `json:"coverage"`
+	EffectiveRightState       string                       `json:"effective_replication_authorization"`
+	DomainRoots               []ReplicationDomainRoot      `json:"domain_roots"`
+	InputArtifacts            []ACLInventorySourceArtifact `json:"input_artifacts,omitempty"`
+	Limitations               []string                     `json:"limitations"`
+	Unresolved                []ACLInventoryRelationship   `json:"unresolved_relationships,omitempty"`
+	OmittedRelationships      int                          `json:"omitted_relationships"`
+	MembershipPathsShown      int                          `json:"membership_paths_shown"`
+	MembershipEvidenceRecords int                          `json:"membership_evidence_records"`
+	MembershipPathsOmitted    int                          `json:"membership_paths_omitted"`
 }
 
 type ReplicationDomainRoot struct {
@@ -43,11 +46,12 @@ type ReplicationDomainRoot struct {
 }
 
 type ReplicationPrincipal struct {
-	ID                string                  `json:"id"`
-	Name              string                  `json:"name,omitempty"`
-	Type              string                  `json:"type,omitempty"`
-	Rights            []ReplicationRightState `json:"rights"`
-	MembershipContext []ACLMembershipContext  `json:"membership_context,omitempty"`
+	ID                 string                  `json:"id"`
+	Name               string                  `json:"name,omitempty"`
+	Type               string                  `json:"type,omitempty"`
+	Rights             []ReplicationRightState `json:"rights"`
+	MembershipContext  []ACLMembershipContext  `json:"membership_context,omitempty"`
+	MembershipEvidence []ACLMembershipContext  `json:"membership_evidence,omitempty"`
 }
 
 type ReplicationRightState struct {
@@ -121,13 +125,21 @@ func AnalyzeReplicationRights(report ACLInventoryReport, assessmentID int64, now
 			}
 			for _, membership := range report.MembershipContext {
 				if membership.TargetID == root.ID && membership.ACLPrincipalID == principal.ID && canonicalReplicationRight(membership.Permission) != "" {
-					principal.MembershipContext = appendUniqueMembershipContext(principal.MembershipContext, membership)
+					principal.MembershipEvidence = appendUniqueMembershipEvidence(principal.MembershipEvidence, membership)
+					principal.MembershipContext = appendUniqueMembershipPath(principal.MembershipContext, membership, report.SourceExecutionID)
 				}
 			}
 			sortReplicationPrincipal(principal)
 		}
 		sort.SliceStable(root.Principals, func(i, j int) bool { return replicationPrincipalLess(root.Principals[i], root.Principals[j]) })
 	}
+	for _, root := range roots {
+		for _, principal := range root.Principals {
+			result.MembershipPathsShown += len(principal.MembershipContext)
+			result.MembershipEvidenceRecords += len(principal.MembershipEvidence)
+		}
+	}
+	result.MembershipPathsOmitted = report.OmittedMembershipPaths
 	for _, root := range roots {
 		sort.SliceStable(root.Principals, func(i, j int) bool { return replicationPrincipalLess(root.Principals[i], root.Principals[j]) })
 		result.DomainRoots = append(result.DomainRoots, *root)
@@ -148,6 +160,7 @@ func AnalyzeReplicationRights(report ACLInventoryReport, assessmentID int64, now
 		"domain_roots": result.DomainRoots, "coverage": result.Coverage,
 		"effective_replication_authorization": result.EffectiveRightState,
 		"limitations":                         result.Limitations, "omitted_relationships": result.OmittedRelationships,
+		"membership_paths_shown": result.MembershipPathsShown, "membership_evidence_records": result.MembershipEvidenceRecords, "membership_paths_omitted": result.MembershipPathsOmitted,
 	})
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%d\x00%s", assessmentID, report.SourceExecutionID, report.SourceArtifact)))
 	input := &storage.FindingInput{
@@ -194,15 +207,46 @@ func appendUniqueReplicationEvidence(values []ACLInventoryRelationship, relation
 	return append(values, relation)
 }
 
-func appendUniqueMembershipContext(values []ACLMembershipContext, item ACLMembershipContext) []ACLMembershipContext {
-	key := item.MemberID + "\x00" + item.ACLPrincipalID + "\x00" + item.TargetID + "\x00" + item.Permission + "\x00" + strings.Join(item.MembershipRefs, "\x00")
+func appendUniqueMembershipPath(values []ACLMembershipContext, item ACLMembershipContext, executionID int64) []ACLMembershipContext {
+	key := membershipPathKey(item, executionID)
 	for _, existing := range values {
-		existingKey := existing.MemberID + "\x00" + existing.ACLPrincipalID + "\x00" + existing.TargetID + "\x00" + existing.Permission + "\x00" + strings.Join(existing.MembershipRefs, "\x00")
-		if existingKey == key {
+		if membershipPathKey(existing, executionID) == key {
 			return values
 		}
 	}
 	return append(values, item)
+}
+
+func appendUniqueMembershipEvidence(values []ACLMembershipContext, item ACLMembershipContext) []ACLMembershipContext {
+	key := membershipEvidenceKey(item)
+	for _, existing := range values {
+		if membershipEvidenceKey(existing) == key {
+			return values
+		}
+	}
+	return append(values, item)
+}
+
+func membershipPathKey(item ACLMembershipContext, executionID int64) string {
+	parts := []string{fmt.Sprintf("%d", executionID), item.TargetID, item.ACLPrincipalID, item.MemberID, item.Classification}
+	if item.MemberID == "" {
+		parts = append(parts, item.MemberName, strings.Join(item.MembershipRefs, "\x00"), strings.Join(item.MembershipArtifacts, "\x00"))
+	}
+	for _, hop := range item.GroupPath {
+		identity := hop.ID
+		if identity == "" {
+			identity = hop.Name + "\x00" + hop.Artifact + "\x00" + hop.ArtifactRef
+		}
+		parts = append(parts, identity)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func membershipEvidenceKey(item ACLMembershipContext) string {
+	return strings.Join([]string{
+		membershipPathKey(item, 0), item.Permission, item.Decision, item.Inheritance,
+		item.ACLArtifact, item.ACLArtifactRef, strings.Join(item.MembershipArtifacts, "\x00"), strings.Join(item.MembershipRefs, "\x00"),
+	}, "\x00")
 }
 
 func sortReplicationPrincipal(principal *ReplicationPrincipal) {
@@ -214,6 +258,16 @@ func sortReplicationPrincipal(principal *ReplicationPrincipal) {
 			return principal.MembershipContext[i].MemberName < principal.MembershipContext[j].MemberName
 		}
 		return principal.MembershipContext[i].MemberID < principal.MembershipContext[j].MemberID
+	})
+	sort.SliceStable(principal.MembershipEvidence, func(i, j int) bool {
+		left, right := principal.MembershipEvidence[i], principal.MembershipEvidence[j]
+		if left.MemberName != right.MemberName {
+			return left.MemberName < right.MemberName
+		}
+		if left.MemberID != right.MemberID {
+			return left.MemberID < right.MemberID
+		}
+		return membershipEvidenceKey(left) < membershipEvidenceKey(right)
 	})
 }
 
@@ -317,6 +371,7 @@ func FormatReplicationRightsReport(report ReplicationRightsReport) string {
 	fmt.Fprintln(&b, "             PWNFLOW AD REPLICATION RIGHTS EVIDENCE")
 	fmt.Fprintln(&b, "======================================================================")
 	fmt.Fprintf(&b, "\nDOMAIN: %s\nSOURCE EXECUTION: %d\nSOURCE ARTIFACT: %s\nSTATUS: %s\nCOVERAGE: %s\nEFFECTIVE REPLICATION AUTHORIZATION: NOT VERIFIED\n", report.Domain, report.SourceExecutionID, report.SourceArtifact, report.Status, report.Coverage)
+	fmt.Fprintf(&b, "DISTINCT MEMBERSHIP PATHS SHOWN: %d\nMEMBERSHIP EVIDENCE RECORDS RETAINED: %d\nMEMBERSHIP PATHS OMITTED BEFORE MATERIALIZATION: %d\n", report.MembershipPathsShown, report.MembershipEvidenceRecords, report.MembershipPathsOmitted)
 	fmt.Fprintln(&b, "\nRIGHT STATE: NOT_OBSERVED means no matching supported relationship was found in this inspected evidence; it does not mean denied or absent.")
 	for _, root := range report.DomainRoots {
 		fmt.Fprintf(&b, "\n----------------------------------------------------------------------\nDOMAIN ROOT: %s\nIDENTITY: %s\nTYPE: %s\n----------------------------------------------------------------------\n", fallbackReportText(root.Name, root.ID), root.ID, root.ObjectType)
@@ -334,6 +389,12 @@ func FormatReplicationRightsReport(report ReplicationRightsReport) string {
 				fmt.Fprintln(&b, "  Membership context:")
 				for _, context := range principal.MembershipContext {
 					fmt.Fprintf(&b, "    - %s\n", formatMembershipPath(context))
+				}
+			}
+			if len(principal.MembershipEvidence) > 0 {
+				fmt.Fprintln(&b, "  Membership evidence references:")
+				for _, context := range principal.MembershipEvidence {
+					fmt.Fprintf(&b, "    - %s | permission=%s | ACL evidence=%s#%s\n", formatMembershipEvidence(context), context.Permission, context.ACLArtifact, context.ACLArtifactRef)
 				}
 			}
 			fmt.Fprintln(&b, "  Effective replication authorization: NOT VERIFIED")

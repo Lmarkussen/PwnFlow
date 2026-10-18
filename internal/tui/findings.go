@@ -807,7 +807,7 @@ func metadataInt(metadata map[string]any, key string) int {
 func formatReplicationRightsOverview(finding storage.Finding) string {
 	metadata := findingMetadata(finding)
 	var b strings.Builder
-	fmt.Fprintf(&b, "RustHound execution %d recorded replication-related ACL relationships.\nCoverage: %s\nEffective replication authorization: NOT VERIFIED\n", finding.SourceExecution, fallbackText(metadataString(metadata, "coverage"), "unknown"))
+	fmt.Fprintf(&b, "RustHound execution %d recorded replication-related ACL relationships.\nCoverage: %s\nDistinct membership paths shown: %d\nMembership evidence records retained: %d\nMembership paths omitted before materialization: %d\nEffective replication authorization: NOT VERIFIED\n", finding.SourceExecution, fallbackText(metadataString(metadata, "coverage"), "unknown"), metadataInt(metadata, "membership_paths_shown"), metadataInt(metadata, "membership_evidence_records"), metadataInt(metadata, "membership_paths_omitted"))
 	roots, _ := metadata["domain_roots"].([]any)
 	if len(roots) == 0 {
 		return b.String() + "\nNo authoritative domain-root replication-right relationships were observed in this execution."
