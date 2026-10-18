@@ -323,68 +323,88 @@ func analyzeRustHoundJob(ctx context.Context, job Job) ([]storage.FindingInput, 
 	if job.ArtifactPath == "" {
 		return nil, fmt.Errorf("RustHound artifact directory not found")
 	}
-	inputs, _, err := AnalyzeRustHound(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	inputs, rustReport, err := AnalyzeRustHound(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	if err != nil {
 		return nil, err
 	}
 	if _, groupInputs, groupErr := AnalyzeRustHoundGroups(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt); groupErr == nil {
 		inputs = append(inputs, groupInputs...)
 	}
+	resultsRoot := rustHoundResultsRoot(job.ArtifactPath)
+	generalRoot := resultsRoot
+	if generalRoot == "" {
+		generalRoot = job.ArtifactPath
+	}
+	if rustReport.ACLs > 0 {
+		generalReport := buildGeneralACLInventory(rustReport, job.ExecutionID, job.ArtifactPath, job.ObservedAt)
+		reportPath, structuredPath, writeErr := WriteGeneralACLInventoryArtifacts(generalRoot, generalReport)
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		inputs = append(inputs, generalACLInventoryInput(generalReport, job.AssessmentID, reportPath, structuredPath, job.ObservedAt))
+	}
 	inventory, inventoryInputs, inventoryErr := AnalyzeRustHoundACLInventory(ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	if inventoryErr != nil {
 		return nil, inventoryErr
 	}
 	if inventoryInputs != nil {
-		resultsRoot := rustHoundResultsRoot(job.ArtifactPath)
+		artifact := job.ArtifactPath
 		if resultsRoot != "" {
-			artifact, writeErr := WriteACLInventoryArtifact(resultsRoot, inventory)
+			var writeErr error
+			artifact, writeErr = WriteACLInventoryArtifact(resultsRoot, inventory)
 			if writeErr != nil {
 				return nil, writeErr
 			}
-			replicationReport, replicationInput := AnalyzeReplicationRights(inventory, job.AssessmentID, job.ObservedAt)
-			var replicationArtifact string
-			if replicationInput != nil {
-				var writeErr error
-				replicationArtifact, writeErr = WriteReplicationRightsArtifact(resultsRoot, replicationReport)
-				if writeErr != nil {
-					return nil, writeErr
-				}
-				if _, writeErr = WriteReplicationRightsReport(resultsRoot, replicationReport); writeErr != nil {
-					return nil, writeErr
-				}
-			}
-			gpoReport, gpoInput, analysisErr := AnalyzeGPOPrivilegeRelationships(inventory, job.AssessmentID, job.ObservedAt, resultsRoot)
-			if analysisErr != nil {
-				return nil, analysisErr
-			}
-			var gpoReportPath string
-			if gpoInput != nil {
-				_, writeErr = WriteGPOPrivilegeArtifacts(resultsRoot, gpoReport)
-				if writeErr != nil {
-					return nil, writeErr
-				}
-				gpoReportPath, writeErr = WriteGPOPrivilegeReport(resultsRoot, gpoReport)
-				if writeErr != nil {
-					return nil, writeErr
-				}
-				gpoInput.ArtifactPath = gpoReportPath
-				gpoInput.ArtifactRef = "/"
-			}
+		}
+		if resultsRoot == "" {
 			for index := range inventoryInputs {
-				switch inventoryInputs[index].FindingType {
-				case "ad_privileged_acl_evidence_inventory":
-					inventoryInputs[index].ArtifactPath = artifact
+				inventoryInputs[index].ArtifactPath = artifact
+				inventoryInputs[index].ArtifactRef = "/"
+			}
+			inputs = append(inputs, inventoryInputs...)
+			return inputs, nil
+		}
+		var writeErr error
+		replicationReport, replicationInput := AnalyzeReplicationRights(inventory, job.AssessmentID, job.ObservedAt)
+		var replicationArtifact string
+		if replicationInput != nil {
+			replicationArtifact, writeErr = WriteReplicationRightsArtifact(resultsRoot, replicationReport)
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			if _, writeErr = WriteReplicationRightsReport(resultsRoot, replicationReport); writeErr != nil {
+				return nil, writeErr
+			}
+		}
+		gpoReport, gpoInput, analysisErr := AnalyzeGPOPrivilegeRelationships(inventory, job.AssessmentID, job.ObservedAt, resultsRoot)
+		if analysisErr != nil {
+			return nil, analysisErr
+		}
+		if gpoInput != nil {
+			if _, writeErr = WriteGPOPrivilegeArtifacts(resultsRoot, gpoReport); writeErr != nil {
+				return nil, writeErr
+			}
+			gpoReportPath, reportErr := WriteGPOPrivilegeReport(resultsRoot, gpoReport)
+			if reportErr != nil {
+				return nil, reportErr
+			}
+			gpoInput.ArtifactPath = gpoReportPath
+			gpoInput.ArtifactRef = "/"
+		}
+		for index := range inventoryInputs {
+			switch inventoryInputs[index].FindingType {
+			case "ad_privileged_acl_evidence_inventory":
+				inventoryInputs[index].ArtifactPath = artifact
+				inventoryInputs[index].ArtifactRef = "/"
+			case "ad_replication_rights_evidence_overview":
+				if replicationArtifact != "" {
+					inventoryInputs[index].ArtifactPath = replicationArtifact
 					inventoryInputs[index].ArtifactRef = "/"
-				case "ad_replication_rights_evidence_overview":
-					if replicationArtifact != "" {
-						inventoryInputs[index].ArtifactPath = replicationArtifact
-						inventoryInputs[index].ArtifactRef = "/"
-					}
 				}
 			}
-			if gpoInput != nil {
-				inventoryInputs = append(inventoryInputs, *gpoInput)
-			}
+		}
+		if gpoInput != nil {
+			inventoryInputs = append(inventoryInputs, *gpoInput)
 		}
 		inputs = append(inputs, inventoryInputs...)
 	}

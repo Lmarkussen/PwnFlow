@@ -30,7 +30,7 @@ func TestAnalyzeRustHoundACLsAndZIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.SchemaVersion != 6 || report.CollectorVersion != "RustHound-CE v2.5.25" || report.Objects != 2 || report.ACLs != 2 || len(findings) != 2 {
+	if report.SchemaVersion != 6 || report.CollectorVersion != "RustHound-CE v2.5.25" || report.Objects != 2 || report.ACLs != 2 || len(report.ACLRecords) != 2 || len(findings) != 0 {
 		t.Fatalf("unexpected report: %+v findings=%d", report, len(findings))
 	}
 	for _, finding := range findings {
@@ -38,20 +38,17 @@ func TestAnalyzeRustHoundACLsAndZIP(t *testing.T) {
 			t.Fatalf("raw ACL evidence was promoted to vulnerability severity: %+v", finding)
 		}
 	}
-	if findings[0].Confidence != "observed-direct-ace" {
-		t.Fatalf("raw ACL evidence confidence changed: %+v", findings[0])
+	if report.ACLRecords[1].PrincipalName != "Domain Admins" || report.ACLRecords[1].ArtifactRef != "/data/0/Aces/0" {
+		t.Fatalf("principal or evidence reference was not resolved: %+v", report.ACLRecords[1])
 	}
-	if findings[1].RelatedObject != "Domain Admins" || findings[1].ArtifactRef != "/data/0/Aces/0" {
-		t.Fatalf("principal or evidence reference was not resolved: %+v", findings[1])
-	}
-	if findings[0].FindingKey == findings[1].FindingKey {
+	if report.ACLRecords[0].Artifact == report.ACLRecords[1].Artifact && report.ACLRecords[0].ArtifactRef == report.ACLRecords[1].ArtifactRef {
 		t.Fatal("distinct ACEs were merged")
 	}
 
 	archive := filepath.Join(root, "collection.zip")
 	createZIP(t, archive, map[string][]byte{"nested/sample_groups.json": mustJSON(t, map[string]any{"meta": map[string]any{"collectorversion": "RustHound-CE v2.5.25", "version": 6, "type": "groups"}, "data": []any{map[string]any{"ObjectIdentifier": "S-1-5-21-1-512", "Properties": map[string]any{"name": "Domain Admins", "highvalue": true}, "Aces": []any{map[string]any{"PrincipalSID": "S-1-5-21-1-1101", "RightName": "GenericAll"}}}}})})
 	zipFindings, zipReport, err := AnalyzeRustHound(context.Background(), archive, 7, 12, time.Now())
-	if err != nil || zipReport.Files != 1 || len(zipFindings) != 1 || !strings.HasSuffix(zipFindings[0].ArtifactPath, "collection.zip!nested/sample_groups.json") {
+	if err != nil || zipReport.Files != 1 || len(zipFindings) != 0 || len(zipReport.ACLRecords) != 1 || !strings.HasSuffix(zipReport.ACLRecords[0].Artifact, "collection.zip!nested/sample_groups.json") {
 		t.Fatalf("ZIP analysis failed: report=%+v findings=%+v err=%v", zipReport, zipFindings, err)
 	}
 }

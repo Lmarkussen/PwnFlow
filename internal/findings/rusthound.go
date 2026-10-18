@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	ParserVersion  = "rusthound-acl-v1"
-	MaxJSONBytes   = 64 << 20
-	MaxCollection  = 512 << 20
-	MaxZIPEntries  = 2048
-	MaxZIPFileSize = 64 << 20
+	ParserVersion        = "rusthound-acl-v1"
+	MaxJSONBytes         = 64 << 20
+	MaxCollection        = 512 << 20
+	MaxZIPEntries        = 2048
+	MaxZIPFileSize       = 64 << 20
+	MaxGeneralACLRecords = 100000
 )
 
 var supportedRights = map[string]bool{
@@ -37,13 +38,33 @@ var supportedRights = map[string]bool{
 }
 
 type AnalysisReport struct {
-	CollectorVersion string
-	SchemaVersion    int
-	Files            int
-	Objects          int
-	ACLs             int
-	Findings         int
-	Skipped          []string
+	CollectorVersion  string
+	SchemaVersion     int
+	Domain            string
+	Files             int
+	Objects           int
+	ACLs              int
+	Findings          int
+	Skipped           []string
+	ACLRecords        []GeneralACLRecord `json:"-"`
+	ACLRecordsOmitted int                `json:"-"`
+	UnsupportedACLs   int                `json:"-"`
+}
+
+type GeneralACLRecord struct {
+	TargetID            string `json:"target_id"`
+	TargetName          string `json:"target_name,omitempty"`
+	TargetType          string `json:"target_type,omitempty"`
+	PrincipalID         string `json:"principal_id,omitempty"`
+	PrincipalName       string `json:"principal_name,omitempty"`
+	PrincipalType       string `json:"principal_type,omitempty"`
+	Permission          string `json:"permission"`
+	Decision            string `json:"decision"`
+	Inheritance         string `json:"inheritance"`
+	ObjectType          string `json:"object_type,omitempty"`
+	InheritedObjectType string `json:"inherited_object_type,omitempty"`
+	Artifact            string `json:"artifact"`
+	ArtifactRef         string `json:"artifact_ref"`
 }
 
 type rustHoundExport struct {
@@ -175,6 +196,9 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 			}
 			object.Artifact = item.path
 			object.RefPrefix = fmt.Sprintf("/data/%d/Properties", objectPos)
+			if report.Domain == "" {
+				report.Domain = firstString(object.Properties, "domain")
+			}
 			objects[object.ID] = object
 			report.Objects++
 			for acePos, ace := range aceValues {
@@ -199,6 +223,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		right := aceString(ace.ACE, "RightName")
 		rightKey := normalize(right)
 		if !supportedRights[rightKey] {
+			report.UnsupportedACLs++
 			continue
 		}
 		report.ACLs++
@@ -208,43 +233,17 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		if principalID != "" && principalName == "" {
 			principalName = "unresolved principal"
 		}
-		severity := "informational"
-		confidence := "observed-direct-ace"
-		if rightKey == "addkeycredentiallink" {
-			confidence = "potential-condition"
+		if len(report.ACLRecords) < MaxGeneralACLRecords {
+			report.ACLRecords = append(report.ACLRecords, GeneralACLRecord{
+				TargetID: ace.Object.ID, TargetName: ace.Object.Name, TargetType: ace.Object.Type,
+				PrincipalID: principalID, PrincipalName: principalName, PrincipalType: aceString(ace.ACE, "PrincipalType"),
+				Permission: right, Decision: aceDecision(ace.ACE), Inheritance: aceInheritance(ace.ACE),
+				ObjectType: aceString(ace.ACE, "ObjectType"), InheritedObjectType: aceString(ace.ACE, "InheritedObjectType"),
+				Artifact: ace.Artifact, ArtifactRef: ace.RefPrefix,
+			})
+		} else {
+			report.ACLRecordsOmitted++
 		}
-		title := fmt.Sprintf("Direct ACL %s on %s", right, ace.Object.Name)
-		if ace.Object.Name == "" {
-			title = fmt.Sprintf("Direct ACL %s on %s", right, ace.Object.ID)
-		}
-		if rightKey == "addkeycredentiallink" {
-			title = "Potential Shadow Credentials exposure on " + objectLabel(ace.Object)
-		}
-		if rightKey == "writedacl" && ace.Object.HighValue {
-			title = "WriteDacl over privileged AD object: " + objectLabel(ace.Object)
-		}
-		description := fmt.Sprintf("RustHound collected a direct %s ACE from %s to %s. This is informational ACL evidence, not an effective-access or vulnerability conclusion; allow/deny, inheritance applicability and object-specific effective semantics remain unverified.", right, principalName, objectLabel(ace.Object))
-		if rightKey == "addkeycredentiallink" {
-			description += " This indicates a potential key-credential modification condition; no shadow credential was added by PwnFlow."
-		}
-		if aceBool(ace.ACE, "IsInherited") {
-			description += " The ACE is marked inherited in the export."
-		}
-		evidence, _ := json.Marshal(map[string]any{
-			"object_identifier": ace.Object.ID,
-			"principal_sid":     principalID,
-			"principal_type":    aceString(ace.ACE, "PrincipalType"),
-			"right_name":        right,
-			"is_inherited":      aceBool(ace.ACE, "IsInherited"),
-			"inheritance_hash":  aceString(ace.ACE, "InheritanceHash"),
-		})
-		findingKey := stableACLKey(assessmentID, ace.Object.ID, principalID, rightKey, ace.ACE)
-		findings = append(findings, storage.FindingInput{
-			FindingKey: findingKey, AssessmentID: assessmentID, SourceTool: "RustHound-CE", SourceExecution: executionID,
-			FindingType: "ad_acl_" + rightKey, Title: title, Description: description, Severity: severity, Confidence: confidence,
-			AffectedObjectID: ace.Object.ID, AffectedObject: ace.Object.Name, RelatedObjectID: principalID, RelatedObject: principalName,
-			EvidenceJSON: string(evidence), ArtifactPath: ace.Artifact, ArtifactRef: ace.RefPrefix, ObservedAt: now, Status: "open", ParserVersion: ParserVersion,
-		})
 	}
 	report.Findings = len(findings)
 	return findings, report, nil
@@ -378,6 +377,25 @@ func rawBool(fields map[string]json.RawMessage, key string) bool {
 
 func aceString(ace map[string]json.RawMessage, key string) string { return rawString(ace, key) }
 func aceBool(ace map[string]json.RawMessage, key string) bool     { return rawBool(ace, key) }
+
+func aceDecision(ace map[string]json.RawMessage) string {
+	for _, key := range []string{"Decision", "AccessControlType", "AceType"} {
+		if value := aceString(ace, key); value != "" {
+			return value
+		}
+	}
+	return "unknown"
+}
+
+func aceInheritance(ace map[string]json.RawMessage) string {
+	if inherited, known := rawBoolValue(ace, "IsInherited"); known {
+		if inherited {
+			return "inherited"
+		}
+		return "explicit"
+	}
+	return "unknown"
+}
 
 func normalize(value string) string {
 	return strings.ToLower(strings.NewReplacer(" ", "", "_", "", "-", "").Replace(value))

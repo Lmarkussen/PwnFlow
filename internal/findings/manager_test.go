@@ -2,6 +2,8 @@ package findings
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -416,5 +418,82 @@ func TestAnalyzeRustHoundJobAssignsOptionalGPOEvidenceBeforePersistence(t *testi
 	}
 	if !acl || !gpo {
 		t.Fatalf("expected ACL and GPO inputs, acl=%v gpo=%v", acl, gpo)
+	}
+}
+
+func TestManagerConsolidatesLargeACLPopulationWithoutLosingRecords(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.12"); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := db.TargetID(ctx, "example.test", "198.51.100.12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(id,name,tool,protocol,description,output_filename) VALUES(8,'RustHound','RustHound-CE','N/A','test','rusthound.log')`); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := db.RecordExecutionID(ctx, assessment, 8, time.Now(), time.Now(), "completed", 0, "rusthound.log", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(root, "results", "Enumeration", "RustHoundCE", "artifacts", "20261018-120000")
+	if err := os.MkdirAll(artifact, 0750); err != nil {
+		t.Fatal(err)
+	}
+	var body strings.Builder
+	body.WriteString(`{"meta":{"type":"groups","version":6},"data":[{"ObjectIdentifier":"S-1-5-21-1-512","Properties":{"name":"Domain Admins@EXAMPLE.TEST","domain":"example.test","highvalue":true},"Aces":[`)
+	for index := 0; index < 1000; index++ {
+		if index > 0 {
+			body.WriteByte(',')
+		}
+		body.WriteString(fmt.Sprintf(`{"PrincipalSID":"S-1-5-21-1-%d","PrincipalType":"User","RightName":"WriteDacl","IsInherited":%t}`, 1000+index, index%2 == 0))
+	}
+	body.WriteString(`]}]}`)
+	if err := os.WriteFile(filepath.Join(artifact, "groups.json"), []byte(body.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(ctx, db)
+	if err := manager.Submit(Job{AssessmentID: assessment, ExecutionID: execution, SourceTool: "RustHound-CE", ArtifactPath: artifact, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListFindings(ctx, assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) >= 20 {
+		t.Fatalf("raw ACLs created per-ACE Findings: got %d rows", len(rows))
+	}
+	var general bool
+	for _, row := range rows {
+		if row.FindingType == "ad_acl_evidence_inventory" {
+			general = true
+		}
+		if strings.HasPrefix(row.FindingType, "ad_acl_") && row.FindingType != "ad_acl_evidence_inventory" {
+			t.Fatalf("raw ACL Finding was persisted: %s", row.FindingType)
+		}
+	}
+	if !general {
+		t.Fatalf("consolidated general inventory missing: %#v", rows)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "results", "Enumeration", "ActiveDirectory", "ACL", fmt.Sprintf("execution-%d", execution), "AD_acl_evidence_inventory.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report GeneralACLInventoryReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.SourceACECount != 1000 || report.RetainedACECount != 1000 || report.OmittedACECount != 0 {
+		t.Fatalf("source ACL coverage changed: %+v", report)
 	}
 }
