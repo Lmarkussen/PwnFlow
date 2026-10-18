@@ -813,6 +813,8 @@ func TestCertipyESCDetailsAreEvidenceSpecificAndBounded(t *testing.T) {
 		{"ESC6", "ca", "Example-CA", "EDITF_ATTRIBUTESUBJECTALTNAME2 is enabled.", "subjectaltname"},
 		{"ESC7", "ca", "Example-CA", "User has dangerous permissions.", "permissions"},
 		{"ESC8", "ca", "Example-CA", "Web Enrollment is enabled over HTTP.", "web enrollment"},
+		{"ESC15", "template", "SchemaTemplate", "Enrollee supplies subject and schema version is 1.", "schema version"},
+		{"ESC17", "template", "ServerAuthTemplate", "Enrollee supplies subject and template allows server authentication.", "server authentication"},
 		{"ESC99", "template", "FutureTemplate", "Unrecognized tool condition.", "ESC99"},
 	}
 	for _, test := range tests {

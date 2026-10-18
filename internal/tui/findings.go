@@ -880,6 +880,10 @@ func certipyESCImpact(finding storage.Finding, metadata map[string]any) string {
 		return fmt.Sprintf("Certipy reported potentially dangerous CA permissions on %s. The responsible principal's effective rights and any certificate-management action were not verified.", object)
 	case "ESC8":
 		return fmt.Sprintf("Certipy reported HTTP enrollment exposure on %s. This may increase relay risk when NTLM authentication and destination prerequisites are present; no relay or certificate issuance succeeded in this evidence.", object)
+	case "ESC15":
+		return fmt.Sprintf("The %s was reported with enrollee-controlled subject data and a schema-version condition associated with ESC15. The relevant issuance and application-policy prerequisites were not independently verified.", object)
+	case "ESC17":
+		return fmt.Sprintf("The %s was reported with enrollee-controlled subject data and server-authentication capability. A suitable enrollment path and successful server impersonation were not verified.", object)
 	default:
 		return fmt.Sprintf("Certipy reported %s for %s. The tool-reported configuration may present a certificate-services risk, but the required prerequisites and exploitation were not verified.", esc, object)
 	}
@@ -903,6 +907,10 @@ func certipyESCRemediation(finding storage.Finding, metadata map[string]any) str
 		return fmt.Sprintf("Review CA management permissions affecting %s and remove unnecessary control rights from non-administrative principals.", object)
 	case "ESC8":
 		return fmt.Sprintf("Review HTTP enrollment protection for %s, require appropriate channel and authentication protections, and reduce unnecessary NTLM exposure without disabling safeguards.", object)
+	case "ESC15":
+		return fmt.Sprintf("Review schema version, subject/SAN supply and application-policy behavior for %s. Restrict enrollment and identity control to the minimum required.", object)
+	case "ESC17":
+		return fmt.Sprintf("Review subject/SAN supply and server-authentication EKUs for %s, then restrict enrollment permissions and publication where the configuration is not required.", object)
 	default:
 		return fmt.Sprintf("Review the Certipy-reported %s configuration for %s and restrict the relevant enrollment or administration permission after validating operational dependencies.", esc, object)
 	}
