@@ -501,6 +501,14 @@ func findingAttributes(finding storage.Finding, width int) string {
 			target += ":" + port
 		}
 		add("TARGET", target)
+	} else if strings.HasPrefix(strings.ToLower(finding.FindingType), "adcs_esc_") {
+		objectType := strings.ToLower(metadataString(metadata, "object_type"))
+		label := "TEMPLATE"
+		if objectType == "ca" || objectType == "certificate_authority" {
+			label = "CA"
+		}
+		add(label, displayFindingObject(finding.AffectedObject, finding.AffectedObjectID))
+		add("ESC", certipyESCType(finding, metadata))
 	} else if finding.AffectedObject != "" || finding.AffectedObjectID != "" {
 		add("AFFECTED", displayFindingObject(finding.AffectedObject, finding.AffectedObjectID))
 	}
@@ -532,6 +540,9 @@ func findingSection(name, value string, width int) string {
 }
 
 func findingEvidenceSummary(finding storage.Finding) string {
+	if strings.HasPrefix(strings.ToLower(finding.FindingType), "adcs_esc_") {
+		return fmt.Sprintf("Certipy · Execution %d\nOriginal artifact: %s\nSource reference: %s", finding.SourceExecution, fallbackText(finding.ArtifactPath, "source artifact unavailable"), fallbackText(finding.ArtifactRef, "source reference unavailable"))
+	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		return fmt.Sprintf("%s · Execution %d\nFull report: %s\nStructured inventory: %s\nOriginal RustHound source: %s", finding.SourceTool, finding.SourceExecution, metadataString(metadata, "human_report"), fallbackText(finding.ArtifactPath, metadataString(metadata, "structured_artifact")), metadataString(metadata, "source_artifact"))
@@ -554,6 +565,15 @@ func findingEvidenceSummary(finding storage.Finding) string {
 }
 
 func findingLimitations(finding storage.Finding) string {
+	if strings.HasPrefix(strings.ToLower(finding.FindingType), "adcs_esc_") {
+		metadata := findingMetadata(finding)
+		lines := []string{"Certipy reported the ESC classification from the preserved source artifact; PwnFlow did not request a certificate or test exploitation."}
+		if metadataString(metadata, "object_type") == "" {
+			lines = append(lines, "CA/template object type is unavailable in this historical record.")
+		}
+		lines = append(lines, "Effective permissions, certificate issuance, authentication, impersonation and attack-path prerequisites were not independently verified.")
+		return strings.Join(lines, "\n")
+	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		var lines []string
@@ -682,6 +702,8 @@ func specificFindingCondition(finding storage.Finding, metadata map[string]any) 
 		attribute := fallbackText(metadataString(metadata, "attribute"), "account information")
 		keyword := fallbackText(metadataString(metadata, "keyword"), "credential-related language")
 		return fmt.Sprintf("NetExec observed the keyword %q in the %s attribute for %s. The keyword is not proof that a credential was disclosed.", keyword, attribute, principal)
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return formatCertipyESCCondition(finding, metadata)
 	case typ == "gpo_evidence_inventory":
 		return formatGPOEvidenceCondition(metadata, finding)
 	}
@@ -716,12 +738,15 @@ func specificFindingImpact(finding storage.Finding) string {
 		return "A credential-related term was observed in directory metadata. This is an indicator to inspect the account information safely, not confirmed credential exposure."
 	case typ == "gpo_evidence_inventory":
 		return "The collector preserved GPO metadata, configured-link evidence and bounded SYSVOL files. Configured links do not prove effective client-side policy application."
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return certipyESCImpact(finding, metadata)
 	}
 	return ""
 }
 
 func specificFindingRemediation(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType)
+	metadata := findingMetadata(finding)
 	switch {
 	case typ == "netexec_privileged_access":
 		return "Verify whether the identified account is intended to have administrative access to the named host over the tested protocol. Confirm the administrative scope using approved controls; do not infer domain-wide privilege from this record."
@@ -743,6 +768,8 @@ func specificFindingRemediation(finding storage.Finding) string {
 		return "Verify whether the identified account's directory attribute contains sensitive operational or credential information. Remove sensitive metadata and review access if disclosure is confirmed; do not treat the keyword alone as a recovered credential."
 	case typ == "gpo_evidence_inventory":
 		return "Review the listed GPO metadata, links and preserved SYSVOL files using the referenced evidence. Validate security filtering and client-side application separately before changing policy."
+	case strings.HasPrefix(typ, "adcs_esc_"):
+		return certipyESCRemediation(finding, metadata)
 	}
 	return ""
 }
@@ -761,6 +788,124 @@ func formatGPOEvidenceCondition(metadata map[string]any, finding storage.Finding
 		condition += fmt.Sprintf(" Producing execution: %d.", finding.SourceExecution)
 	}
 	return condition
+}
+
+func certipyESCType(finding storage.Finding, metadata map[string]any) string {
+	if value := strings.ToUpper(strings.TrimSpace(metadataString(metadata, "esc"))); value != "" {
+		return value
+	}
+	if match := explicitCertipyESC.FindString(finding.FindingType + " " + finding.Title); match != "" {
+		return strings.ToUpper(match)
+	}
+	return "ESC classification unavailable"
+}
+
+func certipyObjectLabel(finding storage.Finding, metadata map[string]any) string {
+	objectType := strings.ToLower(metadataString(metadata, "object_type"))
+	label := "certificate template"
+	if objectType == "ca" || objectType == "certificate_authority" {
+		label = "certificate authority"
+	}
+	name := fallbackText(finding.AffectedObject, metadataString(metadata, "object_name"))
+	return label + " " + fallbackText(name, "identity unavailable in source evidence")
+}
+
+func certipyVulnerabilityReason(metadata map[string]any, esc string) string {
+	value, ok := metadata["vulnerability"]
+	if !ok || value == nil {
+		return ""
+	}
+	if values, ok := value.(map[string]any); ok {
+		for key, item := range values {
+			if strings.EqualFold(key, esc) {
+				if text, ok := item.(string); ok {
+					return summarySafeText(text)
+				}
+			}
+		}
+	}
+	if text, ok := value.(string); ok {
+		return summarySafeText(text)
+	}
+	return ""
+}
+
+func certipyConfigurationSummary(metadata map[string]any) string {
+	parts := make([]string, 0, 4)
+	if value, present := metadata["enabled"]; present && value != nil {
+		parts = append(parts, fmt.Sprintf("Enabled=%v", value))
+	}
+	if value, present := metadata["manager_approval"]; present && value != nil {
+		parts = append(parts, fmt.Sprintf("Manager approval=%v", value))
+	}
+	if value, present := metadata["authorized_signatures"]; present && value != nil {
+		parts = append(parts, fmt.Sprintf("Authorized signatures=%v", value))
+	}
+	if owner := metadataString(metadata, "owner"); owner != "" {
+		parts = append(parts, "Owner="+summarySafeText(owner))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func formatCertipyESCCondition(finding storage.Finding, metadata map[string]any) string {
+	esc := certipyESCType(finding, metadata)
+	condition := fmt.Sprintf("Certipy reported %s for %s.", esc, certipyObjectLabel(finding, metadata))
+	if reason := certipyVulnerabilityReason(metadata, esc); reason != "" {
+		condition += " Tool-reported condition: " + reason
+	}
+	if configuration := certipyConfigurationSummary(metadata); configuration != "" {
+		condition += " Observed configuration: " + configuration + "."
+	}
+	if finding.SourceExecution > 0 {
+		condition += fmt.Sprintf(" Producing execution: %d.", finding.SourceExecution)
+	}
+	return condition
+}
+
+func certipyESCImpact(finding storage.Finding, metadata map[string]any) string {
+	esc := certipyESCType(finding, metadata)
+	object := certipyObjectLabel(finding, metadata)
+	switch esc {
+	case "ESC1":
+		return fmt.Sprintf("The %s may allow an enrollee to influence certificate subject or SAN data when the reported client-authentication and enrollment conditions are satisfied. Certificate issuance, impersonation and authentication were not verified.", object)
+	case "ESC2":
+		return fmt.Sprintf("The %s was reported with a broad certificate purpose that may increase issuance risk when enrollment rights permit use. Certificate issuance or privilege escalation was not verified.", object)
+	case "ESC3":
+		return fmt.Sprintf("The %s was reported with enrollment-agent capability. This may enable requests on behalf of another subject when the required enrollment permissions and target-template conditions are satisfied; impersonation was not verified.", object)
+	case "ESC4":
+		return fmt.Sprintf("Certipy reported potentially dangerous control of %s. Effective ACL rights, group membership and template modification were not independently verified.", object)
+	case "ESC6":
+		return fmt.Sprintf("The %s was reported with a CA-wide subject/SAN-related configuration that may affect certificate identity handling. A vulnerable template combination and successful issuance were not verified.", object)
+	case "ESC7":
+		return fmt.Sprintf("Certipy reported potentially dangerous CA permissions on %s. The responsible principal's effective rights and any certificate-management action were not verified.", object)
+	case "ESC8":
+		return fmt.Sprintf("Certipy reported HTTP enrollment exposure on %s. This may increase relay risk when NTLM authentication and destination prerequisites are present; no relay or certificate issuance succeeded in this evidence.", object)
+	default:
+		return fmt.Sprintf("Certipy reported %s for %s. The tool-reported configuration may present a certificate-services risk, but the required prerequisites and exploitation were not verified.", esc, object)
+	}
+}
+
+func certipyESCRemediation(finding storage.Finding, metadata map[string]any) string {
+	esc := certipyESCType(finding, metadata)
+	object := certipyObjectLabel(finding, metadata)
+	switch esc {
+	case "ESC1":
+		return fmt.Sprintf("Review subject/SAN supply, client-authentication EKUs, publication and enrollment permissions for %s. Require manager approval or authorized signatures where appropriate; do not infer impersonation from this record.", object)
+	case "ESC2":
+		return fmt.Sprintf("Review the certificate purpose/EKU and enrollment permissions for %s. Remove broad issuance capability where it is not required and validate dependent workflows.", object)
+	case "ESC3":
+		return fmt.Sprintf("Review enrollment-agent EKUs and permissions for %s and restrict enrollment-agent use to approved principals and target templates.", object)
+	case "ESC4":
+		return fmt.Sprintf("Review template owner and ACLs for %s, including unresolved group membership and deny entries. Remove unnecessary template-control permissions.", object)
+	case "ESC6":
+		return fmt.Sprintf("Review the CA-wide subject/SAN configuration affecting %s and restrict it to an approved operational need. Validate the associated templates separately.", object)
+	case "ESC7":
+		return fmt.Sprintf("Review CA management permissions affecting %s and remove unnecessary control rights from non-administrative principals.", object)
+	case "ESC8":
+		return fmt.Sprintf("Review HTTP enrollment protection for %s, require appropriate channel and authentication protections, and reduce unnecessary NTLM exposure without disabling safeguards.", object)
+	default:
+		return fmt.Sprintf("Review the Certipy-reported %s configuration for %s and restrict the relevant enrollment or administration permission after validating operational dependencies.", esc, object)
+	}
 }
 
 func metadataStringSlice(metadata map[string]any, key string) []string {

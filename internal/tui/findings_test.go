@@ -801,3 +801,71 @@ func TestKerberosMaterialRoutingAndSafeMetadata(t *testing.T) {
 		t.Fatal("Kerberos material payload leaked")
 	}
 }
+
+func TestCertipyESCDetailsAreEvidenceSpecificAndBounded(t *testing.T) {
+	tests := []struct {
+		esc, objectType, object, reason, expected string
+	}{
+		{"ESC1", "template", "UserAuthTemplate", "Enrollee supplies subject and template allows client authentication.", "subject"},
+		{"ESC2", "template", "AnyPurposeTemplate", "Template can be used for any purpose.", "any purpose"},
+		{"ESC3", "template", "EnrollmentAgent", "Template has Certificate Request Agent EKU set.", "request agent"},
+		{"ESC4", "template", "ControlledTemplate", "Template is owned by user.", "control"},
+		{"ESC6", "ca", "Example-CA", "EDITF_ATTRIBUTESUBJECTALTNAME2 is enabled.", "subjectaltname"},
+		{"ESC7", "ca", "Example-CA", "User has dangerous permissions.", "permissions"},
+		{"ESC8", "ca", "Example-CA", "Web Enrollment is enabled over HTTP.", "web enrollment"},
+		{"ESC99", "template", "FutureTemplate", "Unrecognized tool condition.", "ESC99"},
+	}
+	for _, test := range tests {
+		t.Run(test.esc, func(t *testing.T) {
+			finding := storage.Finding{FindingInput: storage.FindingInput{
+				FindingType: "adcs_esc_" + strings.ToLower(test.esc), Title: "Certipy reported " + test.esc + " — " + test.object,
+				Severity: "high", Confidence: "tool-reported-esc", SourceTool: "Certipy", SourceExecution: 476,
+				AffectedObject: test.object, ArtifactPath: "Enumeration/Certipy/report.json", ArtifactRef: "/Certificate Templates/0/[!] Vulnerabilities",
+				EvidenceJSON: fmt.Sprintf(`{"object_type":%q,"object_name":"0","esc":%q,"vulnerability":{%q:%q},"enabled":true,"manager_approval":false,"authorized_signatures":0}`, test.objectType, test.esc, test.esc, test.reason),
+			}}
+			condition := findingCondition(finding)
+			for _, expected := range []string{test.esc, test.object, test.reason, test.expected, "execution: 476"} {
+				if !strings.Contains(strings.ToLower(condition), strings.ToLower(expected)) {
+					t.Fatalf("condition omitted %q: %s", expected, condition)
+				}
+			}
+			for _, text := range []string{findingImpact(finding), findingRemediation(finding), findingLimitations(finding), findingEvidenceSummary(finding)} {
+				if strings.Contains(strings.ToLower(text), "domain compromise") || strings.Contains(strings.ToLower(text), "successful certificate") || strings.Contains(strings.ToLower(text), "successful impersonation") {
+					t.Fatalf("unsupported claim in %q", text)
+				}
+			}
+			attributes := findingAttributes(finding, 120)
+			if !strings.Contains(attributes, "TEMPLATE") && !strings.Contains(attributes, "CA") {
+				t.Fatalf("affected AD CS identity missing: %s", attributes)
+			}
+		})
+	}
+}
+
+func TestCertipyESCDetailsRedactSensitiveReasonText(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "adcs_esc_esc1", Title: "Certipy reported ESC1 — SensitiveTemplate", Severity: "high", SourceTool: "Certipy", SourceExecution: 477,
+		AffectedObject: "SensitiveTemplate", EvidenceJSON: `{"object_type":"template","esc":"ESC1","vulnerability":{"ESC1":"password: super-secret-value"}}`,
+	}}
+	text := findingCondition(finding) + findingImpact(finding) + findingRemediation(finding) + findingLimitations(finding)
+	if strings.Contains(text, "super-secret-value") {
+		t.Fatal("AD CS presentation leaked sensitive reason text")
+	}
+}
+
+func TestCertipyHistoricalRecordWithoutStructuredMetadataRemainsUseful(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		FindingType: "adcs_esc_esc8", Title: "Certipy reported ESC8 — Legacy CA", Severity: "high", SourceTool: "Certipy", SourceExecution: 434,
+		AffectedObject: "Legacy CA", ArtifactPath: "Enumeration/Certipy/report.json", ArtifactRef: "/Certificate Authorities/Legacy CA/[!] Vulnerabilities", EvidenceJSON: `{}`,
+	}}
+	condition := findingCondition(finding)
+	if !strings.Contains(condition, "ESC8") || !strings.Contains(condition, "Legacy CA") {
+		t.Fatalf("historical AD CS record lost truthful fallback context: %s", condition)
+	}
+	if !strings.Contains(findingLimitations(finding), "object type is unavailable") {
+		t.Fatal("historical metadata limitation was not exposed")
+	}
+	if !strings.Contains(findingEvidenceSummary(finding), "Execution 434") {
+		t.Fatal("historical source execution was not preserved")
+	}
+}
