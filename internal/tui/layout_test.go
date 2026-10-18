@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 )
 
@@ -31,6 +35,43 @@ func TestPanesDivideTheTerminalAtEveryHeight(t *testing.T) {
 		// The module pane keeps its minimum as long as the terminal can hold it.
 		if height >= 30 && modulePane < minModulePaneHeight {
 			t.Fatalf("height %d: the module pane dropped to %d lines, below its minimum", height, modulePane)
+		}
+	}
+}
+
+func TestModulePaneFooterStaysAnchoredAcrossListLengthsAndResizes(t *testing.T) {
+	for _, width := range []int{160, 120, 100, 80, 60} {
+		for _, height := range []int{60, 45, 30, 24, 18} {
+			expectedFooterLine := -1
+			for _, moduleCount := range []int{1, 3, 7, 40} {
+				m := statusModel(t, netexec.EnumerationModules())
+				m.width, m.height = width, height
+				m.modules = append([]modules.Module(nil), m.modules[:min(moduleCount, len(m.modules))]...)
+				m.resizeOutput()
+				frame := strings.Split(ansi.Strip(m.View()), "\n")
+				footer, _ := m.modulePaneLayout()
+				if footer == "" {
+					continue
+				}
+				footerLine := -1
+				for index, line := range frame {
+					if strings.Contains(line, "Quit") {
+						footerLine = index
+					}
+				}
+				if footerLine < 0 {
+					t.Fatalf("width=%d height=%d modules=%d: navigation footer missing compact=%t pane=%d rows=%d", width, height, moduleCount, m.modulePaneCompact(), m.modulePaneHeight(), m.moduleViewportRows())
+				}
+				paneBottom := lipgloss.Height(m.navigationView()) + m.modulePaneHeight()
+				if footerLine >= paneBottom {
+					t.Fatalf("width=%d height=%d modules=%d: footer line=%d is below module pane bottom=%d", width, height, moduleCount, footerLine, paneBottom)
+				}
+				if expectedFooterLine < 0 {
+					expectedFooterLine = footerLine
+				} else if footerLine != expectedFooterLine {
+					t.Fatalf("width=%d height=%d modules=%d: footer line=%d moved from %d", width, height, moduleCount, footerLine, expectedFooterLine)
+				}
+			}
 		}
 	}
 }

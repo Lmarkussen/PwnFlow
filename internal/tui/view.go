@@ -34,7 +34,7 @@ func (m *model) View() string {
 	if !compact {
 		left.WriteString(paneHeaderWith(title, fmt.Sprintf("PwnFlow v%s", m.version), m.focus == focusModules, width-4) + "\n")
 	}
-	left.WriteString(paneHeader(modulesHeader, false, width-4) + "\n")
+	left.WriteString(paneHeader(ansi.TruncateWc(modulesHeader, max(1, width-4), "…"), false, width-4) + "\n")
 	if compact {
 		// Too short for the full identity block: keep the values, spend the lines
 		// on module rows instead.
@@ -67,11 +67,15 @@ func (m *model) View() string {
 		nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(1, nameWidth-ansi.StringWidthWc(name)))
 		left.WriteString(fmt.Sprintf("%s%s %s %s\n", selectionPrefix(selected), mark, nameField, lifecycleStyle(state).Render(stateDisplay)))
 	}
-	if !compact {
-		left.WriteString("\n" + dim.Render("────────────────────────────────────────────") + "\n")
-		if footer, _ := m.modulePaneLayout(); footer != "" {
-			left.WriteString(dim.Render(footer))
-		}
+	footer, _ := m.modulePaneLayout()
+	if footer != "" {
+		footerBlock := dim.Render(strings.Repeat("─", max(1, width-4))) + "\n" + dim.Render(footer)
+		innerHeight := max(0, m.modulePaneHeight()-2)
+		moduleRegionHeight := max(0, innerHeight-lipgloss.Height(footerBlock))
+		moduleRegion := lipgloss.NewStyle().Height(moduleRegionHeight).MaxHeight(moduleRegionHeight).Render(left.String())
+		left.Reset()
+		left.WriteString(moduleRegion)
+		left.WriteString(footerBlock)
 	}
 	right := m.infoView()
 	navigation := m.navigationView()
@@ -88,7 +92,7 @@ func widthForFooter(width int) int {
 	if width < 1 {
 		return 32
 	}
-	return width/2 - 4
+	return width/2 - 6
 }
 
 func wrapFooter(text string, width int) string {

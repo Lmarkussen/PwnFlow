@@ -18,6 +18,8 @@ const modulePaneChromeLines = 1 + 1 + 5 + 2
 // the version title and the rule give way first.
 const compactModulePaneChromeLines = 3
 
+const moduleFooterChromeLines = 2
+
 // minModuleRows is the number of module rows the pane keeps before it starts
 // shortening the key hint. The list is what the operator is reading, so the hint
 // gives way first.
@@ -43,10 +45,15 @@ func (m *model) modulePaneLayout() (footer string, rows int) {
 	// A bordered pane of Height(n) is n lines in total, so the two border rows
 	// are not available for content.
 	budget := m.modulePaneHeight() - 2
+	width := max(20, widthForFooter(m.width))
 	if budget < modulePaneChromeLines+minModuleRows {
+		for _, candidate := range []string{wrapFooter(shortHelpText, width), wrapFooter(helpText, width)} {
+			if rows := budget - compactModulePaneChromeLines - moduleFooterChromeLines - lipgloss.Height(candidate); rows >= 1 {
+				return candidate, 1
+			}
+		}
 		return "", max(1, budget-compactModulePaneChromeLines)
 	}
-	width := max(20, widthForFooter(m.width))
 	for _, candidate := range []string{
 		wrapFooter(helpText, width),
 		wrapFooter(shortHelpText, width),
