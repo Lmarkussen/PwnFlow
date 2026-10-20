@@ -231,6 +231,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.easterEgg {
+		if key == "q" || key == "Q" {
+			m.easterEgg = false
+		}
+		return m, nil
+	}
 	if m.quitConfirm {
 		switch key {
 		case "y", "Y":
@@ -338,6 +344,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.watcher && (key == "q" || key == "Q") {
 		return m, m.requestQuit()
+	}
+	if isEasterEggKey(msg) && !m.running && !m.watcher && !m.findingsView && !m.inputPrompt && !m.approvalPrompt && !m.elevationPrompt && !m.quitConfirm {
+		m.easterEgg = true
+		return m, nil
 	}
 
 	// Handle process-wide controls before any focus-specific handler. The

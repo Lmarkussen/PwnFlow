@@ -75,6 +75,7 @@ type model struct {
 	selectedModules              map[string]bool
 	running                      bool
 	watcher                      bool
+	easterEgg                    bool
 	focusBeforeWatcher           paneFocus
 	quitConfirm                  bool
 	quitAfterCancel              bool

@@ -10,6 +10,9 @@ import (
 )
 
 func (m *model) View() string {
+	if m.easterEgg {
+		return m.easterEggView()
+	}
 	if m.watcher {
 		return m.watcherView()
 	}
