@@ -225,6 +225,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if key == "left" && m.findingsView && m.findingAtRoot() {
+		return m, nil
+	}
 	if m.findingsView {
 		return m.handleFindingsKey(key)
 	}
@@ -365,6 +368,22 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshFindings()
 			return m, nil
 		}
+		m.findingsView = true
+		m.findingsFromWatcher = false
+		m.findingDetail = false
+		m.findingViewMode = "all"
+		m.findingCategoryView = true
+		m.findingCategory = ""
+		m.findingTieringView = false
+		m.findingTieringParent = false
+		m.findingCursor = 0
+		m.findingsLoaded = false
+		m.refreshFindings()
+		return m, nil
+	case "ctrl+a":
+		if !m.running {
+			return m, m.executeAll()
+		}
 	}
 
 	if m.watcher {
@@ -504,28 +523,12 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.running {
 			return m, m.executeSelected()
 		}
-	case "ctrl+a":
-		if !m.running {
-			return m, m.executeAll()
-		}
 	case "i":
 		if !m.running {
 			return m, m.executeInput(m.cursor)
 		}
 	case "?":
 		m.status = helpText
-	case "ctrl+f":
-		m.findingsView = true
-		m.findingsFromWatcher = false
-		m.findingDetail = false
-		m.findingViewMode = "all"
-		m.findingCategoryView = true
-		m.findingCategory = ""
-		m.findingTieringView = false
-		m.findingTieringParent = false
-		m.findingCursor = 0
-		m.findingsLoaded = false
-		m.refreshFindings()
 	}
 	return m, nil
 }
@@ -549,6 +552,9 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.running = false
 		return m, tea.Quit
+	}
+	if key == "left" && m.findingAtRoot() {
+		return m, nil
 	}
 	// Findings uses the same hierarchy transitions for both keyboard pairs.
 	// Normalize the aliases before any view-specific handling so selection and
@@ -928,6 +934,9 @@ func (m *model) batchComplete() bool {
 func (m *model) closeWatcher() {
 	m.watcher = false
 	m.focus = m.focusBeforeWatcher
+	if !m.running && m.batchName == "Default Enumeration" {
+		m.focus = focusModules
+	}
 }
 
 // execute runs the highlighted module, and only that module. A module that needs

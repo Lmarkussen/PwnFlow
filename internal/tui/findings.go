@@ -241,6 +241,10 @@ func findingTierScopeKey(finding storage.Finding) string {
 	}
 }
 
+func (m *model) findingAtRoot() bool {
+	return m.findingCategory == "" && !m.findingDetail && !m.findingTieringView && !m.evidenceView
+}
+
 func buildFindingCategories(rows []storage.Finding) []findingCategory {
 	categories := make([]findingCategory, 0, len(findingCategoryOrder))
 	for _, definition := range findingCategoryOrder {

@@ -247,6 +247,139 @@ func waitForBatch(t *testing.T, m *model) {
 	m.quitAfterCancel = false
 }
 
+func TestCompletedDefaultEnumerationRestoresToolRunnerNavigation(t *testing.T) {
+	log := &executionLog{}
+	profileIDs := []string{"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami"}
+	registered := make([]modules.Module, 0, len(profileIDs))
+	ids := make([]int64, 0, len(profileIDs))
+	for index, id := range profileIDs {
+		registered = append(registered, selectionModule{id: id, family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log})
+		ids = append(ids, int64(index+1))
+	}
+	m := newModel(context.Background(), testConfig(t), nil, registered, ids, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	m.focus = focusModules
+	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	if !m.running || m.batch == nil {
+		t.Fatalf("default enumeration did not start: status=%q focus=%v modules=%d plan=%+v", m.status, m.focus, len(m.modules), m.globalPlan())
+	}
+	m.focus = focusNavigation
+
+	if _, command := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlW}); command != nil || !m.watcher {
+		t.Fatal("watcher did not open during enumeration")
+	}
+	if err := m.batch.Wait(context.Background()); err != nil {
+		t.Fatalf("batch did not finish: %v", err)
+	}
+	m.syncBatch()
+	if m.running {
+		t.Fatal("completed enumeration still reports running")
+	}
+	m.closeWatcher()
+	if m.watcher || m.focus != focusModules || m.approvalPrompt || m.inputPrompt || m.pending.indices != nil {
+		t.Fatalf("completed enumeration restored the wrong pane: watcher=%v focus=%v", m.watcher, m.focus)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if !m.findingsView {
+		t.Fatal("Finder was not accessible after enumeration")
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.findingsView {
+		t.Fatal("Finder did not close explicitly after enumeration")
+	}
+	seen := make(map[string]bool, len(m.batchItems))
+	for _, item := range m.batchItems {
+		if seen[item.Module.ID()] {
+			t.Fatalf("completed enumeration queued a duplicate module: %q", item.Module.ID())
+		}
+		seen[item.Module.ID()] = true
+	}
+
+	before := m.cursor
+	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	if len(m.modules) < 2 || m.cursor == before {
+		t.Fatalf("tool selection is not interactive after completion: modules=%d cursor=%d", len(m.modules), m.cursor)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusOutput {
+		t.Fatalf("Tab did not follow existing focus order from Tool Runner: %v", m.focus)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.focus != focusModules {
+		t.Fatalf("Shift+Tab did not return to Tool Runner: %v", m.focus)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if m.focus != focusNavigation {
+		t.Fatalf("could not reach tool-category navigation after completion: %v", m.focus)
+	}
+	categoryBefore := m.categoryIndex
+	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+	if m.categoryIndex == categoryBefore && len(m.categories) > 1 {
+		t.Fatal("tool category navigation remained locked after completion")
+	}
+
+	m.setToolFamily(0)
+	m.setCategory(0)
+	m.setProtocol(0)
+	m.focus = focusModules
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.running {
+		t.Fatal("Enter did not remain usable in Tool Runner after completion")
+	}
+	m.cancelBatch()
+	waitForBatch(t, m)
+	if len(m.batchItems) == 0 || m.running || m.watcher || m.approvalPrompt || m.inputPrompt {
+		t.Fatal("completion left no executable selection")
+	}
+}
+
+func TestGlobalShortcutsWorkFromNavigationPane(t *testing.T) {
+	log := &executionLog{}
+	profileIDs := []string{"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami"}
+	registered := make([]modules.Module, 0, len(profileIDs))
+	ids := make([]int64, 0, len(profileIDs))
+	for index, id := range profileIDs {
+		registered = append(registered, selectionModule{id: id, family: modules.ToolFamilyNetExec, category: modules.CategoryEnumeration, protocol: modules.ProtocolLDAP, log: log})
+		ids = append(ids, int64(index+1))
+	}
+	m := newModel(context.Background(), testConfig(t), nil, registered, ids, 1, "test")
+	m.width, m.height = 150, 50
+	m.resizeOutput()
+	if m.focus != focusNavigation {
+		t.Fatalf("test did not start in navigation focus: %v", m.focus)
+	}
+	dispatch := func(key tea.KeyType) {
+		updated, _ := m.Update(tea.KeyMsg{Type: key})
+		m = updated.(*model)
+	}
+
+	dispatch(tea.KeyCtrlW)
+	if !m.watcher {
+		t.Fatal("Ctrl+W from navigation did not open Watcher")
+	}
+	dispatch(tea.KeyCtrlW)
+	if m.watcher || m.focus != focusNavigation {
+		t.Fatal("Ctrl+W did not preserve Watcher close behavior")
+	}
+	dispatch(tea.KeyCtrlF)
+	if !m.findingsView {
+		t.Fatal("Ctrl+F from navigation did not open Finder")
+	}
+	dispatch(tea.KeyEscape)
+	if m.findingsView {
+		t.Fatal("Finder did not close explicitly")
+	}
+	dispatch(tea.KeyCtrlA)
+	if !m.running || m.batch == nil || m.batchName != "Default Enumeration" || len(m.batchItems) != len(profileIDs) {
+		t.Fatalf("Ctrl+A from navigation did not start the fixed profile: running=%v batch=%v name=%q items=%d", m.running, m.batch != nil, m.batchName, len(m.batchItems))
+	}
+	m.cancelBatch()
+	waitForBatch(t, m)
+}
+
 func batchIDs(m *model) []string {
 	ids := make([]string, 0, len(m.batchItems))
 	for _, item := range m.batchItems {

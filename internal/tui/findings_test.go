@@ -1405,10 +1405,83 @@ func TestFindingsArrowAliasesFollowEnterAndEsc(t *testing.T) {
 	if m.findingTieringView || !m.findingSubcategoryView || m.findingCategory != "active_directory" {
 		t.Fatal("left did not return to Active Directory")
 	}
-	root := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
-	_, command := root.handleFindingsKey("left")
-	if command != nil {
-		t.Fatal("left at Findings root unexpectedly quit the application")
+	root := &model{findingsView: true, findingCategoryView: true, findingCursor: 4, findingTop: 2, width: 100, height: 24}
+	for attempt := 0; attempt < 3; attempt++ {
+		_, command := root.handleFindingsKey("left")
+		if command != nil || !root.findingsView || root.findingCategory != "" || !root.findingCategoryView || root.findingCursor != 4 || root.findingTop != 2 {
+			t.Fatal("left at Findings root escaped or changed the root view")
+		}
+	}
+	root.handleFindingsKey("esc")
+	if root.findingsView {
+		t.Fatal("explicit Escape did not leave Findings from the root")
+	}
+}
+
+func TestFindingsLeftBoundaryThroughTopLevelUpdate(t *testing.T) {
+	row := storage.Finding{FindingInput: storage.FindingInput{FindingType: "ad_protected_accounts_context", Title: "Protected account context", Severity: "informational"}}
+	m := &model{
+		findingCategories: []findingCategory{{Key: "active_directory", Name: "Active Directory"}},
+		findingAllRows:    []storage.Finding{row},
+		findingRows:       []storage.Finding{row},
+		findingsLoaded:    true,
+		width:             120,
+		height:            30,
+	}
+	dispatch := func(key tea.KeyType) {
+		updated, _ := m.Update(tea.KeyMsg{Type: key})
+		m = updated.(*model)
+	}
+
+	dispatch(tea.KeyCtrlF)
+	if !m.findingsView || !m.findingCategoryView {
+		t.Fatal("Ctrl+F did not open Finder at its category root")
+	}
+	dispatch(tea.KeyRight)
+	dispatch(tea.KeyRight)
+	dispatch(tea.KeyRight)
+	if !m.findingDetail {
+		t.Fatal("top-level Finder route did not reach nested detail")
+	}
+	dispatch(tea.KeyLeft)
+	dispatch(tea.KeyLeft)
+	dispatch(tea.KeyLeft)
+	if !m.findingsView || m.findingCategory != "" {
+		t.Fatal("top-level Left route did not return to Finder root")
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		dispatch(tea.KeyLeft)
+		if !m.findingsView {
+			t.Fatalf("Left escaped Finder at root on attempt %d", attempt+1)
+		}
+	}
+	dispatch(tea.KeyEscape)
+	if m.findingsView {
+		t.Fatal("Escape did not explicitly leave Finder")
+	}
+
+	for _, testCase := range []struct {
+		name        string
+		root        *model
+		cursor, top int
+	}{
+		{"alternate root", &model{findingsView: true, findingCategoryView: false, findingCursor: 2, findingTop: 1, focus: focusOutput, width: 80, height: 24}, 2, 1},
+		{"watcher-origin root", &model{findingsView: true, findingsFromWatcher: true, findingCategoryView: false, findingCursor: 3, findingTop: 2, focus: focusModules, width: 80, height: 24}, 3, 2},
+	} {
+		root := testCase.root
+		for attempt := 0; attempt < 10; attempt++ {
+			updated, command := root.Update(tea.KeyMsg{Type: tea.KeyLeft})
+			root = updated.(*model)
+			if command != nil {
+				if message := command(); message != nil {
+					updated, _ = root.Update(message)
+					root = updated.(*model)
+				}
+			}
+			if !root.findingsView || root.watcher || root.findingCategory != "" || root.findingDetail || root.findingCursor != testCase.cursor || root.findingTop != testCase.top || root.focus != testCase.root.focus {
+				t.Fatalf("%s Left changed Finder root state on attempt %d: findings=%v watcher=%v category=%q detail=%v cursor=%d top=%d focus=%v", testCase.name, attempt+1, root.findingsView, root.watcher, root.findingCategory, root.findingDetail, root.findingCursor, root.findingTop, root.focus)
+			}
+		}
 	}
 }
 
