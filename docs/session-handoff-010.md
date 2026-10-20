@@ -8,11 +8,11 @@ PwnFlow is an enumeration, safe-validation, evidence-analysis and reporting appl
 - Remote: `git@github.com:Lmarkussen/PwnFlow.git`
 - Kali source-copy: `/home/kali/PwnFlow`
 - Kali executable: `/home/kali/PwnFlow/bin/pwnflow`
-- Kali host: `kali@100.72.35.81`
+- Kali host: the operator-authorized SSH endpoint (supplied at runtime; not stored in tracked documentation)
 - Current development/origin commit: `1fd18742961618bdb99a8ac720904cbfe8d52584`
 - Kali is deliberately non-Git; source-manifest hashes are the deployment parity check.
 
-Only the authorized disposable lab is in scope: `sccm.lab`, DC `10.1.10.40`, SCCM/PXE `10.1.10.41`, MSSQL/member server `10.1.10.42`, and workstation `10.1.10.43`. Do not expand scope, authenticate elsewhere, or run full enumeration without explicit operator authorization.
+Only the authorized disposable lab is in scope: `sccm.lab`, its domain controller, SCCM/PXE host, MSSQL/member server and workstation (addresses supplied at runtime; not stored in tracked documentation). Do not expand scope, authenticate elsewhere, or run full enumeration without explicit operator authorization.
 
 ## Milestones and acceptance
 
@@ -44,7 +44,7 @@ Spider Plus invokes one `nxc smb <host> -M spider_plus` process per discovered h
 
 ## 009F runtime investigation and resolution
 
-The latest Kali artifact was read-only inspected. NetworkHound supplied four TCP/445 targets: `10.1.10.40` through `10.1.10.43`. The Spider Plus execution began at `21:48:15.004`, was cancelled at `21:49:54.873`, and recorded `99,868 ms`. Its transcript reached target `1/4`; it was not a completed four-host run. The operator's approximately 20-second manual result was a single-host comparison.
+The latest Kali artifact was read-only inspected. NetworkHound supplied four in-scope TCP/445 targets. The Spider Plus execution began at `21:48:15.004`, was cancelled at `21:49:54.873`, and recorded `99,868 ms`. Its transcript reached target `1/4`; it was not a completed four-host run. The operator's approximately 20-second manual result was a single-host comparison.
 
 The root cause was PwnFlow's serial per-host loop, not a hidden parser or UI delay. Commit `7782264` changed execution to bounded concurrency (maximum four workers), synchronized shared output, added per-host progress/timing, and preserved the ten-minute global timeout and cancellation. Regression tests cover multi-host overlap, ordering, cancellation and timeout cleanup.
 

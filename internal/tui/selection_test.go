@@ -266,8 +266,8 @@ func TestCompletedDefaultEnumerationRestoresToolRunnerNavigation(t *testing.T) {
 	}
 	m.focus = focusNavigation
 
-	if _, command := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlW}); command != nil || !m.watcher {
-		t.Fatal("watcher did not open during enumeration")
+	if !m.watcher {
+		t.Fatal("Default Enumeration did not open Watcher after setup")
 	}
 	if err := m.batch.Wait(context.Background()); err != nil {
 		t.Fatalf("batch did not finish: %v", err)

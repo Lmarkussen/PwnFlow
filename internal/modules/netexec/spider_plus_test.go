@@ -247,3 +247,22 @@ func TestSpiderPlusTargetWorkersRespectTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestSpiderPlusPerHostDeadlineStopsSlowTarget(t *testing.T) {
+	module := spiderPlusModuleForTest(t)
+	previous := spiderPlusPerHostLimit
+	spiderPlusPerHostLimit = 35 * time.Millisecond
+	defer func() { spiderPlusPerHostLimit = previous }()
+
+	started := time.Now()
+	results := module.runSpiderTargets(context.Background(), &modules.Runtime{}, &bytes.Buffer{}, []string{"198.51.100.40"}, func(ctx context.Context, _ *modules.Runtime, _ modules.OutputSink) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("per-host deadline took too long to stop target: %s", elapsed)
+	}
+	if len(results) != 1 || !errors.Is(results[0].err, context.DeadlineExceeded) {
+		t.Fatalf("slow target result=%#v, want deadline exceeded", results)
+	}
+}

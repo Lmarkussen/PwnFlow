@@ -101,7 +101,7 @@ func (FTPAnonymousAccess) StatusReason(runtime *modules.Runtime) string {
 	if discovered, _ := discoveredEndpoints(runtime); len(discovered) > 0 {
 		return "using current NetworkHound open TCP/21 endpoints"
 	}
-	return "SKIPPED — NetworkHound discovery unavailable or no open FTP endpoints found"
+	return "SKIPPED — NetworkHound FTP discovery evidence unavailable or no confirmed open TCP/21 endpoints"
 }
 func (FTPAnonymousAccess) ValidateOptionValue(key, value string) error {
 	if key != ftpEndpointOption {
@@ -212,22 +212,22 @@ func selectedEndpoints(runtime *modules.Runtime) ([]string, string) {
 
 func discoveredEndpoints(runtime *modules.Runtime) ([]string, string) {
 	if runtime == nil {
-		return nil, "SKIPPED — NetworkHound discovery unavailable"
+		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable"
 	}
 	path, ok := "", false
 	if runtime.BatchArtifacts != nil {
 		path, ok = runtime.BatchArtifacts["networkhound-scope-validation"]
 	}
 	if !ok {
-		return nil, "SKIPPED — NetworkHound discovery unavailable"
+		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable"
 	}
 	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
 	endpoints, err := networkhound.OpenFTPEndpoints(path, scope)
 	if err != nil {
-		return nil, "SKIPPED — NetworkHound discovery unavailable"
+		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable: " + err.Error()
 	}
 	if len(endpoints) == 0 {
-		return nil, "SKIPPED — No open FTP endpoints found"
+		return nil, "SKIPPED — No confirmed open FTP endpoints in current NetworkHound results."
 	}
 	return endpoints, "NetworkHound"
 }

@@ -361,7 +361,7 @@ func TestExecutionAfterScrolling(t *testing.T) {
 	// by scrolling.
 	press(t, m, "end")
 	press(t, m, "up")
-	highlighted := registered[m.cursor].ID()
+	highlighted := m.modules[m.cursor].ID()
 	if highlighted == "nxc-ldap-users" {
 		t.Fatal("the test needs the highlight on a module that records its own run")
 	}
@@ -375,6 +375,7 @@ func TestExecutionAfterScrolling(t *testing.T) {
 	m.running = false
 
 	// A scoped run after scrolling runs the visible scope's modules, in order.
+	beforeScoped := len(log.executed())
 	press(t, m, "ctrl+a")
 	if !m.running || len(m.batchItems) != len(registered) {
 		t.Fatalf("A ran %d modules, want %d", len(m.batchItems), len(registered))
@@ -384,7 +385,7 @@ func TestExecutionAfterScrolling(t *testing.T) {
 	}
 	m.running = false
 	ran := log.executed()
-	if len(ran) != 2 {
+	if len(ran)-beforeScoped != 2 {
 		t.Fatalf("the scoped run should have executed both recording modules, got %v", ran)
 	}
 

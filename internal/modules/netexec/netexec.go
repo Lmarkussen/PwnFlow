@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -604,6 +605,7 @@ func (m Module) runSpiderPlus(ctx context.Context, runtime *modules.Runtime, sin
 	}
 	if len(failures) > 0 {
 		fmt.Fprintf(sink, "[i] spider_plus partial completion; failed targets: %s\n", strings.Join(failures, "; "))
+		return fmt.Errorf("spider_plus partial completion: %d of %d targets failed: %s", len(failures), len(targets), strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -654,7 +656,12 @@ func (m Module) runSpiderTargets(ctx context.Context, runtime *modules.Runtime, 
 				copyRuntime.Target = target
 				started := time.Now()
 				fmt.Fprintf(output, "[i] spider_plus target %d/%d: %s\n", index+1, len(targets), target)
-				err := run(ctx, &copyRuntime, output)
+				targetContext, cancel := context.WithTimeout(ctx, spiderPlusPerHostLimit)
+				err := run(targetContext, &copyRuntime, output)
+				cancel()
+				if errors.Is(targetContext.Err(), context.DeadlineExceeded) && err == nil {
+					err = targetContext.Err()
+				}
 				elapsed := time.Since(started).Round(time.Millisecond)
 				if err != nil {
 					fmt.Fprintf(output, "[!] spider_plus target %d/%d: %s failed after %s\n", index+1, len(targets), target, elapsed)
@@ -760,6 +767,7 @@ func endpointParts(endpoint string) (string, string) {
 }
 
 var spiderPlusWallClockLimit = 10 * time.Minute
+var spiderPlusPerHostLimit = 60 * time.Second
 var spiderPlusConcurrency = 4
 
 func minInt(left, right int) int {

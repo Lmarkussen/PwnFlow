@@ -405,6 +405,12 @@ func (m *model) continuePlan() tea.Cmd {
 		return nil
 	}
 	command := m.startBatch(p.indices, p.name)
+	if m.running && p.name == "Default Enumeration" {
+		// Once all pre-run input, approval, and elevation prompts are complete,
+		// move the operator directly to the live batch dashboard. The batch keeps
+		// running if the operator later leaves Watcher.
+		m.openWatcher()
+	}
 	// The batch reports "running"; the plan line stays with it, so the operator
 	// can still see what the run covers. An elevation prompt keeps its own text.
 	if m.running && m.planLine != "" {

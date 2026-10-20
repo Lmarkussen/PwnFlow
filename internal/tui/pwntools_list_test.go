@@ -33,11 +33,12 @@ func TestPwnToolsModuleListShowsBothPrerequisiteIndicators(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rendered %d PwnTools rows, want 2:\n%s", len(rows), frame)
 	}
-	if !strings.Contains(rows[0], "SPHunter Microsoft 365") || !strings.Contains(rows[0], "INPUT-REQ") {
-		t.Fatalf("SPHunter row does not show INPUT-REQ: %q", rows[0])
+	joined := strings.Join(rows, "\n")
+	if !strings.Contains(joined, "SPHunter Microsoft 365") || !strings.Contains(joined, "INPUT-REQ") {
+		t.Fatalf("SPHunter row does not show INPUT-REQ:\n%s", joined)
 	}
-	if !strings.Contains(rows[1], "AD Writable Object Assessment") || !strings.Contains(rows[1], "RUSTHOUND-REQ") {
-		t.Fatalf("AD Writable Objects row does not show RUSTHOUND-REQ: %q", rows[1])
+	if !strings.Contains(joined, "AD Writable Object Assessment") || !strings.Contains(joined, "RUSTHOUND-REQ") {
+		t.Fatalf("AD Writable Objects row does not show RUSTHOUND-REQ:\n%s", joined)
 	}
 }
 

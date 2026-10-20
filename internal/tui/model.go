@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -360,6 +362,30 @@ func (m *model) filterModules() {
 			m.moduleKeys = append(m.moduleKeys, globalIndex)
 		}
 	}
+	// Keep the registry order authoritative for execution, but make each visible
+	// Tool Runner list predictable: native commands first, then registered
+	// NetExec -M modules, with case-insensitive display-name ordering in each
+	// group. The parallel moduleKeys slice preserves selection identity.
+	sort.SliceStable(m.modules, func(left, right int) bool {
+		leftModule, rightModule := m.modules[left], m.modules[right]
+		leftGroup := moduleListGroup(leftModule)
+		rightGroup := moduleListGroup(rightModule)
+		if leftGroup != rightGroup {
+			return leftGroup < rightGroup
+		}
+		return strings.ToLower(leftModule.Name()) < strings.ToLower(rightModule.Name())
+	})
+	// Sorting the modules above must move their identity companions with them.
+	// Rebuild the visible slices from the sorted module IDs rather than allowing
+	// a visual reorder to change which registry entry Enter or Space addresses.
+	keysByID := make(map[string]int, len(m.moduleKeys))
+	for _, key := range m.moduleKeys {
+		keysByID[m.allModules[key].ID()] = key
+	}
+	for index, module := range m.modules {
+		m.moduleKeys[index] = keysByID[module.ID()]
+		m.moduleIDs[index] = m.allModuleIDs[m.moduleKeys[index]]
+	}
 	// A different scope is a different list, so it starts at the top: a position
 	// carried over from another scope means nothing here, and keeping the old
 	// offset is what used to leave the highlight outside the pane.
@@ -369,6 +395,15 @@ func (m *model) filterModules() {
 	m.watcherSelected = min(m.watcherSelected, max(0, len(m.allModules)-1))
 	m.moduleTop = 0
 	m.scrollModuleList()
+}
+
+type netExecModuleMetadata interface{ ModuleName() string }
+
+func moduleListGroup(module modules.Module) int {
+	if metadata, ok := module.(netExecModuleMetadata); ok && strings.TrimSpace(metadata.ModuleName()) != "" {
+		return 1
+	}
+	return 0
 }
 
 // globalIndex maps a module row in the visible scope to its index in the

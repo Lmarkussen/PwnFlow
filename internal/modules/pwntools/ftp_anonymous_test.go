@@ -162,7 +162,7 @@ func TestFTPAnonymousMissingDiscoverySkipsWithoutEndpoint(t *testing.T) {
 	runtime := &modules.Runtime{BatchArtifacts: map[string]string{}}
 	err := (FTPAnonymousAccess{}).Check(context.Background(), runtime)
 	var skipped modules.SkipError
-	if !errors.As(err, &skipped) || !strings.Contains(skipped.Error(), "NetworkHound discovery unavailable") {
+	if !errors.As(err, &skipped) || !strings.Contains(skipped.Error(), "NetworkHound FTP discovery evidence unavailable") {
 		t.Fatalf("error=%v, want discovery skip", err)
 	}
 }
