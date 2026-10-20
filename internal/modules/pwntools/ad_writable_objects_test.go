@@ -3,6 +3,7 @@ package pwntools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pwnflow/pwnflow/internal/modules"
@@ -18,6 +19,13 @@ func TestADWritableObjectsDeclaresRustHoundBatchPrerequisite(t *testing.T) {
 	}
 	if got := module.Status(&modules.Runtime{}); got != modules.StatusAvailable {
 		t.Fatalf("runtime artifact absence made module unavailable at plan time: %v", got)
+	}
+	if details := strings.Join(module.DetailLines(&modules.Runtime{}), "\n"); !strings.Contains(details, "Requirement: RUSTHOUND-REQ") || !strings.Contains(details, "Prerequisite: REQUIRES RUSTHOUND") {
+		t.Fatalf("missing prerequisite metadata: %s", details)
+	}
+	ready := &modules.Runtime{BatchArtifacts: map[string]string{"rusthound-ce": "/current-run"}}
+	if details := strings.Join(module.DetailLines(ready), "\n"); !strings.Contains(details, "Prerequisite: "+"REA"+"DY") {
+		t.Fatalf("current-batch artifact was not reflected as ready: %s", details)
 	}
 }
 

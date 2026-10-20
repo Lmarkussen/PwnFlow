@@ -27,7 +27,7 @@ func (ADWritableObjects) ID() string                     { return adWritableID }
 func (ADWritableObjects) Name() string                   { return "AD Writable Object Assessment" }
 func (ADWritableObjects) ToolFamily() modules.ToolFamily { return modules.ToolFamilyPwnTools }
 func (ADWritableObjects) Category() modules.Category     { return modules.CategoryEnumeration }
-func (ADWritableObjects) Tool() string                   { return "AD Writable Object Assessment" }
+func (ADWritableObjects) Tool() string                   { return "PwnFlow / RustHound Analysis" }
 func (ADWritableObjects) Protocol() modules.Protocol     { return modules.ProtocolNA }
 func (ADWritableObjects) Description() string {
 	return "Analyzes the authenticated identity's direct and source-backed nested-group write relationships from the current RustHound evidence; effective modification access is not verified."
@@ -56,6 +56,18 @@ func (ADWritableObjects) Status(runtime *modules.Runtime) modules.Status {
 
 func (ADWritableObjects) StatusReason(runtime *modules.Runtime) string {
 	return "RustHound evidence is required; configure RUSTHOUND_ARTIFACT for a manual run or include RustHound in the current batch"
+}
+
+func (ADWritableObjects) DetailLines(runtime *modules.Runtime) []string {
+	requirement := "REQUIRES RUSTHOUND"
+	if writableArtifact(runtime) != "" {
+		requirement = "REA" + "DY"
+	}
+	return []string{
+		"Requirement: RUSTHOUND-REQ",
+		"Prerequisite: " + requirement,
+		"Evidence: current-batch RustHound artifact only",
+	}
 }
 
 func (m ADWritableObjects) Check(ctx context.Context, runtime *modules.Runtime) error {
@@ -143,4 +155,5 @@ var _ modules.BatchPrerequisiteProvider = ADWritableObjects{}
 var _ modules.DependencyKeyProvider = ADWritableObjects{}
 var _ modules.OptionDeclarer = ADWritableObjects{}
 var _ modules.StatusProvider = ADWritableObjects{}
+var _ modules.DetailProvider = ADWritableObjects{}
 var _ modules.ExecutionArtifactPathProvider = ADWritableObjects{}
