@@ -23,7 +23,9 @@ package netexec
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,6 +53,9 @@ type Definition struct {
 	// keys are verified against the module's own `--options` output before they
 	// are accepted from the operator.
 	OptionKeys []string
+	// RuntimeOnlyOptions are PwnFlow policy inputs. They are displayed and
+	// validated locally, but are never forwarded to NetExec as -o values.
+	RuntimeOnlyOptions []string
 	// RequiredOptions are option keys without which the module cannot do anything
 	// meaningful. A module with an unsatisfied required option reports that it
 	// needs input - it is configurable, not unsupported - and PwnFlow asks the
@@ -68,6 +73,9 @@ type Definition struct {
 	// DynamicOptions compute their default from the runtime: the assessment's own
 	// output tree, or the account the operator authenticated with.
 	DynamicOptions map[string]func(*modules.Runtime) string
+	// ForcedOptions are integration-owned values that must never be overridden
+	// through operator module options, such as an execution-scoped artifact path.
+	ForcedOptions map[string]func(*modules.Runtime) string
 	// DynamicArgs contribute arguments that depend on the runtime, such as the
 	// file an exported hash list has to be written to.
 	DynamicArgs func(*modules.Runtime) []string
@@ -115,6 +123,24 @@ func (m Module) SecondaryConnections() []string { return nil }
 // configuration against.
 func (m Module) OptionKeys() []string {
 	return append([]string(nil), m.definition.OptionKeys...)
+}
+
+func (m Module) RuntimeOptionKeys() []string {
+	return append([]string(nil), m.definition.RuntimeOnlyOptions...)
+}
+
+func (m Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
+	if m.ID() != "smb-spider-plus" {
+		return false, ""
+	}
+	if runtime == nil {
+		return true, "requires explicit approval for the exact authorized SMB target scope"
+	}
+	scope, ok := m.optionValue(runtime, "AUTHORIZED_SCOPE")
+	if !ok || !scopeAllowsTarget(scope, runtime.Target) {
+		return true, "requires explicit approval for the exact authorized SMB target scope"
+	}
+	return true, "recursively reads SMB metadata within the explicitly authorized target scope"
 }
 
 // ModuleName is the `-M` value, exposed so the inventory tooling and the tests
@@ -290,10 +316,26 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if reason := m.missingOptionReason(runtime); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
+	if m.ID() == "smb-spider-plus" {
+		scope, _ := m.optionValue(runtime, "AUTHORIZED_SCOPE")
+		if !scopeAllowsTarget(scope, runtime.Target) {
+			return fmt.Errorf("AUTHORIZED_SCOPE must explicitly include the exact SMB target %q", runtime.Target)
+		}
+	}
 	if reason := m.missingArgumentReason(runtime); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
 	return nil
+}
+
+func spiderOutputFolder(runtime *modules.Runtime) string {
+	if runtime != nil && runtime.ExecutionOutputPath != "" {
+		return filepath.Dir(runtime.ExecutionOutputPath)
+	}
+	if runtime == nil || runtime.ResultsRoot == "" {
+		return ""
+	}
+	return filepath.Join(runtime.ResultsRoot, "Enumeration", "NetExec", "SMB_spider_plus", "pending")
 }
 
 // checkCapabilities performs the live probe. It reuses the cached snapshot when
@@ -472,7 +514,21 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 func (m Module) optionArgs(runtime *modules.Runtime) []string {
 	values := make([]string, 0, len(m.definition.OptionKeys))
 	for _, key := range m.definition.OptionKeys {
+		if containsString(m.definition.RuntimeOnlyOptions, key) {
+			continue
+		}
 		if value, ok := m.optionValue(runtime, key); ok {
+			values = append(values, key+"="+value)
+		}
+	}
+	forcedKeys := make([]string, 0, len(m.definition.ForcedOptions))
+	for key := range m.definition.ForcedOptions {
+		forcedKeys = append(forcedKeys, key)
+	}
+	sort.Strings(forcedKeys)
+	for _, key := range forcedKeys {
+		compute := m.definition.ForcedOptions[key]
+		if value := compute(runtime); value != "" {
 			values = append(values, key+"="+value)
 		}
 	}
@@ -482,14 +538,89 @@ func (m Module) optionArgs(runtime *modules.Runtime) []string {
 	return append([]string{"-o"}, values...)
 }
 
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Module) ExecutionArtifactPath(resultsRoot string, started time.Time) string {
+	if m.ID() != "smb-spider-plus" {
+		return filepath.Join(resultsRoot, m.OutputFile())
+	}
+	stamp := started.UTC().Format("20060102-150405.000000000")
+	return filepath.Join(resultsRoot, "Enumeration", "NetExec", "SMB_spider_plus", "executions", stamp, "transcript.txt")
+}
+
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
-	cmd := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
+	runContext := ctx
+	cancel := func() {}
+	if m.ID() == "smb-spider-plus" {
+		runContext, cancel = context.WithTimeout(ctx, spiderPlusWallClockLimit)
+		defer cancel()
+	}
+	cmd := process.Command(runContext, "nxc", m.CommandArgs(runtime)...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	started := time.Now()
-	if err := process.Wait(ctx, cmd); err != nil {
+	if err := process.Wait(runContext, cmd); err != nil {
+		if m.ID() == "smb-spider-plus" {
+			writeSpiderSummary(runtime, sink)
+		}
+		if m.ID() == "smb-spider-plus" && runContext.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("spider_plus timed out after %s: %w", spiderPlusWallClockLimit, err)
+		}
 		return fmt.Errorf("netexec failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 	}
+	if m.ID() == "smb-spider-plus" {
+		writeSpiderSummary(runtime, sink)
+	}
 	return nil
+}
+
+var spiderPlusWallClockLimit = 10 * time.Minute
+
+func scopeAllowsTarget(scope, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, item := range strings.Split(scope, ",") {
+		if strings.EqualFold(strings.TrimSpace(item), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeSpiderSummary(runtime *modules.Runtime, sink modules.OutputSink) {
+	if runtime == nil || runtime.ExecutionOutputPath == "" {
+		return
+	}
+	folder := filepath.Dir(runtime.ExecutionOutputPath)
+	paths, _ := filepath.Glob(filepath.Join(folder, "*.json"))
+	if len(paths) == 0 {
+		_, _ = sink.Write([]byte("\nSPIDER_PLUS SUMMARY\nMetadata JSON: not produced\n"))
+		return
+	}
+	var totalShares, totalFiles int
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var shares map[string]map[string]json.RawMessage
+		if json.Unmarshal(data, &shares) != nil {
+			continue
+		}
+		totalShares += len(shares)
+		for _, files := range shares {
+			totalFiles += len(files)
+		}
+	}
+	_, _ = sink.Write([]byte(fmt.Sprintf("\nSPIDER_PLUS SUMMARY\nMetadata JSON files: %d\nShares recorded: %d\nFile metadata records: %d\nContents downloaded: no (DOWNLOAD_FLAG is not exposed)\n", len(paths), totalShares, totalFiles)))
 }
 
 func categoryPath(category modules.Category) string {

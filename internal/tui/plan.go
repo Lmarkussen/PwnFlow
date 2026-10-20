@@ -67,6 +67,7 @@ var defaultEnumerationModuleIDs = []string{
 	"sphunter-tenant-discovery",
 	"ad-writable-objects",
 	"ftp-anonymous-access",
+	"smb-spider-plus",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing

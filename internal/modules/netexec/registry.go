@@ -26,8 +26,9 @@ type entry struct {
 	// options are the module option keys accepted from the operator through
 	// --module-options; required lists the subset without which the module
 	// cannot do anything, and they were taken from the module's own --options.
-	options  []string
-	required []string
+	options     []string
+	required    []string
+	runtimeOnly []string
 	// inputUsage explains each required option in one sentence, which is what the
 	// interactive prompt shows the operator.
 	inputUsage map[string]string
@@ -39,6 +40,7 @@ type entry struct {
 	// configuring anything first.
 	optionDefaults map[string]string
 	dynamicOptions map[string]func(*modules.Runtime) string
+	forcedOptions  map[string]func(*modules.Runtime) string
 	// dynamicArgs contribute runtime-dependent arguments.
 	dynamicArgs func(*modules.Runtime) []string
 	// sensitive marks a module whose output is credential material.
@@ -76,7 +78,8 @@ func (e entry) definition() Definition {
 		CategoryValue: e.category, ProtocolValue: e.protocol,
 		Arguments: e.args, ModuleName: e.module,
 		OptionKeys: e.options, RequiredOptions: e.required, InputUsage: e.inputUsage,
-		OptionDefaults: e.optionDefaults, DynamicOptions: e.dynamicOptions,
+		RuntimeOnlyOptions: e.runtimeOnly,
+		OptionDefaults:     e.optionDefaults, DynamicOptions: e.dynamicOptions, ForcedOptions: e.forcedOptions,
 		DynamicArgs: e.dynamicArgs,
 		OutputValue: output, PrerequisiteValues: prerequisites,
 		RequiredPrivilegeValues: privileges,

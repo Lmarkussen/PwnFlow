@@ -31,6 +31,13 @@ func SMBEnumerationModules() []modules.Module {
 			args:        []string{"--shares"}, output: "SMB_shares.txt",
 		},
 		{
+			id: "smb-spider-plus", name: "SMB Spider Plus",
+			description: "Recursively inventories metadata from readable SMB shares without downloading file contents. It requires an explicitly authorized exact target scope and an operator approval because traversal cost is target-dependent.",
+			module:      "spider_plus", required: []string{"AUTHORIZED_SCOPE"}, runtimeOnly: []string{"AUTHORIZED_SCOPE"},
+			inputUsage:    map[string]string{"AUTHORIZED_SCOPE": "the exact SMB target authorized for metadata traversal; comma-separated targets are accepted"},
+			forcedOptions: map[string]func(*modules.Runtime) string{"OUTPUT_FOLDER": spiderOutputFolder},
+		},
+		{
 			id: "smb-disks", name: "SMB Disks",
 			description: "Enumerates local disks through --disks.",
 			args:        []string{"--disks"}, output: "SMB_disks.txt",

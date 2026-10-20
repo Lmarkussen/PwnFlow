@@ -89,7 +89,6 @@ var excludedModules = map[string]string{
 	"smb:pass-pol":        "duplicate: LDAP --pass-pol reads the domain policy over LDAPS",
 	"smb:rid-brute":       "duplicate: LDAP --users enumerates the same accounts without a RID walk",
 	"smb:test_connection": "needs-operator-value: pings a host the operator names, which is a probe rather than target enumeration",
-	"smb:spider_plus":     "duplicate: the option surface is a file collector, and the crawl duplicates the operator's dedicated share tooling",
 	"smb:sam":             "credential-dump: local account hashes",
 	"smb:lsa":             "credential-dump: LSA secrets",
 	"smb:ntds":            "credential-dump: directory database hashes",
@@ -350,7 +349,7 @@ func TestModuleOptionsAreDeclaredConsistently(t *testing.T) {
 			declared[key] = true
 		}
 		for _, key := range entry.definition.RequiredOptions {
-			if !declared[key] {
+			if !declared[key] && !containsString(entry.definition.RuntimeOnlyOptions, key) {
 				t.Fatalf("%s requires option %s without declaring it", entry.ID(), key)
 			}
 		}

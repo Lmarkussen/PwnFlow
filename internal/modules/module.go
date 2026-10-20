@@ -403,6 +403,14 @@ type OptionDeclarer interface {
 	OptionKeys() []string
 }
 
+// RuntimeOptionDeclarer exposes configuration consumed by PwnFlow itself rather
+// than forwarded to the underlying tool. It lets startup validation accept
+// policy inputs such as an authorized target scope without treating them as
+// third-party command options.
+type RuntimeOptionDeclarer interface {
+	RuntimeOptionKeys() []string
+}
+
 // OptionWarnings reports configured module options that no registration will
 // use: an unknown module ID, or an option key the module does not declare.
 // Passing an unknown `-o` key would do nothing at all on the target, so the
@@ -433,7 +441,11 @@ func OptionWarnings(registered []Module, options map[string]map[string]string) [
 			continue
 		}
 		declared := make(map[string]bool)
-		for _, key := range declarer.OptionKeys() {
+		declaredKeys := append([]string(nil), declarer.OptionKeys()...)
+		if runtimeDeclarer, ok := module.(RuntimeOptionDeclarer); ok {
+			declaredKeys = append(declaredKeys, runtimeDeclarer.RuntimeOptionKeys()...)
+		}
+		for _, key := range declaredKeys {
 			declared[key] = true
 		}
 		keys := make([]string, 0, len(options[id]))
