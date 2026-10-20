@@ -235,5 +235,11 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if err := process.Wait(ctx, command); err != nil {
 		return fmt.Errorf("RustHound-CE failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 	}
+	if runtime != nil {
+		if runtime.BatchArtifacts == nil {
+			runtime.BatchArtifacts = make(map[string]string)
+		}
+		runtime.BatchArtifacts[moduleID] = runDirectory
+	}
 	return nil
 }

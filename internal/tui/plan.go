@@ -65,6 +65,7 @@ var defaultEnumerationModuleIDs = []string{
 	// protocol authentication and must not be duplicated here.
 	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 	"sphunter-tenant-discovery",
+	"ad-writable-objects",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing

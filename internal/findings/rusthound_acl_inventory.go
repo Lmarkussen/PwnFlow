@@ -33,6 +33,7 @@ const (
 var inventoryRights = map[string]bool{
 	"genericall": true, "genericwrite": true, "writedacl": true, "writeowner": true,
 	"owns": true, "writeproperty": true, "addmember": true, "addself": true,
+	"createchild": true, "deletechild": true, "validatedwrite": true,
 	"forcechangepassword": true, "allextendedrights": true, "addkeycredentiallink": true,
 	"writespn": true, "getchanges": true, "getchangesall": true,
 	"getchangesinfilteredset": true, "addallowedtoact": true,
@@ -235,6 +236,17 @@ type aclInventoryObject struct {
 }
 
 func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessmentID, executionID int64, now time.Time) (ACLInventoryReport, []storage.FindingInput, error) {
+	return analyzeRustHoundACLInventory(ctx, inputPath, assessmentID, executionID, now, false)
+}
+
+// AnalyzeRustHoundACLInventoryIncludingAll retains the same normalized source
+// fields but includes non-high-value directory objects for a consumer that has
+// an explicit principal-scoped analysis use case.
+func AnalyzeRustHoundACLInventoryIncludingAll(ctx context.Context, inputPath string, assessmentID, executionID int64, now time.Time) (ACLInventoryReport, []storage.FindingInput, error) {
+	return analyzeRustHoundACLInventory(ctx, inputPath, assessmentID, executionID, now, true)
+}
+
+func analyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessmentID, executionID int64, now time.Time, includeAll bool) (ACLInventoryReport, []storage.FindingInput, error) {
 	if assessmentID <= 0 || executionID <= 0 {
 		return ACLInventoryReport{}, nil, fmt.Errorf("ACL inventory requires positive assessment and execution IDs")
 	}
@@ -323,8 +335,11 @@ func AnalyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 				continue
 			}
 			target := objects[strings.ToLower(strings.TrimSpace(object.ID))]
-			if target.Class == "" {
+			if target.Class == "" && !includeAll {
 				continue
+			}
+			if target.Class == "" {
+				target.Class = "directory_object"
 			}
 			for aceIndex, ace := range aces {
 				if err := ctx.Err(); err != nil {

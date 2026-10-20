@@ -8,8 +8,8 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 40 {
-		t.Fatalf("Default Enumeration has %d entries, want 40", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 41 {
+		t.Fatalf("Default Enumeration has %d entries, want 41", len(defaultEnumerationModuleIDs))
 	}
 	base := defaultEnumerationModuleIDs[:32]
 	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
@@ -47,6 +47,9 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	}
 	if defaultEnumerationModuleIDs[39] != "sphunter-tenant-discovery" {
 		t.Fatalf("SPHunter is not the additive entry 40: %q", defaultEnumerationModuleIDs[39])
+	}
+	if defaultEnumerationModuleIDs[40] != "ad-writable-objects" {
+		t.Fatalf("AD writable analysis is not additive entry 41: %q", defaultEnumerationModuleIDs[40])
 	}
 }
 

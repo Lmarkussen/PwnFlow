@@ -334,6 +334,25 @@ func TestRustHoundRunStreamsOutputAndReportsFailure(t *testing.T) {
 	}
 }
 
+func TestRustHoundSuccessfulRunPublishesCurrentBatchArtifact(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeRustHound(t, dir, installedHelp, `echo "collector completed"`+"\n"+`exit 0`)
+	t.Setenv("PATH", dir)
+	runtime := authorizedRuntime()
+	runtime.ResultsRoot = t.TempDir()
+	var output bytes.Buffer
+	if err := (Module{}).Run(context.Background(), runtime, &output); err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := runtime.BatchArtifacts[moduleID]
+	if !ok || artifact == "" {
+		t.Fatalf("successful run did not publish batch artifact: %#v", runtime.BatchArtifacts)
+	}
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("published artifact directory is missing: %v", err)
+	}
+}
+
 func TestRustHoundRunHonoursCancellation(t *testing.T) {
 	dir := t.TempDir()
 	// exec replaces the shell so the stand-in itself is the process that the

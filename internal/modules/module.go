@@ -294,6 +294,9 @@ type ElevationRequester interface {
 
 type Runtime struct {
 	Target, Domain, Username, Password, ResultsRoot string
+	// BatchArtifacts contains source artifacts published by earlier modules in
+	// the current sequential batch. It is never populated from historical runs.
+	BatchArtifacts map[string]string
 	// ExecutionOutputPath is set by the runner for modules that provide a
 	// per-execution artifact path. Modules should treat it as read-only.
 	ExecutionOutputPath string

@@ -221,7 +221,7 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 // moduleRuntime is the configuration modules run and report with: the operator's
 // target, domain, and credentials, and the assessment's discovery store.
 func (m *model) moduleRuntime() *modules.Runtime {
-	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot(), LDAPOptions: ldapOptions(m.cfg.LDAPOptions)}
+	runtime := &modules.Runtime{Target: m.cfg.Target, Domain: m.cfg.Domain, Username: m.cfg.Username, ResultsRoot: m.cfg.ResultsRoot(), LDAPOptions: ldapOptions(m.cfg.LDAPOptions), BatchArtifacts: make(map[string]string)}
 	// The command line wins where it supplies a value; values the operator typed
 	// in this session fill in the rest.
 	options := make(map[string]map[string]string, len(m.cfg.ModuleOptions)+len(m.moduleInputs))
