@@ -3,7 +3,11 @@ package pwntools
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +19,13 @@ type ftpMock struct {
 	listener net.Listener
 	commands chan string
 	server   *testing.T
+}
+
+type ftpOutputBuffer struct{ data []byte }
+
+func (b *ftpOutputBuffer) Write(data []byte) (int, error) {
+	b.data = append(b.data, data...)
+	return len(data), nil
 }
 
 func startFTPMock(t *testing.T, accepted bool) *ftpMock {
@@ -116,19 +127,78 @@ func TestFTPAnonymousProbeCancellation(t *testing.T) {
 func TestFTPAnonymousModuleRequiresExplicitEndpoint(t *testing.T) {
 	module := FTPAnonymousAccess{}
 	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{}}
-	if status := module.Status(runtime); status != modules.StatusInputRequired {
-		t.Fatalf("missing endpoint status=%v, want input required", status)
+	if status := module.Status(runtime); status != modules.StatusAvailable {
+		t.Fatalf("missing endpoint status=%v, want available for dependency-driven execution", status)
 	}
-	if err := module.ValidateInput(ftpEndpointOption, "10.1.10.42:21"); err != nil {
+	if err := module.ValidateInput(ftpEndpointOption, "198.51.100.42:21"); err != nil {
 		t.Fatal(err)
 	}
 	if err := module.ValidateInput(ftpEndpointOption, "sccm.lab"); err == nil {
 		t.Fatal("endpoint without an explicit port was accepted")
 	}
 	preview := module.CommandPreview(&modules.Runtime{ModuleOptions: map[string]map[string]string{
-		ftpAnonymousID: {ftpEndpointOption: "10.1.10.42:21"},
+		ftpAnonymousID: {ftpEndpointOption: "198.51.100.42:21"},
 	}})
 	if strings.Contains(preview, "password") && !strings.Contains(preview, "[REDACTED]") {
 		t.Fatalf("preview leaked password: %s", preview)
+	}
+}
+
+func TestFTPAnonymousUsesCurrentNetworkHoundArtifact(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "network_scope.json")
+	if err := os.WriteFile(artifact, []byte(`{"nodes":[{"properties":{"ip_addresses":["198.51.100.42"],"open_ports":[21,23]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{
+		"networkhound-scope-validation": {"NETWORKS": "198.51.100.0/24"},
+	}, BatchArtifacts: map[string]string{"networkhound-scope-validation": artifact}}
+	endpoints, reason := discoveredEndpoints(runtime)
+	if reason != "NetworkHound" || len(endpoints) != 1 || endpoints[0] != "198.51.100.42:21" {
+		t.Fatalf("discovery=%v reason=%q", endpoints, reason)
+	}
+}
+
+func TestFTPAnonymousMissingDiscoverySkipsWithoutEndpoint(t *testing.T) {
+	runtime := &modules.Runtime{BatchArtifacts: map[string]string{}}
+	err := (FTPAnonymousAccess{}).Check(context.Background(), runtime)
+	var skipped modules.SkipError
+	if !errors.As(err, &skipped) || !strings.Contains(skipped.Error(), "NetworkHound discovery unavailable") {
+		t.Fatalf("error=%v, want discovery skip", err)
+	}
+}
+
+func TestFTPAnonymousReportIsHumanReadableAndOmitsPassword(t *testing.T) {
+	report := buildFTPReport("sccm.lab", "NetworkHound", []string{"198.51.100.42:21"}, []FTPAnonymousResult{{Target: "198.51.100.42", Port: 21, Username: "anonymous", Accepted: true, AuthResponse: "230 Anonymous login ok", Stage: "authenticated"}})
+	output := formatFTPReport(report)
+	for _, want := range []string{"FTP ANONYMOUS ACCESS", "Endpoints tested:          1", "Authentication: ACCEPTED", "230 Anonymous login ok"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("report missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "password") {
+		t.Fatalf("report exposed password: %s", output)
+	}
+}
+
+func TestFTPAnonymousRunKeepsJSONArtifactAndReadableSinkOutput(t *testing.T) {
+	mock := startFTPMock(t, true)
+	artifact := filepath.Join(t.TempDir(), "anonymous-ftp.json")
+	runtime := &modules.Runtime{ResultsRoot: t.TempDir(), ExecutionOutputPath: artifact, ModuleOptions: map[string]map[string]string{
+		ftpAnonymousID: {ftpEndpointOption: mock.endpoint()},
+	}}
+	output := &ftpOutputBuffer{}
+	if err := (FTPAnonymousAccess{}).Run(context.Background(), runtime, output); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report ftpAnonymousReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("artifact is not structured JSON: %v", err)
+	}
+	if report.AnonymousLoginsAccepted != 1 || !strings.Contains(string(output.data), "FTP ANONYMOUS ACCESS") {
+		t.Fatalf("report=%+v output=%q", report, output.data)
 	}
 }

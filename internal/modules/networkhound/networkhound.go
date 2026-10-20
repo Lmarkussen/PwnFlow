@@ -26,6 +26,7 @@ package networkhound
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -107,7 +108,7 @@ func EnumerationModules() []Module {
 		}},
 		{definition: Definition{
 			IDValue:   "networkhound-scope-validation",
-			NameValue: "Scoped Network & Service Validation",
+			NameValue: "NetworkHound",
 			SlugValue: "scope-validation",
 			// Service Enumeration: it validates the services on the scope the
 			// operator names.
@@ -497,7 +498,124 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if runErr != nil {
 		return fmt.Errorf("NetworkHound %s failed after %s: %w", m.definition.SlugValue, time.Since(started).Round(time.Millisecond), runErr)
 	}
+	if m.scoped() {
+		artifact := filepath.Join(runDirectory, scopeOutput)
+		if _, err := os.Stat(artifact); err != nil {
+			return fmt.Errorf("NetworkHound scope validation did not produce %s: %w", scopeOutput, err)
+		}
+		if runtime.BatchArtifacts == nil {
+			runtime.BatchArtifacts = make(map[string]string)
+		}
+		runtime.BatchArtifacts[m.ID()] = artifact
+	}
 	return nil
+}
+
+// OpenFTPEndpoints reads the current NetworkHound OpenGraph artifact and returns
+// only literal, in-scope addresses whose reported open port is TCP/21. The
+// artifact is intentionally supplied by the current batch; this function never
+// searches historical results or performs a network request.
+func OpenFTPEndpoints(path, scope string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("NetworkHound artifact path is empty")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("NetworkHound artifact is invalid JSON: %w", err)
+	}
+	if err := validateScope(scope); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var endpoints []string
+	var walk func(any)
+	walk = func(value any) {
+		switch item := value.(type) {
+		case []any:
+			for _, child := range item {
+				walk(child)
+			}
+		case map[string]any:
+			ports, ok := item["open_ports"].([]any)
+			if ok {
+				addresses := literalAddresses(item)
+				for _, address := range addresses {
+					if !addressInScope(address, scope) {
+						continue
+					}
+					for _, port := range ports {
+						if number, ok := port.(float64); ok && int(number) == 21 {
+							endpoint := net.JoinHostPort(address, "21")
+							if !seen[endpoint] {
+								seen[endpoint] = true
+								endpoints = append(endpoints, endpoint)
+							}
+						}
+					}
+				}
+			}
+			for _, child := range item {
+				walk(child)
+			}
+		}
+	}
+	walk(document)
+	return endpoints, nil
+}
+
+func literalAddresses(item map[string]any) []string {
+	var addresses []string
+	var add func(any)
+	add = func(value any) {
+		switch value := value.(type) {
+		case string:
+			if net.ParseIP(value) != nil {
+				addresses = append(addresses, value)
+			}
+		case []any:
+			for _, child := range value {
+				add(child)
+			}
+		}
+	}
+	for _, key := range []string{"ip_addresses", "ip", "address", "addresses"} {
+		add(item[key])
+	}
+	return addresses
+}
+
+func addressInScope(address, scope string) bool {
+	ip := net.ParseIP(address)
+	for _, item := range strings.Split(scope, ",") {
+		item = strings.TrimSpace(item)
+		if strings.Contains(item, "/") {
+			if _, network, err := net.ParseCIDR(item); err == nil && network.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(item, "-") {
+			parts := strings.SplitN(item, "-", 2)
+			start, end := net.ParseIP(parts[0]), net.ParseIP(parts[1])
+			if start != nil && end != nil && bytesCompare(start, ip) <= 0 && bytesCompare(ip, end) <= 0 {
+				return true
+			}
+			continue
+		}
+		if item == address {
+			return true
+		}
+	}
+	return false
+}
+
+func bytesCompare(left, right net.IP) int {
+	left, right = left.To4(), right.To4()
+	return strings.Compare(string(left), string(right))
 }
 
 // hardenRunDirectory makes one run's artifacts owner-only: directories 0750, files

@@ -246,3 +246,29 @@ func TestRegistrationsAreDistinctAndScoped(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenFTPEndpointsUsesOnlyInScopeOpenPort21(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "network_scope.json")
+	data := `{"nodes":[{"id":"computer-1","properties":{"ip_addresses":["198.51.100.40","198.51.100.41"],"open_ports":[21,23]}},{"id":"computer-2","properties":{"ip_addresses":["198.51.100.42"],"open_ports":[80]}},{"id":"computer-3","properties":{"ip_addresses":["192.0.2.9"],"open_ports":[21]}}]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err := OpenFTPEndpoints(path, "198.51.100.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"198.51.100.40:21", "198.51.100.41:21"}
+	if !slices.Equal(endpoints, want) {
+		t.Fatalf("endpoints=%v, want %v", endpoints, want)
+	}
+}
+
+func TestOpenFTPEndpointsRejectsInvalidArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "network_scope.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFTPEndpoints(path, "198.51.100.0/24"); err == nil {
+		t.Fatal("invalid artifact was accepted")
+	}
+}

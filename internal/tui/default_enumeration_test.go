@@ -8,8 +8,8 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 41 {
-		t.Fatalf("Default Enumeration has %d entries, want 41", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 42 {
+		t.Fatalf("Default Enumeration has %d entries, want 42", len(defaultEnumerationModuleIDs))
 	}
 	base := defaultEnumerationModuleIDs[:32]
 	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
@@ -50,6 +50,9 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	}
 	if defaultEnumerationModuleIDs[40] != "ad-writable-objects" {
 		t.Fatalf("AD writable analysis is not additive entry 41: %q", defaultEnumerationModuleIDs[40])
+	}
+	if defaultEnumerationModuleIDs[41] != "ftp-anonymous-access" {
+		t.Fatalf("FTP anonymous access is not additive entry 42: %q", defaultEnumerationModuleIDs[41])
 	}
 }
 

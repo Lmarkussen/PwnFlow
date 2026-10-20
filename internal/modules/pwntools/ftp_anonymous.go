@@ -15,13 +15,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 )
 
 const (
-	ftpAnonymousID     = "ftp-anonymous-access"
-	ftpEndpointOption  = "FTP_ENDPOINT"
-	ftpAnonymousOutput = "Enumeration/PwnTools/FTPAnonymousAccess/anonymous-ftp.json"
-	ftpTimeout         = 10 * time.Second
+	ftpAnonymousID             = "ftp-anonymous-access"
+	ftpEndpointOption          = "FTP_ENDPOINT"
+	networkHoundArtifactOption = "NETWORKHOUND_ARTIFACT"
+	ftpAnonymousOutput         = "Enumeration/PwnTools/FTPAnonymousAccess/anonymous-ftp.json"
+	ftpTimeout                 = 10 * time.Second
 )
 
 type FTPAnonymousAccess struct{}
@@ -37,6 +39,17 @@ type FTPAnonymousResult struct {
 	Error           string `json:"error,omitempty"`
 }
 
+type ftpAnonymousReport struct {
+	Assessment              string               `json:"assessment,omitempty"`
+	Source                  string               `json:"source,omitempty"`
+	DiscoveredEndpoints     int                  `json:"discovered_endpoints"`
+	EndpointsTested         int                  `json:"endpoints_tested"`
+	AnonymousLoginsAccepted int                  `json:"anonymous_logins_accepted"`
+	Rejected                int                  `json:"rejected"`
+	Unreachable             int                  `json:"unreachable_or_indeterminate"`
+	Results                 []FTPAnonymousResult `json:"results"`
+}
+
 func (FTPAnonymousAccess) ID() string                     { return ftpAnonymousID }
 func (FTPAnonymousAccess) Name() string                   { return "FTP Anonymous Access" }
 func (FTPAnonymousAccess) ToolFamily() modules.ToolFamily { return modules.ToolFamilyPwnTools }
@@ -44,47 +57,58 @@ func (FTPAnonymousAccess) Category() modules.Category     { return modules.Categ
 func (FTPAnonymousAccess) Tool() string                   { return "PwnFlow FTP Probe" }
 func (FTPAnonymousAccess) Protocol() modules.Protocol     { return modules.ProtocolFTP }
 func (FTPAnonymousAccess) Description() string {
-	return "Tests one explicitly selected FTP service with the single anonymous:password credential pair; it does not list or modify files."
+	return "Tests confirmed NetworkHound FTP services, or one explicitly selected endpoint, with the single anonymous:password pair; it does not list or modify files."
 }
 func (FTPAnonymousAccess) Prerequisites() []string {
-	return []string{"an explicitly selected FTP endpoint, supplied as host:port"}
+	return []string{"NetworkHound scope validation, or an explicitly selected FTP endpoint"}
 }
 func (FTPAnonymousAccess) RequiredPrivileges() []string     { return nil }
 func (FTPAnonymousAccess) OutputFile() string               { return ftpAnonymousOutput }
 func (FTPAnonymousAccess) Sensitivity() modules.Sensitivity { return modules.SensitivityStandard }
 func (FTPAnonymousAccess) ReadOnly() bool                   { return true }
 func (FTPAnonymousAccess) SecondaryConnections() []string {
-	return []string{"one TCP connection to the selected FTP endpoint"}
+	return []string{"one TCP connection per selected FTP endpoint"}
 }
-func (FTPAnonymousAccess) OptionKeys() []string { return []string{ftpEndpointOption} }
-func (FTPAnonymousAccess) MissingInputs(runtime *modules.Runtime) []modules.InputField {
-	if _, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption); ok {
-		return nil
-	}
-	return []modules.InputField{{Key: ftpEndpointOption, Prompt: "FTP endpoint to test (host:port)", Example: "10.1.10.42:21"}}
+func (FTPAnonymousAccess) BatchPrerequisites() []string {
+	return []string{"networkhound-scope-validation"}
 }
+func (FTPAnonymousAccess) OptionKeys() []string {
+	return []string{ftpEndpointOption, networkHoundArtifactOption}
+}
+func (FTPAnonymousAccess) MissingInputs(*modules.Runtime) []modules.InputField { return nil }
 func (FTPAnonymousAccess) Status(runtime *modules.Runtime) modules.Status {
 	endpoint, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
-	if !ok {
-		return modules.StatusInputRequired
+	if ok {
+		if _, _, err := parseFTPEndpoint(endpoint); err != nil {
+			return modules.StatusUnavailable
+		}
+		return modules.StatusAvailable
 	}
-	if _, _, err := parseFTPEndpoint(endpoint); err != nil {
-		return modules.StatusUnavailable
+	if discovered, _ := discoveredEndpoints(runtime); len(discovered) > 0 {
+		return modules.StatusAvailable
 	}
+	// The batch scheduler must retain this module so it can consume the
+	// current-run NetworkHound artifact and report a precise skip reason.
 	return modules.StatusAvailable
 }
 func (FTPAnonymousAccess) StatusReason(runtime *modules.Runtime) string {
 	endpoint, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
-	if !ok {
-		return "an explicit FTP endpoint is required; NetworkHound discovery does not select a service automatically"
+	if ok {
+		if _, _, err := parseFTPEndpoint(endpoint); err != nil {
+			return err.Error()
+		}
+		return ""
 	}
-	if _, _, err := parseFTPEndpoint(endpoint); err != nil {
-		return err.Error()
+	if discovered, _ := discoveredEndpoints(runtime); len(discovered) > 0 {
+		return "using current NetworkHound open TCP/21 endpoints"
 	}
-	return ""
+	return "SKIPPED — NetworkHound discovery unavailable or no open FTP endpoints found"
 }
 func (FTPAnonymousAccess) ValidateOptionValue(key, value string) error {
 	if key != ftpEndpointOption {
+		if key == networkHoundArtifactOption {
+			return nil
+		}
 		return fmt.Errorf("unknown option %s", key)
 	}
 	_, _, err := parseFTPEndpoint(value)
@@ -97,25 +121,32 @@ func (FTPAnonymousAccess) DetailLines(runtime *modules.Runtime) []string {
 	endpoint, _ := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
 	return []string{
 		"Credential: anonymous:[REDACTED] (single attempt)",
-		"Endpoint: " + fallbackEndpoint(endpoint),
+		"Endpoint override: " + fallbackEndpoint(endpoint),
+		"Automatic source: NetworkHound open TCP/21 artifact",
 		"Scope: authentication only; no directory listing or file changes",
 		"Timeout: 10 seconds",
 	}
 }
 func (FTPAnonymousAccess) CommandPreview(runtime *modules.Runtime) string {
 	endpoint, _ := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
-	return fmt.Sprintf("PwnFlow FTP probe %s --user anonymous --password [REDACTED]", fallbackEndpoint(endpoint))
+	if strings.TrimSpace(endpoint) == "" {
+		return "PwnFlow FTP probe <NetworkHound-discovered-endpoints> --user anonymous --password [REDACTED]"
+	}
+	return fmt.Sprintf("PwnFlow FTP probe %s --user anonymous --password [REDACTED]", endpoint)
 }
 func (FTPAnonymousAccess) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if runtime == nil {
 		return errors.New("runtime configuration is required")
 	}
-	endpoint, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
-	if !ok {
-		return modules.SkipError{Reason: "an explicit FTP endpoint is required"}
+	if endpoint, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption); ok {
+		_, _, err := parseFTPEndpoint(endpoint)
+		return err
 	}
-	_, _, err := parseFTPEndpoint(endpoint)
-	return err
+	endpoints, reason := discoveredEndpoints(runtime)
+	if len(endpoints) == 0 {
+		return modules.SkipError{Reason: reason}
+	}
+	return nil
 }
 func (FTPAnonymousAccess) ExecutionArtifactPath(resultsRoot string, started time.Time) string {
 	name := started.UTC().Format("20060102-150405.000000000") + "-" + uuid.NewString()
@@ -126,8 +157,31 @@ func (FTPAnonymousAccess) Run(ctx context.Context, runtime *modules.Runtime, sin
 	if err := (FTPAnonymousAccess{}).Check(ctx, runtime); err != nil {
 		return err
 	}
-	endpoint, _ := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption)
-	result := probeFTPAnonymous(ctx, endpoint)
+	endpoints, source := selectedEndpoints(runtime)
+	if len(endpoints) == 0 {
+		return modules.SkipError{Reason: "SKIPPED — No open FTP endpoints found"}
+	}
+	results := make([]FTPAnonymousResult, len(endpoints))
+	sem := make(chan struct{}, 8)
+	done := make(chan int, len(endpoints))
+	for index, endpoint := range endpoints {
+		go func(index int, endpoint string) {
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[index] = FTPAnonymousResult{Target: endpoint, Error: "canceled", Stage: "cancelled"}
+				done <- index
+				return
+			}
+			results[index] = probeFTPAnonymous(ctx, endpoint)
+			<-sem
+			done <- index
+		}(index, endpoint)
+	}
+	for range endpoints {
+		<-done
+	}
+	report := buildFTPReport(runtime.Domain, source, endpoints, results)
 	outputPath := runtime.ExecutionOutputPath
 	if outputPath == "" {
 		outputPath = (FTPAnonymousAccess{}).ExecutionArtifactPath(runtime.ResultsRoot, time.Now().UTC())
@@ -135,24 +189,80 @@ func (FTPAnonymousAccess) Run(ctx context.Context, runtime *modules.Runtime, sin
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(result, "", "  ")
+	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
+	if _, err := sink.Write([]byte(formatFTPReport(report))); err != nil {
+		return err
+	}
+	// Runner sinks are also responsible for the human-readable latest output.
+	// Restore the structured artifact after that write so Findings analysis never
+	// attempts to parse the display report as JSON.
 	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
 		return err
 	}
-	if _, err := sink.Write(data); err != nil {
-		return err
-	}
-	if !result.Accepted {
-		if result.Error != "" {
-			return errors.New(result.Error)
-		}
-		return errors.New("FTP anonymous authentication was not accepted")
-	}
 	return nil
+}
+
+func selectedEndpoints(runtime *modules.Runtime) ([]string, string) {
+	if endpoint, ok := runtime.ModuleOption(ftpAnonymousID, ftpEndpointOption); ok {
+		return []string{endpoint}, "explicit FTP endpoint"
+	}
+	endpoints, _ := discoveredEndpoints(runtime)
+	return endpoints, "NetworkHound"
+}
+
+func discoveredEndpoints(runtime *modules.Runtime) ([]string, string) {
+	if runtime == nil {
+		return nil, "SKIPPED — NetworkHound discovery unavailable"
+	}
+	path, ok := runtime.ModuleOption(ftpAnonymousID, networkHoundArtifactOption)
+	if !ok && runtime.BatchArtifacts != nil {
+		path, ok = runtime.BatchArtifacts["networkhound-scope-validation"]
+	}
+	if !ok {
+		return nil, "SKIPPED — NetworkHound discovery unavailable"
+	}
+	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
+	endpoints, err := networkhound.OpenFTPEndpoints(path, scope)
+	if err != nil {
+		return nil, "SKIPPED — NetworkHound discovery unavailable"
+	}
+	if len(endpoints) == 0 {
+		return nil, "SKIPPED — No open FTP endpoints found"
+	}
+	return endpoints, "NetworkHound"
+}
+
+func buildFTPReport(assessment, source string, endpoints []string, results []FTPAnonymousResult) ftpAnonymousReport {
+	report := ftpAnonymousReport{Assessment: assessment, Source: source, DiscoveredEndpoints: len(endpoints), EndpointsTested: len(results), Results: results}
+	for _, result := range results {
+		if result.Accepted {
+			report.AnonymousLoginsAccepted++
+		} else if result.Stage == "rejected" {
+			report.Rejected++
+		} else {
+			report.Unreachable++
+		}
+	}
+	return report
+}
+
+func formatFTPReport(report ftpAnonymousReport) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "FTP ANONYMOUS ACCESS\nAssessment: %s\n\n", fallbackEndpoint(report.Assessment))
+	fmt.Fprintf(&builder, "Discovered FTP endpoints: %d\nEndpoints tested:          %d\nAnonymous logins accepted: %d\nRejected:                  %d\nUnreachable/indeterminate: %d\n", report.DiscoveredEndpoints, report.EndpointsTested, report.AnonymousLoginsAccepted, report.Rejected, report.Unreachable)
+	if report.AnonymousLoginsAccepted > 0 {
+		builder.WriteString("\nCONFIRMED ANONYMOUS ACCESS\n")
+	}
+	for _, result := range report.Results {
+		if result.Accepted {
+			fmt.Fprintf(&builder, "\nHost: %s\nPort: %d\nUser: anonymous\nAuthentication: ACCEPTED\nServer response: %s\n", result.Target, result.Port, result.AuthResponse)
+		}
+	}
+	return builder.String()
 }
 
 func parseFTPEndpoint(value string) (string, int, error) {

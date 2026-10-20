@@ -66,6 +66,7 @@ var defaultEnumerationModuleIDs = []string{
 	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 	"sphunter-tenant-discovery",
 	"ad-writable-objects",
+	"ftp-anonymous-access",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing
