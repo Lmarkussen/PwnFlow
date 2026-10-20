@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/pwntools"
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 func pwnToolsListModel(t *testing.T) *model {
@@ -89,5 +90,19 @@ func TestPwnToolsRequirementIndicatorDoesNotLeakToOtherModules(t *testing.T) {
 		if strings.Contains(row, "Other PwnTool") && strings.Contains(row, "RUSTHOUND-REQ") {
 			t.Fatalf("requirement leaked to unrelated module row: %q", row)
 		}
+	}
+}
+
+func TestFTPAnonymousFindingUsesPwnToolsCategoryWithoutMovingADWritableObjects(t *testing.T) {
+	ftp := storage.Finding{FindingInput: storage.FindingInput{FindingType: "pwntools_ftp_anonymous_access", Title: "FTP Anonymous Access Accepted"}}
+	ad := storage.Finding{FindingInput: storage.FindingInput{FindingType: "ad_writable_object_assessment", Title: "AD Writable Object Assessment"}}
+	if got := findingCategoryKey(ftp); got != "pwntools" {
+		t.Fatalf("FTP finding category=%q, want pwntools", got)
+	}
+	if got := findingSubcategoryKey(ftp); got != "ftp_anonymous_access" {
+		t.Fatalf("FTP finding subcategory=%q, want ftp_anonymous_access", got)
+	}
+	if got := findingCategoryKey(ad); got != "acl" {
+		t.Fatalf("AD writable finding category=%q, want acl", got)
 	}
 }

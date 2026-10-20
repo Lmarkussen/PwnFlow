@@ -63,6 +63,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	registry.Register(masscan.Module{})
 	registry.Register(pwntools.SPHunter{})
 	registry.Register(pwntools.ADWritableObjects{})
+	registry.Register(pwntools.FTPAnonymousAccess{})
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
 		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)

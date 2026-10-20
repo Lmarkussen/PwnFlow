@@ -296,6 +296,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeMasscan(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "ad writable object assessment":
 		inputs, err = AnalyzeWritableObjectReport(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "pwnflow ftp probe":
+		inputs, err = AnalyzeFTPAnonymous(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -469,6 +471,8 @@ func ParserVersionFor(tool string) string {
 		return masscanParserVersion
 	case "ad writable object assessment":
 		return writableObjectsParserVersion
+	case "pwnflow ftp probe":
+		return ftpAnonymousParserVersion
 	default:
 		return ""
 	}
@@ -498,7 +502,7 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	if outputPath == "" {
 		return ""
 	}
-	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true}
+	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true, "pwnflow ftp probe": true}
 	if specializedTool[strings.ToLower(tool)] {
 		if strings.EqualFold(tool, "AD GPO Evidence") {
 			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {

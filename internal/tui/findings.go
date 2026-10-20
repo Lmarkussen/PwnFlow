@@ -66,6 +66,9 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
 		{"port_discovery", "Port Discovery", "Masscan open-port observations"},
 	},
+	"pwntools": {
+		{"ftp_anonymous_access", "FTP Anonymous Access", "Confirmed anonymous FTP authentication"},
+	},
 	"authentication": {
 		{"successful_authentication", "Successful Authentication", "Verified successful protocol authentications"},
 		{"privileged_access", "Privileged Access", "Explicit NetExec elevated-access indicators"},
@@ -84,6 +87,7 @@ var findingCategoryOrder = []struct {
 	{"delegation", "Delegation", "Delegation configuration and related exposure"},
 	{"authentication", "Authentication & Privileged Access", "Verified authentication and protocol-specific elevated access"},
 	{"network", "Network & Protocols", "SMB, LDAP and relay security conditions"},
+	{"pwntools", "PwnTools", "Explicitly designated PwnTools security observations"},
 	{"other", "Other / Unclassified", "Security records without a safer category"},
 }
 
@@ -126,6 +130,8 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "network"
 	case strings.HasPrefix(typ, "masscan_") || strings.EqualFold(source, "masscan"):
 		return "network"
+	case strings.HasPrefix(typ, "pwntools_ftp_anonymous_"):
+		return "pwntools"
 	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"):
 		return "authentication"
 	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
@@ -178,6 +184,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "successful_authentication"
 	case strings.HasPrefix(typ, "netexec_privileged_"):
 		return "privileged_access"
+	case strings.HasPrefix(typ, "pwntools_ftp_anonymous_"):
+		return "ftp_anonymous_access"
 	case strings.Contains(typ, "smb"):
 		return "smb"
 	case strings.Contains(typ, "ldap") || strings.Contains(typ, "channel"):

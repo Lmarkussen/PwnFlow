@@ -312,7 +312,7 @@ func TestFindingsRootNavigationUsesAllCategories(t *testing.T) {
 	}
 	m := &model{ctx: ctx, db: db, targetID: assessmentID, findingsView: true, findingCategoryView: true, findingViewMode: "all", width: 120, height: 40}
 	m.refreshFindings()
-	want := []string{"credentials", "kerberos", "active_directory", "acl", "adcs", "delegation", "authentication", "network", "other"}
+	want := []string{"credentials", "kerberos", "active_directory", "acl", "adcs", "delegation", "authentication", "network", "pwntools", "other"}
 	if len(m.findingCategories) != len(want) {
 		t.Fatalf("category count=%d, want %d", len(m.findingCategories), len(want))
 	}

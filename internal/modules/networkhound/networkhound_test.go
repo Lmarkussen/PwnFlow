@@ -102,6 +102,29 @@ func TestTopologyCollectionStaysOnTheDomainController(t *testing.T) {
 	}
 }
 
+func TestScopedValidationRetainsFTPAndTelnetPorts(t *testing.T) {
+	entry := module(t, "networkhound-scope-validation")
+	runtime := runtimeWith(t, map[string]map[string]string{
+		entry.ID(): {"NETWORKS": "198.51.100.10/32"},
+	})
+	args := entry.CommandArgs(runtime)
+	portsIndex := slices.Index(args, "--ports")
+	if portsIndex < 0 || portsIndex+1 >= len(args) {
+		t.Fatalf("scope validation omitted --ports: %v", args)
+	}
+	ports := "," + args[portsIndex+1] + ","
+	for _, port := range []string{"21", "23"} {
+		if !strings.Contains(ports, ","+port+",") {
+			t.Fatalf("scope validation ports %q omit TCP %s", args[portsIndex+1], port)
+		}
+	}
+	for _, port := range []string{"22", "445", "3389"} {
+		if !strings.Contains(ports, ","+port+",") {
+			t.Fatalf("scope validation lost existing TCP %s from %q", port, args[portsIndex+1])
+		}
+	}
+}
+
 // The credential never reaches a preview, and the scope always does.
 func TestPreviewRedactsTheCredential(t *testing.T) {
 	entry := module(t, "networkhound-topology")
