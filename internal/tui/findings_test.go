@@ -159,6 +159,32 @@ func TestFindingCategoriesClassifyAndCountRecords(t *testing.T) {
 	}
 }
 
+func TestWritableObjectsUseACLCategoryAndOtherRecordsRemainReachable(t *testing.T) {
+	rows := []storage.Finding{
+		{FindingInput: storage.FindingInput{FindingType: "ad_writable_object_assessment", Title: "AD Writable Object Assessment", Severity: "informational", SourceTool: "AD Writable Object Assessment"}},
+		{FindingInput: storage.FindingInput{FindingType: "legacy_unknown_condition", Title: "Legacy condition", Severity: "informational", SourceTool: "legacy"}},
+		{FindingInput: storage.FindingInput{FindingType: "legacy_other_condition", Title: "Legacy other", Severity: "medium", SourceTool: "legacy"}},
+	}
+	if got := findingCategoryKey(rows[0]); got != "acl" {
+		t.Fatalf("writable-object finding category=%q, want acl", got)
+	}
+	if got := findingSubcategoryKey(rows[0]); got != "ad_writable_objects" {
+		t.Fatalf("writable-object subcategory=%q, want ad_writable_objects", got)
+	}
+	acl := buildFindingSubcategories("acl", rows)
+	other := buildFindingSubcategories("other", rows)
+	aclCount, otherCount := 0, 0
+	for _, item := range acl {
+		aclCount += item.Findings + item.Observations
+	}
+	for _, item := range other {
+		otherCount += item.Findings + item.Observations
+	}
+	if aclCount != 1 || otherCount != 2 {
+		t.Fatalf("subcategory counts do not reconcile: acl=%d other=%d", aclCount, otherCount)
+	}
+}
+
 func TestAuthenticationFindingsUseDedicatedSubcategories(t *testing.T) {
 	rows := []storage.Finding{
 		{FindingInput: storage.FindingInput{FindingType: "netexec_auth_success", Title: "Authentication successful — SMB", Severity: "informational", SourceTool: "NetExec (nxc)"}},

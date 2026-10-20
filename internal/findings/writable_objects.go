@@ -36,19 +36,22 @@ type WritableObjectRelationship struct {
 }
 
 type WritableObjectReport struct {
-	SchemaVersion      int                          `json:"schema_version"`
-	ParserVersion      string                       `json:"parser_version"`
-	Status             string                       `json:"status"`
-	Coverage           string                       `json:"coverage"`
-	Domain             string                       `json:"domain,omitempty"`
-	AuthenticatedUser  string                       `json:"authenticated_user"`
-	SourceArtifact     string                       `json:"source_artifact"`
-	SourceArtifacts    []ACLInventorySourceArtifact `json:"source_artifacts,omitempty"`
-	Relationships      []WritableObjectRelationship `json:"relationships,omitempty"`
-	MembershipCoverage string                       `json:"membership_coverage"`
-	UnresolvedCount    int                          `json:"unresolved_count"`
-	Limitations        []string                     `json:"limitations"`
-	AnalysisTimestamp  time.Time                    `json:"analysis_timestamp"`
+	SchemaVersion           int                          `json:"schema_version"`
+	ParserVersion           string                       `json:"parser_version"`
+	Status                  string                       `json:"status"`
+	Coverage                string                       `json:"coverage"`
+	Domain                  string                       `json:"domain,omitempty"`
+	AuthenticatedUser       string                       `json:"authenticated_user"`
+	SourceArtifact          string                       `json:"source_artifact"`
+	SourceArtifacts         []ACLInventorySourceArtifact `json:"source_artifacts,omitempty"`
+	Relationships           []WritableObjectRelationship `json:"relationships,omitempty"`
+	QualifyingRelationships int                          `json:"qualifying_relationships"`
+	IncludedRelationships   int                          `json:"included_relationships"`
+	OmittedRelationships    int                          `json:"omitted_relationships"`
+	MembershipCoverage      string                       `json:"membership_coverage"`
+	UnresolvedCount         int                          `json:"unresolved_count"`
+	Limitations             []string                     `json:"limitations"`
+	AnalysisTimestamp       time.Time                    `json:"analysis_timestamp"`
 }
 
 // AnalyzeRustHoundWritableObjects evaluates only relationships that can be
@@ -121,14 +124,16 @@ func AnalyzeRustHoundWritableObjects(ctx context.Context, inputPath, domain, use
 }
 
 func (report *WritableObjectReport) addRelationship(seen map[string]bool, relation ACLInventoryRelationship, path []ACLMembershipHop, denyKeys map[string]bool) {
-	if len(report.Relationships) >= writableObjectsMaxRelationships {
-		return
-	}
 	key := strings.Join([]string{relation.PrincipalID, relation.TargetID, relation.Permission, relation.Decision, relation.Inheritance, relation.ObjectType, relation.InheritedObjectType, pathKey(path)}, "\x00")
 	if seen[key] {
 		return
 	}
 	seen[key] = true
+	report.QualifyingRelationships++
+	if len(report.Relationships) >= writableObjectsMaxRelationships {
+		report.OmittedRelationships++
+		return
+	}
 	evaluation := "indeterminate"
 	switch strings.ToLower(relation.Decision) {
 	case "deny":
@@ -140,6 +145,7 @@ func (report *WritableObjectReport) addRelationship(seen map[string]bool, relati
 		}
 	}
 	report.Relationships = append(report.Relationships, WritableObjectRelationship{PrincipalID: relation.PrincipalID, PrincipalName: relation.PrincipalName, MembershipPath: append([]ACLMembershipHop(nil), path...), TargetID: relation.TargetID, TargetName: relation.TargetName, TargetType: relation.TargetType, Permission: relation.Permission, Decision: relation.Decision, Inheritance: relation.Inheritance, ObjectType: relation.ObjectType, InheritedObjectType: relation.InheritedObjectType, Evaluation: evaluation, Artifact: relation.Artifact, ArtifactRef: relation.ArtifactRef})
+	report.IncludedRelationships = len(report.Relationships)
 }
 
 func isWritablePermission(value string) bool {

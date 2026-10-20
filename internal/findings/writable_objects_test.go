@@ -3,6 +3,7 @@ package findings
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -64,5 +65,18 @@ func TestAnalyzeRustHoundWritableObjectsMarksDenyAsIndeterminate(t *testing.T) {
 	report.addRelationship(seen, ACLInventoryRelationship{PrincipalID: "alice", PrincipalName: "alice", TargetID: "target", Permission: "GenericWrite", Decision: "allow", Artifact: "users.json", ArtifactRef: "/data/0"}, nil, denies)
 	if len(report.Relationships) != 1 || report.Relationships[0].Evaluation != "indeterminate-deny-present" {
 		t.Fatalf("deny precedence was not surfaced conservatively: %+v", report.Relationships)
+	}
+}
+
+func TestWritableObjectReportTracksBoundedRelationships(t *testing.T) {
+	report := WritableObjectReport{SourceArtifact: "rusthound"}
+	seen := map[string]bool{}
+	for index := 0; index < writableObjectsMaxRelationships+3; index++ {
+		report.addRelationship(seen, ACLInventoryRelationship{
+			PrincipalID: "alice", TargetID: fmt.Sprintf("target-%d", index), Permission: "GenericWrite", Decision: "allow",
+		}, nil, nil)
+	}
+	if report.QualifyingRelationships != writableObjectsMaxRelationships+3 || report.IncludedRelationships != writableObjectsMaxRelationships || report.OmittedRelationships != 3 {
+		t.Fatalf("bounded counts incorrect: qualifying=%d included=%d omitted=%d", report.QualifyingRelationships, report.IncludedRelationships, report.OmittedRelationships)
 	}
 }

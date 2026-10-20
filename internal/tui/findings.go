@@ -42,6 +42,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"acl", "Vulnerable ACLs", "Grouped principal-to-target control relationships"},
 		{"acl_inventory", "ACL Evidence Inventory", "Informational direct ACL evidence and collection limitations"},
 		{"acl_replication_rights", "Replication Rights Evidence", "Observed domain-root replication-right relationships and completeness"},
+		{"ad_writable_objects", "AD Writable Objects", "Source-backed write-capable relationships for the assessed identity"},
 	},
 	"adcs": {
 		{"adcs_ca", "Vulnerable Certificate Authorities", "Explicit ESC conditions reported for certificate authorities"},
@@ -69,6 +70,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"successful_authentication", "Successful Authentication", "Verified successful protocol authentications"},
 		{"privileged_access", "Privileged Access", "Explicit NetExec elevated-access indicators"},
 	},
+	"other": {{"other", "Other / Unclassified", "Security records without a safer category"}},
 }
 
 var findingCategoryOrder = []struct {
@@ -90,6 +92,8 @@ func findingCategoryKey(finding storage.Finding) string {
 	title := strings.ToLower(finding.Title)
 	source := strings.ToLower(finding.SourceTool)
 	switch {
+	case strings.HasPrefix(typ, "ad_writable_object_"):
+		return "acl"
 	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):
 		return "acl"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
@@ -138,6 +142,8 @@ func findingCategoryKey(finding storage.Finding) string {
 func findingSubcategoryKey(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType + " " + finding.Title)
 	switch {
+	case strings.HasPrefix(typ, "ad_writable_object_"):
+		return "ad_writable_objects"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
 		return "protected_accounts"
 	case strings.HasPrefix(typ, "ad_tier0_"):
@@ -793,6 +799,10 @@ func findingEvidenceSummary(finding storage.Finding) string {
 		metadata := findingMetadata(finding)
 		return fmt.Sprintf("%s — Execution %d\nFull report: %s\nStructured evidence: %s", finding.SourceTool, finding.SourceExecution, shortEvidencePath(finding.ArtifactPath), fallbackText(metadataString(metadata, "structured_artifact"), "execution-associated replication-rights JSON"))
 	}
+	if strings.EqualFold(finding.FindingType, "ad_writable_object_assessment") {
+		metadata := findingMetadata(finding)
+		return fmt.Sprintf("%s — Execution %d\nAuthenticated identity: %s\nRelationships included: %d of %d\nSource artifact: %s\nAssessment report: %s", fallbackText(finding.SourceTool, "AD Writable Object Assessment"), finding.SourceExecution, fallbackText(metadataString(metadata, "authenticated_user"), fallbackText(finding.AffectedObject, finding.AffectedObjectID)), metadataIntDefault(metadata, "included_relationships", lenMetadataRelationships(metadata)), metadataIntDefault(metadata, "qualifying_relationships", lenMetadataRelationships(metadata)), fallbackText(metadataString(metadata, "source_artifact"), "source artifact unavailable"), fallbackText(shortEvidencePath(finding.ArtifactPath), "writable-objects.json"))
+	}
 	if strings.EqualFold(finding.FindingType, "ad_privileged_acl_evidence_inventory") {
 		metadata := findingMetadata(finding)
 		structured := metadataString(metadata, "structured_artifact")
@@ -898,6 +908,17 @@ func findingLimitations(finding storage.Finding) string {
 	if strings.EqualFold(finding.FindingType, "ad_replication_rights_evidence_overview") {
 		return "Effective replication authorization and DCSync capability were not evaluated. NOT OBSERVED means no matching supported relationship was found in the inspected evidence; it does not mean denied or absent. Allow/deny precedence, inheritance applicability, object-specific restrictions, group scope, SIDHistory, cross-domain authorization and token semantics remain unknown."
 	}
+	if strings.EqualFold(finding.FindingType, "ad_writable_object_assessment") {
+		metadata := findingMetadata(finding)
+		lines := []string{"Observed permissions do not establish effective Windows access or a verified directory modification. Deny precedence, inheritance applicability, object-specific schema resolution, SIDHistory, protected groups and complete membership expansion were not fully evaluated."}
+		if count := metadataInt(metadata, "omitted_relationships"); count > 0 {
+			lines = append(lines, fmt.Sprintf("%d qualifying relationships were omitted by the bounded report cap.", count))
+		}
+		if limitations := metadataStringSlice(metadata, "limitations"); len(limitations) > 0 {
+			lines = append(lines, "Analysis limitations: "+strings.Join(limitations, "; "))
+		}
+		return strings.Join(lines, "\n")
+	}
 	if strings.EqualFold(finding.FindingType, "ad_gpo_privilege_relationship_evidence") {
 		metadata := findingMetadata(finding)
 		lines := []string{"Effective GPO authorization, GPC/SYSVOL write access and client-side policy application were not evaluated."}
@@ -947,9 +968,13 @@ func findingLimitations(finding storage.Finding) string {
 }
 
 func metadataInt(metadata map[string]any, key string) int {
+	return metadataIntDefault(metadata, key, 0)
+}
+
+func metadataIntDefault(metadata map[string]any, key string, fallback int) int {
 	value, ok := metadata[key]
 	if !ok {
-		return 0
+		return fallback
 	}
 	switch number := value.(type) {
 	case float64:
@@ -957,8 +982,16 @@ func metadataInt(metadata map[string]any, key string) int {
 	case int:
 		return number
 	default:
+		return fallback
+	}
+}
+
+func lenMetadataRelationships(metadata map[string]any) int {
+	values, ok := metadata["relationships"].([]any)
+	if !ok {
 		return 0
 	}
+	return len(values)
 }
 
 func formatReplicationRightsOverview(finding storage.Finding) string {
@@ -2010,6 +2043,8 @@ func findingImpact(finding storage.Finding) string {
 		return impact
 	}
 	switch {
+	case typ == "ad_writable_object_assessment":
+		return "RustHound observed write-capable relationships involving the configured identity or its source-backed group memberships. This is an assessment lead, not proof of effective modification access or privilege escalation."
 	case isGeneralACLInventory(finding):
 		return "RustHound collected Active Directory ACL relationships describing configured permissions between principals and directory objects. These relationships provide evidence for administrative review but do not, by themselves, establish effective access, misconfiguration or exploitability."
 	case typ == "ad_privileged_acl_evidence_inventory":
@@ -2035,6 +2070,8 @@ func findingRemediation(finding storage.Finding) string {
 		return remediation
 	}
 	switch {
+	case typ == "ad_writable_object_assessment":
+		return "Review each relationship against current directory permissions, deny entries, inheritance, object-specific applicability and the authenticated identity's effective token. Do not modify directory objects solely from this observation."
 	case isGeneralACLInventory(finding):
 		return "Review the collected ACL relationships in the full evidence report, prioritize sensitive objects and unexpected principals, and validate effective permissions and operational requirements before making any access-control changes."
 	case strings.Contains(typ, "asrep"):
