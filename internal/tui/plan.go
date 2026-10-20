@@ -368,12 +368,24 @@ func (m *model) continuePlan() tea.Cmd {
 	}
 	if len(p.approvals) > 0 {
 		if p.name == "Default Enumeration" {
-			// Default Enumeration is the operator's explicit configured profile.
-			// Sensitivity metadata remains available for reporting, but must never
-			// silently turn the configured profile into a smaller run.
-			p.approvals = nil
+			// Default Enumeration does not open a grouped prompt for credential
+			// material, but module-owned safety gates still apply. This keeps
+			// bounded operations such as SMB metadata traversal explicit without
+			// turning the configured profile into a smaller run.
+			retained := make([]approval, 0, len(p.approvals))
+			for _, item := range p.approvals {
+				if item.index < 0 || item.index >= len(m.allModules) {
+					continue
+				}
+				if m.allModules[item.index].ID() == "smb-spider-plus" {
+					retained = append(retained, item)
+				}
+			}
+			p.approvals = retained
 			m.pending = p
-			return m.continuePlan()
+			if len(p.approvals) == 0 {
+				return m.continuePlan()
+			}
 		}
 		m.pending = p
 		m.approvalPrompt = true

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pwnflow/pwnflow/internal/config"
@@ -96,4 +97,36 @@ func TestDefaultEnumerationDoesNotOpenGroupedApprovalPrompt(t *testing.T) {
 		t.Fatalf("unexpected Default Enumeration queue: %v", batchIDs(m))
 	}
 	m.cancelBatch()
+}
+
+func TestDefaultEnumerationDoesNotPromptForSMBSpiderTarget(t *testing.T) {
+	registered := fullRegistry()
+	spiderIndex := -1
+	for index, module := range registered {
+		if module.ID() == "smb-spider-plus" {
+			spiderIndex = index
+			break
+		}
+	}
+	if spiderIndex < 0 {
+		t.Fatal("smb-spider-plus is missing from the production registry")
+	}
+	m := newModel(context.Background(), config.Config{Target: "198.51.100.10", Domain: "example.test", Username: "operator", Root: t.TempDir()}, nil, registered, make([]int64, len(registered)), 1, "production-test")
+	m.width, m.height = 140, 45
+	m.resizeOutput()
+	cmd := m.startPlan(plan{
+		name:      "Default Enumeration",
+		requested: 1,
+		indices:   []int{spiderIndex},
+		approvals: []approval{{index: spiderIndex, reason: "metadata traversal approval"}},
+	})
+	if cmd == nil && !m.approvalPrompt {
+		t.Fatal("expected the existing spider approval gate")
+	}
+	if m.inputPrompt || len(m.inputQueue) != 0 {
+		t.Fatalf("SMB spider opened a target-input prompt: prompt=%v queue=%v status=%q", m.inputPrompt, len(m.inputQueue), m.status)
+	}
+	if strings.Contains(m.status, "AUTHORIZED_SCOPE") || strings.Contains(m.status, "exact SMB target") {
+		t.Fatalf("legacy SMB target prompt leaked into Ctrl+A planning: %q", m.status)
+	}
 }

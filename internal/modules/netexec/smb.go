@@ -33,7 +33,7 @@ func SMBEnumerationModules() []modules.Module {
 		{
 			id: "smb-spider-plus", name: "SMB Spider Plus",
 			description: "Recursively inventories metadata from readable SMB shares without downloading file contents. Automatic runs use approved current-batch NetworkHound TCP/445 results; manual runs may provide exact SMB_ENDPOINTS.",
-			module:      "spider_plus", runtimeOnly: []string{"AUTHORIZED_SCOPE", "SMB_ENDPOINTS"},
+			module:      "spider_plus", runtimeOnly: []string{"SMB_ENDPOINTS"},
 			forcedOptions: map[string]func(*modules.Runtime) string{"OUTPUT_FOLDER": spiderOutputFolder},
 		},
 		{

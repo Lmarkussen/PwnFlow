@@ -616,9 +616,6 @@ func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
 		return nil, fmt.Errorf("runtime is required")
 	}
 	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
-	if strings.TrimSpace(scope) == "" {
-		scope, _ = m.optionValue(runtime, "AUTHORIZED_SCOPE")
-	}
 	if err := networkhound.ValidateScope(scope); err != nil {
 		return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: approved scope is missing or invalid"}
 	}
@@ -689,19 +686,6 @@ func endpointParts(endpoint string) (string, string) {
 }
 
 var spiderPlusWallClockLimit = 10 * time.Minute
-
-func scopeAllowsTarget(scope, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, item := range strings.Split(scope, ",") {
-		if strings.EqualFold(strings.TrimSpace(item), target) {
-			return true
-		}
-	}
-	return false
-}
 
 func writeSpiderSummary(runtime *modules.Runtime, sink modules.OutputSink) {
 	if runtime == nil || runtime.ExecutionOutputPath == "" {

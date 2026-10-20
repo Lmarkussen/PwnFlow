@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 )
 
 func spiderPlusModuleForTest(t *testing.T) Module {
@@ -32,7 +33,7 @@ func TestSpiderPlusUsesMetadataOnlyCommandAndExecutionScopedOutput(t *testing.T)
 		Password:            "secret",
 		ResultsRoot:         "/results",
 		ExecutionOutputPath: "/results/Enumeration/NetExec/SMB_spider_plus/executions/run/transcript.txt",
-		ModuleOptions:       map[string]map[string]string{module.ID(): {"AUTHORIZED_SCOPE": "198.51.100.15"}},
+		ModuleOptions:       map[string]map[string]string{"networkhound-scope-validation": {"NETWORKS": "198.51.100.15"}},
 	}
 	args := module.CommandArgs(runtime)
 	joined := strings.Join(args, " ")
@@ -52,10 +53,10 @@ func TestSpiderPlusUsesMetadataOnlyCommandAndExecutionScopedOutput(t *testing.T)
 	}
 }
 
-func TestSpiderPlusPolicyOptionIsAcceptedButOutputPathIsNotConfigurable(t *testing.T) {
+func TestSpiderPlusManualEndpointOptionIsAcceptedButOutputPathIsNotConfigurable(t *testing.T) {
 	module := spiderPlusModuleForTest(t)
 	warnings := modules.OptionWarnings([]modules.Module{module}, map[string]map[string]string{
-		module.ID(): {"AUTHORIZED_SCOPE": "198.51.100.15"},
+		module.ID(): {"SMB_ENDPOINTS": "198.51.100.15"},
 	})
 	if len(warnings) != 0 {
 		t.Fatalf("authorized scope was rejected as an unknown policy option: %v", warnings)
@@ -63,7 +64,7 @@ func TestSpiderPlusPolicyOptionIsAcceptedButOutputPathIsNotConfigurable(t *testi
 	runtime := &modules.Runtime{
 		Target:              "198.51.100.15",
 		ExecutionOutputPath: "/results/Enumeration/NetExec/SMB_spider_plus/executions/run/transcript.txt",
-		ModuleOptions:       map[string]map[string]string{module.ID(): {"AUTHORIZED_SCOPE": "198.51.100.15", "OUTPUT_FOLDER": "/tmp/unsafe"}},
+		ModuleOptions:       map[string]map[string]string{"networkhound-scope-validation": {"NETWORKS": "198.51.100.15"}, module.ID(): {"SMB_ENDPOINTS": "198.51.100.15", "OUTPUT_FOLDER": "/tmp/unsafe"}},
 	}
 	args := strings.Join(module.CommandArgs(runtime), " ")
 	if strings.Contains(args, "OUTPUT_FOLDER=/tmp/unsafe") || !strings.Contains(args, "OUTPUT_FOLDER=/results/Enumeration/NetExec/SMB_spider_plus/executions/run") {
@@ -71,7 +72,7 @@ func TestSpiderPlusPolicyOptionIsAcceptedButOutputPathIsNotConfigurable(t *testi
 	}
 }
 
-func TestSpiderPlusRequiresExactAuthorizedTargetScope(t *testing.T) {
+func TestSpiderPlusRequiresApprovedNetworkHoundScope(t *testing.T) {
 	module := spiderPlusModuleForTest(t)
 	for _, test := range []struct {
 		name, scope string
@@ -80,32 +81,31 @@ func TestSpiderPlusRequiresExactAuthorizedTargetScope(t *testing.T) {
 		{name: "exact", scope: "198.51.100.15", allowed: true},
 		{name: "multiple exact targets", scope: "198.51.100.14,198.51.100.15", allowed: true},
 		{name: "different target", scope: "198.51.100.16", allowed: false},
-		{name: "wildcard", scope: "198.51.100.0/24", allowed: false},
+		{name: "wildcard", scope: "198.51.100.0/24", allowed: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			runtime := &modules.Runtime{Target: "198.51.100.15", ModuleOptions: map[string]map[string]string{module.ID(): {"AUTHORIZED_SCOPE": test.scope}}}
+			runtime := &modules.Runtime{Target: "198.51.100.15", ModuleOptions: map[string]map[string]string{"networkhound-scope-validation": {"NETWORKS": test.scope}}}
 			approved, _ := module.PlanApproval(runtime)
 			if !approved {
 				t.Fatal("spider_plus must remain explicitly approval-gated")
 			}
-			if got := scopeAllowsTarget(test.scope, runtime.Target); got != test.allowed {
-				t.Fatalf("scopeAllowsTarget(%q)=%v, want %v", test.scope, got, test.allowed)
+			if got := networkhound.AddressInScope(runtime.Target, test.scope); got != test.allowed {
+				t.Fatalf("AddressInScope(%q)=%v, want %v", test.scope, got, test.allowed)
 			}
 		})
 	}
 }
 
 func TestSpiderPlusCheckRejectsOutOfScopeTargetWithoutRunning(t *testing.T) {
-	module := spiderPlusModuleForTest(t)
 	runtime := &modules.Runtime{
 		Target:        "198.51.100.15",
 		Domain:        "example.test",
-		ModuleOptions: map[string]map[string]string{module.ID(): {"AUTHORIZED_SCOPE": "198.51.100.16"}},
+		ModuleOptions: map[string]map[string]string{"networkhound-scope-validation": {"NETWORKS": "198.51.100.16"}},
 	}
 	// The dependency/capability checks may fail first on a developer workstation;
 	// the pure scope predicate is asserted separately above. This test documents
 	// the no-run policy without invoking NetExec or a target.
-	if scopeAllowsTarget(runtime.ModuleOptions[module.ID()]["AUTHORIZED_SCOPE"], runtime.Target) {
+	if networkhound.AddressInScope(runtime.Target, runtime.ModuleOptions["networkhound-scope-validation"]["NETWORKS"]) {
 		t.Fatal("out-of-scope target was accepted")
 	}
 }
