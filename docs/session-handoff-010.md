@@ -9,7 +9,7 @@ PwnFlow is an enumeration, safe-validation, evidence-analysis and reporting appl
 - Kali source-copy: `/home/kali/PwnFlow`
 - Kali executable: `/home/kali/PwnFlow/bin/pwnflow`
 - Kali host: `kali@100.72.35.81`
-- Current development/origin commit: `bb1f1af614f1f8c63f2175ac1b4fc860bb611661`
+- Current development/origin commit: `1fd18742961618bdb99a8ac720904cbfe8d52584`
 - Kali is deliberately non-Git; source-manifest hashes are the deployment parity check.
 
 Only the authorized disposable lab is in scope: `sccm.lab`, DC `10.1.10.40`, SCCM/PXE `10.1.10.41`, MSSQL/member server `10.1.10.42`, and workstation `10.1.10.43`. Do not expand scope, authenticate elsewhere, or run full enumeration without explicit operator authorization.
@@ -18,7 +18,7 @@ Only the authorized disposable lab is in scope: `sccm.lab`, DC `10.1.10.40`, SCC
 
 Implemented and locally validated: P1, P2, P3 (hard pass), accepted TUI navigation, SPHunter, RustHound-backed AD writable-object analysis, NetworkHound-driven FTP validation, NetworkHound-driven SMB Spider Plus targeting, artifact ownership normalization, and the 009F Spider Plus scheduling fix.
 
-Deployed and offline-verified: the 009F build was deployed to Kali at commit `77822647fd6ed32617b346cbb06d3f99dd2159ce` with binary SHA-256 `f65781e1dbf234c7f37c46077aa90c9c0f2f9c1190930006debf1ae9427b9079`. 009F live operator acceptance remains pending; no new live crawl was run after that fix.
+Deployed and offline-verified: the Codex 010 build was deployed to Kali at commit `1fd18742961618bdb99a8ac720904cbfe8d52584` with binary SHA-256 `f65781e1dbf234c7f37c46077aa90c9c0f2f9c1190930006debf1ae9427b9079`; it includes the 009F fix. 009F live operator acceptance remains pending; no new live crawl was run after that fix.
 
 Operator accepted: prior Finder/Watcher/Tool Runner navigation and Findings layout behavior. Pending operator acceptance: Codex 010 Easter egg and the post-009F Spider Plus runtime behavior.
 
