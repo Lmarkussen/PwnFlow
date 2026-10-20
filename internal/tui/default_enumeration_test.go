@@ -8,12 +8,23 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 39 {
-		t.Fatalf("Default Enumeration has %d entries, want 39", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 40 {
+		t.Fatalf("Default Enumeration has %d entries, want 40", len(defaultEnumerationModuleIDs))
 	}
 	base := defaultEnumerationModuleIDs[:32]
 	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
 		t.Fatal("the original 32-entry profile was not preserved as the prefix")
+	}
+	wantPrefix := []string{
+		"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
+		"smb-server-info", "smb-sessions", "logged-on-users", "smb-ntlm-reflection", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
+		"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
+		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
+	}
+	for index, id := range wantPrefix {
+		if defaultEnumerationModuleIDs[index] != id {
+			t.Fatalf("original profile entry %d=%q, want %q", index+1, defaultEnumerationModuleIDs[index], id)
+		}
 	}
 	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check"}
 	for index, id := range wantAuth {
@@ -33,6 +44,9 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	}
 	if defaultEnumerationModuleIDs[32] != "gpoparser-remote" {
 		t.Fatalf("GPO remote analysis is not after the existing Default Enumeration prefix: %q", defaultEnumerationModuleIDs[32])
+	}
+	if defaultEnumerationModuleIDs[39] != "sphunter-tenant-discovery" {
+		t.Fatalf("SPHunter is not the additive entry 40: %q", defaultEnumerationModuleIDs[39])
 	}
 }
 

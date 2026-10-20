@@ -43,10 +43,10 @@ func TestReportingIsAbsentFromTheTaxonomy(t *testing.T) {
 			t.Fatal("Reporting is still a protocol")
 		}
 	}
-	if len(modules.ToolFamilies()) != 5 {
+	if len(modules.ToolFamilies()) != 6 {
 		t.Fatalf("unexpected tool families: %v", modules.ToolFamilies())
 	}
-	for _, want := range []modules.ToolFamily{modules.ToolFamilyNetExec, modules.ToolFamilyADCS, modules.ToolFamilyActiveDirectory, modules.ToolFamilySCCM, modules.ToolFamilyNetwork} {
+	for _, want := range []modules.ToolFamily{modules.ToolFamilyNetExec, modules.ToolFamilyADCS, modules.ToolFamilyActiveDirectory, modules.ToolFamilySCCM, modules.ToolFamilyNetwork, modules.ToolFamilyPwnTools} {
 		if !containsFamily(modules.ToolFamilies(), want) {
 			t.Fatalf("tool family %q was removed along with Reporting", want)
 		}

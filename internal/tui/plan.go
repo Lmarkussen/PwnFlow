@@ -64,6 +64,7 @@ var defaultEnumerationModuleIDs = []string{
 	// SMB server check and LDAP whoami check above already perform their
 	// protocol authentication and must not be duplicated here.
 	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
+	"sphunter-tenant-discovery",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing
@@ -94,6 +95,12 @@ func (m *model) globalPlan() plan {
 		if !m.navigable(module) {
 			result.skipped = append(result.skipped, moduleID+" (not part of a tool family the navigation offers)")
 			continue
+		}
+		if policy, ok := module.(modules.ScopedGlobalExecutionPolicy); ok {
+			if include, reason := policy.IncludeInGlobalPlanForRuntime(m.moduleRuntime()); !include {
+				result.skipped = append(result.skipped, module.Name()+" ("+reason+")")
+				continue
+			}
 		}
 		if reason := m.moduleAvailability(module); reason != "" {
 			result.skipped = append(result.skipped, module.Name()+" (unavailable: "+reason+")")

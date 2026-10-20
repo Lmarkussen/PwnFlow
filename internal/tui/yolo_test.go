@@ -96,8 +96,12 @@ func TestYoloPlanCoversEveryFamilyFromAnyScope(t *testing.T) {
 	for _, index := range plan.indices {
 		families[m.allModules[index].ToolFamily()] = true
 	}
-	if len(families) != len(modules.ToolFamilies()) {
-		t.Fatalf("the plan covers %d of %d tool families", len(families), len(modules.ToolFamilies()))
+	registeredFamilies := map[modules.ToolFamily]bool{}
+	for _, module := range m.allModules {
+		registeredFamilies[module.ToolFamily()] = true
+	}
+	if len(families) != len(registeredFamilies) {
+		t.Fatalf("the plan covers %d of %d registered tool families", len(families), len(registeredFamilies))
 	}
 }
 

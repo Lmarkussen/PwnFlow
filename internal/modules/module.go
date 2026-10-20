@@ -24,10 +24,11 @@ const (
 	ToolFamilyActiveDirectory ToolFamily = "Active Directory"
 	ToolFamilySCCM            ToolFamily = "SCCM"
 	ToolFamilyNetwork         ToolFamily = "Network"
+	ToolFamilyPwnTools        ToolFamily = "PwnTools"
 )
 
 func ToolFamilies() []ToolFamily {
-	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork}
+	return []ToolFamily{ToolFamilyNetExec, ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork, ToolFamilyPwnTools}
 }
 
 // NavigationModeForFamily describes how the browser presents a family. Module
@@ -35,7 +36,7 @@ func ToolFamilies() []ToolFamily {
 // need an extra operator-facing folder to reach their small set of modules.
 func NavigationModeForFamily(family ToolFamily) NavigationMode {
 	switch family {
-	case ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork:
+	case ToolFamilyADCS, ToolFamilyActiveDirectory, ToolFamilySCCM, ToolFamilyNetwork, ToolFamilyPwnTools:
 		return NavigationFlat
 	default:
 		return NavigationNested
@@ -108,6 +109,8 @@ func CategoriesForFamily(family ToolFamily) []Category {
 		return []Category{CategoryEnumeration, CategoryConfigurationAuditing}
 	case ToolFamilyNetwork:
 		return []Category{CategoryHostDiscovery, CategoryServiceEnumeration, CategoryPermissionsAuditing, CategorySecurityAuditing}
+	case ToolFamilyPwnTools:
+		return []Category{CategoryEnumeration, CategoryPermissionsAuditing}
 	default:
 		return nil
 	}
@@ -221,6 +224,13 @@ type ApprovalRequester interface {
 // for manual selection while being excluded from the broad unattended plan.
 type GlobalExecutionPolicy interface {
 	IncludeInGlobalPlan() (bool, string)
+}
+
+// ScopedGlobalExecutionPolicy lets a module decide whether it belongs in the
+// unattended plan using the operator's current runtime options. Manual runs
+// remain available so the module can still collect the missing scope safely.
+type ScopedGlobalExecutionPolicy interface {
+	IncludeInGlobalPlanForRuntime(*Runtime) (bool, string)
 }
 
 // Endpoint is one SCCM-related system discovered during an assessment.

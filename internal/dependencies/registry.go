@@ -50,6 +50,7 @@ const (
 	GPOParser    ID = "gpoparser"
 	GhostSPN     ID = "ghostspn"
 	Masscan      ID = "masscan"
+	SPHunter     ID = "sphunter"
 )
 
 // Layout locates a tool that is a source checkout with its own interpreter.
@@ -136,6 +137,7 @@ func DefaultRegistry() Registry {
 		{ID: GPOParser, DisplayName: "gpoParser", Install: "install.sh --with-gpoparser", InstallHint: "./install.sh --with-gpoparser", InstallMethod: InstallPipx, Package: "gpoParser", Required: false, Executable: "gpoParser", ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"GPO Analysis Tool"}},
 		{ID: GhostSPN, DisplayName: "ghostSPN", Install: "install.sh --with-ghostspn", InstallHint: "./install.sh --with-ghostspn", InstallMethod: InstallPipx, Package: "ghostSPN", Required: false, Executable: "ghostspn", ExecutableCandidates: []string{"ghostspn", "ghostSPN.py"}, ProbeArgs: []string{"--help"}, ProbeMustContain: []string{"ghost"}},
 		{ID: Masscan, DisplayName: "Masscan", Install: "install.sh --with-masscan", InstallHint: "./install.sh --with-masscan", InstallMethod: InstallAPT, Package: "masscan", Required: false, Executable: "masscan", ProbeArgs: []string{"--version"}, VersionArgs: []string{"--version"}, ProbeMustContain: []string{"masscan"}, ProbeAcceptsNonZeroExit: true},
+		{ID: SPHunter, DisplayName: "SPHunter", Install: "install.sh --with-sphunter", InstallHint: "./install.sh --with-sphunter", InstallMethod: InstallVenv, Package: "SPHunter", Required: false, Detection: DetectToolLayout, ProbeArgs: []string{"--help"}, Layout: &Layout{Roots: ToolRoots("SPHunter"), Script: "sphunter_entry.py", Interpreters: []string{".venv/bin/python3"}}},
 	}}
 }
 

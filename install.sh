@@ -14,6 +14,7 @@ install_mssqlpwner=0
 install_gpoparser=0
 install_ghostspn=0
 install_masscan=0
+install_sphunter=0
 install_failures=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
@@ -28,6 +29,7 @@ mssqlpwner_status="Skipped"
 gpoparser_status="Skipped"
 ghostspn_status="Skipped"
 masscan_status="Skipped"
+sphunter_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
 for argument in "$@"; do
@@ -45,6 +47,7 @@ for argument in "$@"; do
     --with-gpoparser) install_gpoparser=1 ;;
     --with-ghostspn) install_ghostspn=1 ;;
     --with-masscan) install_masscan=1 ;;
+    --with-sphunter) install_sphunter=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -52,12 +55,12 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan] [--with-sphunter]"
       echo ""
       echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
       echo "tooling SCCMhunter and PXEThief, and the network assessment tools"
-      echo "NetworkHound, RelayKing and Masscan. NetworkHound and RelayKing are source checkouts with their own virtual"
+      echo "NetworkHound, RelayKing, Masscan and SPHunter. NetworkHound, RelayKing and SPHunter are source checkouts with their own virtual"
       echo "environments. No shell activation is required."
       echo "Kali Linux is the only supported installation target."
       exit 0
@@ -538,6 +541,7 @@ pxethief_root() { printf '%s/PXEThief\n' "$(pwnflow_tools_root)"; }
 networkhound_root() { printf '%s/NetworkHound\n' "$(pwnflow_tools_root)"; }
 relayking_root() { printf '%s/RelayKing\n' "$(pwnflow_tools_root)"; }
 sccmsecrets_root() { printf '%s/SCCMSecrets\n' "$(pwnflow_tools_root)"; }
+sphunter_root() { printf '%s/SPHunter\n' "$(pwnflow_tools_root)"; }
 
 install_pipx_source() {
   local package="$1" url="$2" executable="$3" status_name="$4" expected="$5" current help
@@ -645,6 +649,39 @@ ensure_checkout_environment() {
     return 1
   fi
   return 0
+}
+
+install_sphunter() {
+  local root interpreter script_dir
+  root="$(sphunter_root)"
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -d "${root}" && ! -d "${root}/.git" ]]; then
+    echo "${root} exists but is not an SPHunter checkout; move it aside and re-run." >&2
+    sphunter_status="Failed (${root} is not a git checkout)"
+    return 1
+  fi
+  if [[ ! -d "${root}/.git" ]]; then
+    command -v git >/dev/null 2>&1 || { sphunter_status="Failed (git unavailable)"; return 1; }
+    mkdir -p "$(dirname "${root}")"
+    echo "Cloning SPHunter into ${root}."
+    git clone https://github.com/Lmarkussen/sphunter.git "${root}" || { sphunter_status="Failed (git clone failed)"; return 1; }
+  fi
+  if ! git -C "${root}" checkout --detach 3696bc2edba1975d2e15b355e3a673cf259540bf; then
+    echo "The SPHunter checkout does not contain the validated revision." >&2
+    sphunter_status="Failed (required revision unavailable)"
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    sphunter_status="Failed (python3 unavailable)"
+    return 1
+  fi
+  [[ -x "${root}/.venv/bin/python3" ]] || python3 -m venv "${root}/.venv"
+  "${root}/.venv/bin/pip3" install -e "${root}" || { sphunter_status="Failed (Python environment could not be prepared)"; return 1; }
+  cp "${script_dir}/internal/modules/pwntools/sphunter_entry.py" "${root}/sphunter_entry.py"
+  interpreter="${root}/.venv/bin/python3"
+  "${interpreter}" "${root}/sphunter_entry.py" --help >/dev/null || { sphunter_status="Failed (SPHunter capability probe failed)"; return 1; }
+  sphunter_status="Installed"
+  echo "SPHunter installed at ${root} (${interpreter} ${root}/sphunter_entry.py)"
 }
 
 # sccmhunter_workflow_supported requires the checkout to document the find options
@@ -951,6 +988,7 @@ print_summary() {
   echo "  gpoParser: ${gpoparser_status}"
   echo "  ghostSPN: ${ghostspn_status}"
   echo "  Masscan: ${masscan_status}"
+  echo "  SPHunter: ${sphunter_status}"
 }
 
 run_install_attempt() {
@@ -977,6 +1015,7 @@ if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_sour
 if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
 if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git ghostspn ghostspn_status ghost; fi
 if [[ ${install_masscan} -eq 1 ]]; then run_install_attempt install_masscan masscan_status; fi
+if [[ ${install_sphunter} -eq 1 ]]; then run_install_attempt install_sphunter sphunter_status; fi
 print_summary
 if [[ ${install_failures} -ne 0 ]]; then
   exit 1

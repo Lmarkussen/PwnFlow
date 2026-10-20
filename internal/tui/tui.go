@@ -14,6 +14,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/masscan"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
+	"github.com/pwnflow/pwnflow/internal/modules/pwntools"
 	"github.com/pwnflow/pwnflow/internal/modules/relayking"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
@@ -60,6 +61,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		registry.Register(module)
 	}
 	registry.Register(masscan.Module{})
+	registry.Register(pwntools.SPHunter{})
 	registered := registry.All()
 	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
 		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
