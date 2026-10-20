@@ -19,11 +19,10 @@ import (
 )
 
 const (
-	ftpAnonymousID             = "ftp-anonymous-access"
-	ftpEndpointOption          = "FTP_ENDPOINT"
-	networkHoundArtifactOption = "NETWORKHOUND_ARTIFACT"
-	ftpAnonymousOutput         = "Enumeration/PwnTools/FTPAnonymousAccess/anonymous-ftp.json"
-	ftpTimeout                 = 10 * time.Second
+	ftpAnonymousID     = "ftp-anonymous-access"
+	ftpEndpointOption  = "FTP_ENDPOINT"
+	ftpAnonymousOutput = "Enumeration/PwnTools/FTPAnonymousAccess/anonymous-ftp.json"
+	ftpTimeout         = 10 * time.Second
 )
 
 type FTPAnonymousAccess struct{}
@@ -73,7 +72,7 @@ func (FTPAnonymousAccess) BatchPrerequisites() []string {
 	return []string{"networkhound-scope-validation"}
 }
 func (FTPAnonymousAccess) OptionKeys() []string {
-	return []string{ftpEndpointOption, networkHoundArtifactOption}
+	return []string{ftpEndpointOption}
 }
 func (FTPAnonymousAccess) MissingInputs(*modules.Runtime) []modules.InputField { return nil }
 func (FTPAnonymousAccess) Status(runtime *modules.Runtime) modules.Status {
@@ -106,9 +105,6 @@ func (FTPAnonymousAccess) StatusReason(runtime *modules.Runtime) string {
 }
 func (FTPAnonymousAccess) ValidateOptionValue(key, value string) error {
 	if key != ftpEndpointOption {
-		if key == networkHoundArtifactOption {
-			return nil
-		}
 		return fmt.Errorf("unknown option %s", key)
 	}
 	_, _, err := parseFTPEndpoint(value)
@@ -218,8 +214,8 @@ func discoveredEndpoints(runtime *modules.Runtime) ([]string, string) {
 	if runtime == nil {
 		return nil, "SKIPPED — NetworkHound discovery unavailable"
 	}
-	path, ok := runtime.ModuleOption(ftpAnonymousID, networkHoundArtifactOption)
-	if !ok && runtime.BatchArtifacts != nil {
+	path, ok := "", false
+	if runtime.BatchArtifacts != nil {
 		path, ok = runtime.BatchArtifacts["networkhound-scope-validation"]
 	}
 	if !ok {
