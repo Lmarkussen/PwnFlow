@@ -32,9 +32,8 @@ func SMBEnumerationModules() []modules.Module {
 		},
 		{
 			id: "smb-spider-plus", name: "SMB Spider Plus",
-			description: "Recursively inventories metadata from readable SMB shares without downloading file contents. It requires an explicitly authorized exact target scope and an operator approval because traversal cost is target-dependent.",
-			module:      "spider_plus", required: []string{"AUTHORIZED_SCOPE"}, runtimeOnly: []string{"AUTHORIZED_SCOPE"},
-			inputUsage:    map[string]string{"AUTHORIZED_SCOPE": "the exact SMB target authorized for metadata traversal; comma-separated targets are accepted"},
+			description: "Recursively inventories metadata from readable SMB shares without downloading file contents. Automatic runs use approved current-batch NetworkHound TCP/445 results; manual runs may provide exact SMB_ENDPOINTS.",
+			module:      "spider_plus", runtimeOnly: []string{"AUTHORIZED_SCOPE", "SMB_ENDPOINTS"},
 			forcedOptions: map[string]func(*modules.Runtime) string{"OUTPUT_FOLDER": spiderOutputFolder},
 		},
 		{

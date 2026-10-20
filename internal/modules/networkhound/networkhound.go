@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pwnflow/pwnflow/internal/artifacts"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/process"
@@ -472,7 +473,7 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	}
 	started := time.Now()
 	runDirectory := m.RunArtifactDirectory(runtime, started)
-	if err := os.MkdirAll(runDirectory, 0750); err != nil {
+	if err := artifacts.EnsureDirectory(runDirectory, 0750); err != nil {
 		return fmt.Errorf("create NetworkHound run directory: %w", err)
 	}
 	// The run directory is named in the transcript, so the operator can find this
@@ -516,6 +517,18 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 // artifact is intentionally supplied by the current batch; this function never
 // searches historical results or performs a network request.
 func OpenFTPEndpoints(path, scope string) ([]string, error) {
+	return OpenPortEndpoints(path, scope, 21)
+}
+
+// OpenSMBEndpoints reads only current-batch NetworkHound evidence reporting
+// TCP/445 as open. It never probes a host or consults historical results.
+func OpenSMBEndpoints(path, scope string) ([]string, error) {
+	return OpenPortEndpoints(path, scope, 445)
+}
+
+// OpenPortEndpoints returns literal, in-scope addresses whose open_ports list
+// contains the requested TCP port.
+func OpenPortEndpoints(path, scope string, wantedPort int) ([]string, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("NetworkHound artifact path is empty")
 	}
@@ -548,8 +561,8 @@ func OpenFTPEndpoints(path, scope string) ([]string, error) {
 						continue
 					}
 					for _, port := range ports {
-						if number, ok := port.(float64); ok && int(number) == 21 {
-							endpoint := net.JoinHostPort(address, "21")
+						if openPortValue(port, wantedPort) {
+							endpoint := net.JoinHostPort(address, strconv.Itoa(wantedPort))
 							if !seen[endpoint] {
 								seen[endpoint] = true
 								endpoints = append(endpoints, endpoint)
@@ -565,6 +578,31 @@ func OpenFTPEndpoints(path, scope string) ([]string, error) {
 	}
 	walk(document)
 	return endpoints, nil
+}
+
+func openPortValue(value any, wanted int) bool {
+	switch value := value.(type) {
+	case float64:
+		return int(value) == wanted
+	case string:
+		number, err := strconv.Atoi(strings.TrimSpace(value))
+		return err == nil && number == wanted
+	case map[string]any:
+		for _, key := range []string{"port", "number", "port_number"} {
+			if candidate, ok := value[key]; ok && openPortValue(candidate, wanted) {
+				state, hasState := value["state"]
+				if !hasState {
+					state, hasState = value["status"]
+				}
+				if !hasState {
+					return true
+				}
+				text, ok := state.(string)
+				return ok && strings.EqualFold(strings.TrimSpace(text), "open")
+			}
+		}
+	}
+	return false
 }
 
 func literalAddresses(item map[string]any) []string {
@@ -613,6 +651,13 @@ func addressInScope(address, scope string) bool {
 	return false
 }
 
+// AddressInScope exposes the same literal scope policy to dependent modules.
+func AddressInScope(address, scope string) bool { return addressInScope(address, scope) }
+
+// ValidateScope exposes NetworkHound's explicit operator scope validation to
+// dependent modules without creating a second scope parser.
+func ValidateScope(scope string) error { return validateScope(scope) }
+
 func bytesCompare(left, right net.IP) int {
 	left, right = left.To4(), right.To4()
 	return strings.Compare(string(left), string(right))
@@ -622,7 +667,7 @@ func bytesCompare(left, right net.IP) int {
 // 0600. The assessment tree already has restrictive permissions, and this closes
 // the gap the external tool leaves when it creates its own output files.
 func hardenRunDirectory(directory string) error {
-	return filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
+	err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -631,6 +676,10 @@ func hardenRunDirectory(directory string) error {
 		}
 		return os.Chmod(path, 0o600)
 	})
+	if err != nil {
+		return err
+	}
+	return artifacts.NormalizeTree(directory)
 }
 
 // ValidateOptionValue reports whether an operator-supplied option value is

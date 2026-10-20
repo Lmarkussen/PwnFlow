@@ -125,6 +125,21 @@ func TestScopedValidationRetainsFTPAndTelnetPorts(t *testing.T) {
 	}
 }
 
+func TestOpenSMBEndpointsUsesOnlyOpenInScopePort445(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "network_scope.json")
+	data := `{"devices":[{"ip_addresses":["198.51.100.10"],"open_ports":[21,445]},{"ip":"198.51.100.11","open_ports":[23]},{"ip":"203.0.113.10","open_ports":[445]}]}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err := OpenSMBEndpoints(path, "198.51.100.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 || endpoints[0] != "198.51.100.10:445" {
+		t.Fatalf("unexpected SMB endpoints: %#v", endpoints)
+	}
+}
+
 // The credential never reaches a preview, and the scope always does.
 func TestPreviewRedactsTheCredential(t *testing.T) {
 	entry := module(t, "networkhound-topology")

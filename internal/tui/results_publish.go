@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/pwnflow/pwnflow/internal/artifacts"
 	"unicode"
 
 	findingengine "github.com/pwnflow/pwnflow/internal/findings"
@@ -135,6 +137,9 @@ func publishDefaultResults(ctx context.Context, db *storage.DB, resultsRoot, dom
 		if err := os.MkdirAll(filepath.Join(stage, tool), 0o700); err != nil {
 			return err
 		}
+	}
+	if err := artifacts.NormalizeTree(stage); err != nil {
+		return fmt.Errorf("handoff published artifacts to operator: %w", err)
 	}
 	return publishStage(stage, resultsRoot, tools)
 }

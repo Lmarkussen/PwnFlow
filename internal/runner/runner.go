@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/pwnflow/pwnflow/internal/artifacts"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/security"
 )
@@ -51,12 +52,12 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 			defer func() { runtime.ExecutionOutputPath = "" }()
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+	if err := artifacts.EnsureDirectory(filepath.Dir(path), 0750); err != nil {
 		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
 	history := filepath.Join(filepath.Dir(path), "history", started.Format("20060102-150405")+".txt")
-	if err := os.MkdirAll(filepath.Dir(history), 0750); err != nil {
+	if err := artifacts.EnsureDirectory(filepath.Dir(history), 0750); err != nil {
 		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
 	}
@@ -88,6 +89,13 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 	// able to tell that it is where the tool got to rather than where it finished.
 	if err != nil && ctx.Err() != nil {
 		_, _ = sink.Write([]byte("\n[i] execution stopped before the tool finished; the output above is partial\n"))
+	}
+	if _, ok := m.(modules.ExecutionArtifactPathProvider); ok {
+		if err := artifacts.NormalizeTree(filepath.Dir(path)); err != nil {
+			_, _ = sink.writeSanitized([]byte(fmt.Sprintf("\n[i] artifact ownership handoff incomplete: %v\n", err)))
+		}
+	} else if err := artifacts.NormalizePaths(path, history); err != nil {
+		_, _ = sink.writeSanitized([]byte(fmt.Sprintf("\n[i] artifact ownership handoff incomplete: %v\n", err)))
 	}
 	result.Finished = time.Now()
 	result.OutputPath = path

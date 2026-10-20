@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/process"
 )
 
@@ -133,14 +135,14 @@ func (m Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
 	if m.ID() != "smb-spider-plus" {
 		return false, ""
 	}
-	if runtime == nil {
-		return true, "requires explicit approval for the exact authorized SMB target scope"
+	return true, "recursively reads SMB metadata from current-batch NetworkHound TCP/445 results"
+}
+
+func (m Module) BatchPrerequisites() []string {
+	if m.ID() == "smb-spider-plus" {
+		return []string{"networkhound-scope-validation"}
 	}
-	scope, ok := m.optionValue(runtime, "AUTHORIZED_SCOPE")
-	if !ok || !scopeAllowsTarget(scope, runtime.Target) {
-		return true, "requires explicit approval for the exact authorized SMB target scope"
-	}
-	return true, "recursively reads SMB metadata within the explicitly authorized target scope"
+	return nil
 }
 
 // ModuleName is the `-M` value, exposed so the inventory tooling and the tests
@@ -317,9 +319,8 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 		return fmt.Errorf("%s", reason)
 	}
 	if m.ID() == "smb-spider-plus" {
-		scope, _ := m.optionValue(runtime, "AUTHORIZED_SCOPE")
-		if !scopeAllowsTarget(scope, runtime.Target) {
-			return fmt.Errorf("AUTHORIZED_SCOPE must explicitly include the exact SMB target %q", runtime.Target)
+		if _, err := m.spiderTargets(runtime); err != nil {
+			return err
 		}
 	}
 	if reason := m.missingArgumentReason(runtime); reason != "" {
@@ -388,6 +389,13 @@ func (m Module) DetailLines(runtime *modules.Runtime) []string {
 		lines = append(lines, fmt.Sprintf("NetExec module: -M %s", m.definition.ModuleName))
 	} else {
 		lines = append(lines, "NetExec command: native protocol flag, no -M module")
+	}
+	if m.ID() == "smb-spider-plus" {
+		lines = append(lines,
+			"Targeting: current-batch NetworkHound TCP/445 endpoints",
+			"Manual override: SMB_ENDPOINTS (optional, exact in-scope hosts)",
+			"Approval: required once per assessment; metadata only, no downloads",
+		)
 	}
 	if len(m.definition.OptionKeys) > 0 {
 		lines = append(lines, "Module options: "+strings.Join(m.definition.OptionKeys, ", "))
@@ -556,28 +564,128 @@ func (m Module) ExecutionArtifactPath(resultsRoot string, started time.Time) str
 }
 
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
-	runContext := ctx
-	cancel := func() {}
 	if m.ID() == "smb-spider-plus" {
-		runContext, cancel = context.WithTimeout(ctx, spiderPlusWallClockLimit)
-		defer cancel()
+		return m.runSpiderPlus(ctx, runtime, sink)
 	}
-	cmd := process.Command(runContext, "nxc", m.CommandArgs(runtime)...)
+	cmd := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	started := time.Now()
-	if err := process.Wait(runContext, cmd); err != nil {
-		if m.ID() == "smb-spider-plus" {
-			writeSpiderSummary(runtime, sink)
-		}
-		if m.ID() == "smb-spider-plus" && runContext.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("spider_plus timed out after %s: %w", spiderPlusWallClockLimit, err)
-		}
+	if err := process.Wait(ctx, cmd); err != nil {
 		return fmt.Errorf("netexec failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 	}
-	if m.ID() == "smb-spider-plus" {
-		writeSpiderSummary(runtime, sink)
+	return nil
+}
+
+func (m Module) runSpiderPlus(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
+	targets, err := m.spiderTargets(runtime)
+	if err != nil {
+		return err
+	}
+	runContext, cancel := context.WithTimeout(ctx, spiderPlusWallClockLimit)
+	defer cancel()
+	started := time.Now()
+	var failures []string
+	for index, target := range targets {
+		if err := runContext.Err(); err != nil {
+			return err
+		}
+		copyRuntime := *runtime
+		copyRuntime.Target = target
+		fmt.Fprintf(sink, "[i] spider_plus target %d/%d: %s\n", index+1, len(targets), target)
+		command := process.Command(runContext, "nxc", m.CommandArgs(&copyRuntime)...)
+		command.Stdout, command.Stderr = sink, sink
+		if err := process.Wait(runContext, command); err != nil {
+			failures = append(failures, target+": "+err.Error())
+		}
+	}
+	writeSpiderSummary(runtime, sink)
+	if runContext.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("spider_plus timed out after %s", spiderPlusWallClockLimit)
+	}
+	if len(failures) == len(targets) {
+		return fmt.Errorf("spider_plus failed for every discovered SMB endpoint after %s: %s", time.Since(started).Round(time.Millisecond), strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		fmt.Fprintf(sink, "[i] spider_plus partial completion; failed targets: %s\n", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
+	if runtime == nil {
+		return nil, fmt.Errorf("runtime is required")
+	}
+	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
+	if strings.TrimSpace(scope) == "" {
+		scope, _ = m.optionValue(runtime, "AUTHORIZED_SCOPE")
+	}
+	if err := networkhound.ValidateScope(scope); err != nil {
+		return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: approved scope is missing or invalid"}
+	}
+	if override, ok := m.optionValue(runtime, "SMB_ENDPOINTS"); ok {
+		targets, err := parseSMBTargets(override, scope)
+		if err != nil {
+			return nil, err
+		}
+		if len(targets) == 0 {
+			return nil, modules.SkipError{Reason: "No authorized SMB endpoints were selected"}
+		}
+		return targets, nil
+	}
+	artifact := ""
+	if runtime.BatchArtifacts != nil {
+		artifact = runtime.BatchArtifacts["networkhound-scope-validation"]
+	}
+	if artifact == "" {
+		return nil, modules.SkipError{Reason: "SKIPPED — NetworkHound SMB discovery unavailable"}
+	}
+	targets, err := networkhound.OpenSMBEndpoints(artifact, scope)
+	if err != nil {
+		return nil, modules.SkipError{Reason: "SKIPPED — NetworkHound SMB discovery unavailable: " + err.Error()}
+	}
+	if len(targets) == 0 {
+		return nil, modules.SkipError{Reason: "SKIPPED — No open SMB endpoints found"}
+	}
+	for index := range targets {
+		targets[index] = endpointHost(targets[index])
+	}
+	return targets, nil
+}
+
+func parseSMBTargets(value, scope string) ([]string, error) {
+	seen := make(map[string]bool)
+	var targets []string
+	for _, raw := range strings.Split(value, ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		host, port := endpointParts(raw)
+		if port != "" && port != "445" {
+			return nil, fmt.Errorf("SMB endpoint %q is not TCP/445", raw)
+		}
+		if net.ParseIP(host) == nil || !networkhound.AddressInScope(host, scope) {
+			return nil, fmt.Errorf("SMB endpoint %q is outside the approved NetworkHound scope", raw)
+		}
+		if !seen[host] {
+			seen[host] = true
+			targets = append(targets, host)
+		}
+	}
+	return targets, nil
+}
+
+func endpointHost(endpoint string) string {
+	host, _ := endpointParts(endpoint)
+	return host
+}
+
+func endpointParts(endpoint string) (string, string) {
+	endpoint = strings.TrimSpace(endpoint)
+	if host, port, err := net.SplitHostPort(endpoint); err == nil {
+		return strings.Trim(host, "[]"), port
+	}
+	return strings.Trim(endpoint, "[]"), ""
 }
 
 var spiderPlusWallClockLimit = 10 * time.Minute
