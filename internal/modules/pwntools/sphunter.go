@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
 )
@@ -49,7 +51,12 @@ func (SPHunter) DependencyKey() string { return string(dependencies.SPHunter) }
 func (SPHunter) OptionKeys() []string  { return []string{m365DomainOption} }
 func (SPHunter) CommandPreview(runtime *modules.Runtime) string {
 	domain, _ := runtime.ModuleOption(sphunterID, m365DomainOption)
-	return fmt.Sprintf("sphunter %s --json", domain)
+	return fmt.Sprintf("sphunter %s --json <execution-scoped>/tenant-discovery.json", domain)
+}
+
+func (SPHunter) ExecutionArtifactPath(resultsRoot string, started time.Time) string {
+	name := started.UTC().Format("20060102-150405.000000000") + "-" + uuid.NewString()
+	return filepath.Join(resultsRoot, "Enumeration", "PwnTools", "SPHunter", "executions", name, "tenant-discovery.json")
 }
 
 func (SPHunter) MissingInputs(runtime *modules.Runtime) []modules.InputField {
@@ -115,7 +122,7 @@ func (m SPHunter) Check(ctx context.Context, runtime *modules.Runtime) error {
 	if !ok || !validDomain(domain) {
 		return errors.New("an explicitly authorized Microsoft 365 discovery domain is required")
 	}
-	status := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.SPHunter)
+	status := sphunterDependencyStatus(ctx)
 	if !status.Available {
 		return fmt.Errorf("%s: %s", status.DisplayName, status.Detail)
 	}
@@ -126,34 +133,82 @@ func (m SPHunter) Run(ctx context.Context, runtime *modules.Runtime, sink module
 	if err := m.Check(ctx, runtime); err != nil {
 		return err
 	}
-	status := dependencies.DefaultRegistry().CheckOne(ctx, dependencies.SPHunter)
+	status := sphunterDependencyStatus(ctx)
 	domain, _ := runtime.ModuleOption(sphunterID, m365DomainOption)
-	outputPath := filepath.Join(runtime.ResultsRoot, sphunterOutput)
+	outputPath := runtime.ExecutionOutputPath
+	if outputPath == "" {
+		outputPath = m.ExecutionArtifactPath(runtime.ResultsRoot, time.Now())
+	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, status.Interpreter, status.Script, domain, "--timeout", "10", "--delay", "0", "--jitter", "0", "--json")
+	args := []string{status.Script, domain, "--timeout", "10", "--delay", "0", "--jitter", "0", "--json", outputPath}
+	command := sphunterCommandContext(ctx, status.Interpreter, args...)
 	command.Dir = status.Root
 	output, err := command.CombinedOutput()
-	if writeErr := os.WriteFile(outputPath, output, 0o600); writeErr != nil {
-		return writeErr
-	}
-	if logErr := os.WriteFile(strings.TrimSuffix(outputPath, ".json")+".log", output, 0o600); logErr != nil {
-		return logErr
-	}
 	if _, writeErr := sink.Write(output); writeErr != nil {
 		return writeErr
 	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("SPHunter failed: %w", err)
+		return classifySPHunterError(ctx, err, output)
 	}
-	if !json.Valid(output) {
-		return errors.New("SPHunter returned invalid JSON")
+	data, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		return fmt.Errorf("SPHunter completed without producing its JSON artifact: %s", outputPath)
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("SPHunter produced invalid JSON at %s", outputPath)
+	}
+	if chmodErr := os.Chmod(outputPath, 0o600); chmodErr != nil {
+		return chmodErr
 	}
 	return nil
+}
+
+var sphunterDependencyStatus = func(ctx context.Context) dependencies.Status {
+	return dependencies.DefaultRegistry().CheckOne(ctx, dependencies.SPHunter)
+}
+
+var sphunterCommandContext = exec.CommandContext
+
+func classifySPHunterError(ctx context.Context, err error, output []byte) error {
+	if ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("SPHunter network timeout")
+		}
+		return ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return fmt.Errorf("SPHunter execution error: %w", err)
+	}
+	detail := strings.TrimSpace(string(output))
+	lower := strings.ToLower(detail)
+	switch exitErr.ExitCode() {
+	case 2:
+		return fmt.Errorf("SPHunter argument error (exit 2): %s", compactSPHunterDetail(detail))
+	case 1:
+		if strings.Contains(lower, "timeout") {
+			return fmt.Errorf("SPHunter network timeout: %s", compactSPHunterDetail(detail))
+		}
+		if strings.Contains(lower, "resolve") || strings.Contains(lower, "dns") || strings.Contains(lower, "not found") {
+			return fmt.Errorf("SPHunter domain not resolvable: %s", compactSPHunterDetail(detail))
+		}
+		return fmt.Errorf("SPHunter discovery unsuccessful (exit 1): %s", compactSPHunterDetail(detail))
+	default:
+		return fmt.Errorf("SPHunter failed with exit %d: %s", exitErr.ExitCode(), compactSPHunterDetail(detail))
+	}
+}
+
+func compactSPHunterDetail(detail string) string {
+	if detail == "" {
+		return "no diagnostic output"
+	}
+	const maxDetail = 600
+	if len(detail) > maxDetail {
+		return detail[:maxDetail] + "…"
+	}
+	return detail
 }
 
 var _ modules.Module = SPHunter{}
@@ -163,3 +218,4 @@ var _ modules.StatusProvider = SPHunter{}
 var _ modules.OptionDeclarer = SPHunter{}
 var _ modules.DependencyKeyProvider = SPHunter{}
 var _ modules.ScopedGlobalExecutionPolicy = SPHunter{}
+var _ modules.ExecutionArtifactPathProvider = SPHunter{}

@@ -294,6 +294,9 @@ type ElevationRequester interface {
 
 type Runtime struct {
 	Target, Domain, Username, Password, ResultsRoot string
+	// ExecutionOutputPath is set by the runner for modules that provide a
+	// per-execution artifact path. Modules should treat it as read-only.
+	ExecutionOutputPath string
 	// ModuleOptions carries operator-supplied options for individual modules,
 	// keyed by module ID and then by the option key the integration declared. It
 	// exists so a module that needs a value the operator alone can supply - a
@@ -362,6 +365,13 @@ type Module interface {
 	SecondaryConnections() []string
 	Check(context.Context, *Runtime) error
 	Run(context.Context, *Runtime, OutputSink) error
+}
+
+// ExecutionArtifactPathProvider lets a module place structured output in a
+// unique per-execution location while keeping OutputFile as its stable module
+// registration/display path.
+type ExecutionArtifactPathProvider interface {
+	ExecutionArtifactPath(resultsRoot string, started time.Time) string
 }
 
 // ExecutionPolicy is implemented by integrations that intentionally keep a

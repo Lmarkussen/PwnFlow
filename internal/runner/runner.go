@@ -44,6 +44,13 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 		return result
 	}
 	path := filepath.Join(root, m.OutputFile())
+	if provider, ok := m.(modules.ExecutionArtifactPathProvider); ok {
+		path = provider.ExecutionArtifactPath(root, started)
+		if runtime != nil {
+			runtime.ExecutionOutputPath = path
+			defer func() { runtime.ExecutionOutputPath = "" }()
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		result.Status, result.Err, result.Finished = "failed", formatFailure("artifact publication", err, r.Secrets), time.Now()
 		return result
