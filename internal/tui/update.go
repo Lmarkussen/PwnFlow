@@ -371,12 +371,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "category is inactive; no watcher output"
 			return m, nil
 		}
-		m.focusBeforeWatcher = m.focus
-		m.watcher = true
-		m.watcherFocus = focusModules
-		m.watcherFollow = true
-		m.resizeWatcher()
-		m.refreshWatcher()
+		m.openWatcher()
 		return m, nil
 	case "ctrl+f":
 		if m.watcher {
@@ -479,13 +474,11 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.navigationRow = (m.navigationRow + 1) % m.navigationRows()
 		case "left", "h", "right", "l":
-			if !m.running {
-				delta := 1
-				if key == "left" || key == "h" {
-					delta = -1
-				}
-				m.changeNavigationValue(delta)
+			delta := 1
+			if key == "left" || key == "h" {
+				delta = -1
 			}
+			m.changeNavigationValue(delta)
 		}
 		return m, nil
 	}
@@ -569,6 +562,12 @@ func (m *model) requestQuit() tea.Cmd {
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if key == "ctrl+w" {
+		m.findingsView = false
+		m.findingsFromWatcher = false
+		m.openWatcher()
+		return m, nil
+	}
 	if key == "q" || key == "Q" {
 		if m.running && !m.batchComplete() {
 			m.quitConfirm = true
@@ -962,6 +961,15 @@ func (m *model) closeWatcher() {
 	if !m.running && m.batchName == "Default Enumeration" {
 		m.focus = focusModules
 	}
+}
+
+func (m *model) openWatcher() {
+	m.focusBeforeWatcher = m.focus
+	m.watcher = true
+	m.watcherFocus = focusModules
+	m.watcherFollow = true
+	m.resizeWatcher()
+	m.refreshWatcher()
 }
 
 // execute runs the highlighted module, and only that module. A module that needs

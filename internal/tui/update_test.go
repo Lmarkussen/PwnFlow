@@ -160,3 +160,33 @@ func TestBatchCompletionDefersPersistenceFromUpdate(t *testing.T) {
 		t.Fatalf("deferred completion was not applied: recorded=%v recording=%v", updated.(*model).batchRecorded, updated.(*model).batchRecording)
 	}
 }
+
+func TestActiveBatchKeepsToolNavigationBrowsable(t *testing.T) {
+	log := &executionLog{}
+	m := selectionModel(t, log)
+	m.running = true
+	m.batch = runner.NewBatchRun(nil)
+	m.focus = focusNavigation
+	m.navigationRow = 0
+	familyBefore := m.toolFamilyIndex
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+	if len(m.toolFamilies) > 1 && m.toolFamilyIndex == familyBefore {
+		t.Fatal("Right navigation was suppressed during an active batch")
+	}
+	familyAfter := m.toolFamilyIndex
+	m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
+	if len(m.toolFamilies) > 1 && m.toolFamilyIndex != familyBefore {
+		t.Fatalf("Left navigation did not remain reversible: before=%d after-right=%d after-left=%d", familyBefore, familyAfter, m.toolFamilyIndex)
+	}
+	m.focus = focusModules
+	m.cursor = 0
+	queued := append([]runner.BatchItem(nil), m.batchItems...)
+	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	if len(m.modules) > 1 && m.cursor == 0 {
+		t.Fatal("module browsing was not available during an active batch")
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.running || len(m.batchItems) != len(queued) {
+		t.Fatal("active-batch browsing changed execution state or queue")
+	}
+}

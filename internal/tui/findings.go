@@ -2207,7 +2207,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\n→/Enter Open Category    ←/Esc Close    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

@@ -220,7 +220,7 @@ func TestACLPresentationGroupsRightsWithoutChangingRecords(t *testing.T) {
 func TestFindingsFooterUsesOpenBackAndQuit(t *testing.T) {
 	model := &model{findingsView: true, findingCategoryView: true, width: 100, height: 24}
 	frame := ansi.Strip(model.View())
-	if !strings.Contains(frame, "→/Enter Open Category    ←/Esc Close") {
+	if !strings.Contains(frame, "→/Enter Open Category    Esc Close") {
 		t.Fatalf("root footer missing: %s", frame)
 	}
 	if !strings.Contains(frame, "Q Quit") {
@@ -1482,6 +1482,45 @@ func TestFindingsLeftBoundaryThroughTopLevelUpdate(t *testing.T) {
 				t.Fatalf("%s Left changed Finder root state on attempt %d: findings=%v watcher=%v category=%q detail=%v cursor=%d top=%d focus=%v", testCase.name, attempt+1, root.findingsView, root.watcher, root.findingCategory, root.findingDetail, root.findingCursor, root.findingTop, root.focus)
 			}
 		}
+	}
+}
+
+func TestFindingsFooterUsesExplicitEscapeAtRoot(t *testing.T) {
+	m := &model{findingCategories: []findingCategory{{Key: "active_directory", Name: "Active Directory"}}, width: 100, height: 24}
+	frame := m.findingCategoryOverview(100)
+	if !strings.Contains(frame, "Esc Close") {
+		t.Fatalf("Finder root footer did not advertise explicit Escape: %s", frame)
+	}
+	if strings.Contains(frame, "←/Esc Close") {
+		t.Fatalf("Finder root footer still advertises Left as close: %s", frame)
+	}
+}
+
+func TestFindingsCtrlWOpensWatcherThroughTopLevelUpdate(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		categoryView bool
+		detail       bool
+		tiering      bool
+		fromWatcher  bool
+	}{
+		{name: "root", categoryView: true},
+		{name: "category", categoryView: false},
+		{name: "detail", categoryView: false, detail: true},
+		{name: "tiering", categoryView: false, tiering: true},
+		{name: "watcher-origin", categoryView: true, fromWatcher: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			m := &model{findingsView: true, findingCategoryView: testCase.categoryView, findingDetail: testCase.detail, findingTieringView: testCase.tiering, findingsFromWatcher: testCase.fromWatcher, width: 100, height: 24}
+			updated, command := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+			got := updated.(*model)
+			if command != nil || !got.watcher || got.findingsView {
+				t.Fatalf("Ctrl+W routing: watcher=%v findings=%v command=%v", got.watcher, got.findingsView, command)
+			}
+			if got.findingsFromWatcher {
+				t.Fatal("watcher-origin marker was left active after direct Watcher activation")
+			}
+		})
 	}
 }
 
