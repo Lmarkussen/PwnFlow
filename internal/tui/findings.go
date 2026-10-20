@@ -29,6 +29,7 @@ type findingCategory struct {
 type findingSubcategory struct {
 	Key, Name, Description string
 	Findings, Observations int
+	Highest                string
 }
 
 var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string }{
@@ -213,7 +214,7 @@ func buildFindingSubcategories(category string, rows []storage.Finding) []findin
 	definitions := findingSubcategoryOrder[category]
 	result := make([]findingSubcategory, 0, len(definitions))
 	for _, definition := range definitions {
-		result = append(result, findingSubcategory{Key: definition.Key, Name: definition.Name, Description: definition.Description})
+		result = append(result, findingSubcategory{Key: definition.Key, Name: definition.Name, Description: definition.Description, Highest: "NOT ASSESSED"})
 	}
 	for _, finding := range rows {
 		if findingCategoryKey(finding) != category {
@@ -227,6 +228,9 @@ func buildFindingSubcategories(category string, rows []storage.Finding) []findin
 				result[index].Findings++
 			} else {
 				result[index].Observations++
+			}
+			if result[index].Highest == "NOT ASSESSED" || severityRank(finding.Severity) > severityRank(result[index].Highest) {
+				result[index].Highest = strings.ToUpper(finding.Severity)
 			}
 		}
 	}
@@ -596,7 +600,6 @@ func (m *model) findingsViewRender() string {
 			}
 		}
 		detail.WriteString("\n" + findingSection("SECURITY IMPACT", findingImpact(finding), width-4))
-		detail.WriteString(findingSection("RECOMMENDED ACTION", findingRemediation(finding), width-4))
 		detail.WriteString(findingSection("EVIDENCE", findingEvidenceSummary(finding), width-4))
 		detail.WriteString(findingSection("LIMITATIONS", findingLimitations(finding), width-4))
 		detailLines := strings.Split(detail.String(), "\n")
@@ -636,42 +639,74 @@ func isKerberosMaterialFinding(finding storage.Finding) bool {
 	return typ == "asrep_material_collected" || typ == "kerberos_ticket_material_collected"
 }
 
+type findingTableColumns struct {
+	Name, Count, Severity int
+}
+
+func findingTableColumnsForWidth(width int) findingTableColumns {
+	innerWidth := max(1, width-4)
+	countWidth, severityWidth := 10, 12
+	if width < 80 {
+		countWidth = 6
+	}
+	return findingTableColumns{
+		Name: max(16, innerWidth-2-1-countWidth-2-severityWidth), Count: countWidth, Severity: severityWidth,
+	}
+}
+
+func findingTableHeader(width int, label string) string {
+	columns := findingTableColumnsForWidth(width)
+	countLabel := "FINDINGS"
+	if width < 80 {
+		countLabel = "COUNT"
+	}
+	return dim.Render(fmt.Sprintf("  %-*s %*s  %*s", columns.Name, label, columns.Count, countLabel, columns.Severity, severityHeader(width)))
+}
+
+func severityHeader(width int) string {
+	if width < 80 {
+		return "SEV"
+	}
+	return "SEVERITY"
+}
+
+func findingTableRow(width int, name string, count int, severity string, selected bool) string {
+	columns := findingTableColumnsForWidth(width)
+	name = truncateFinding(name, columns.Name)
+	nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, columns.Name-ansi.StringWidthWc(name)))
+	severityText := strings.ToUpper(strings.TrimSpace(severity))
+	severityField := severityStyle(severity).Render(fmt.Sprintf("%*s", columns.Severity, severityText))
+	return fmt.Sprintf("%s%s %*d  %s", selectionPrefix(selected), nameField, columns.Count, count, severityField)
+}
+
 func (m *model) findingTieringOverview(width int) string {
 	counts := map[string]int{"tier0_context": 0, "tier1_context": 0, "tier2_context": 0}
+	highest := map[string]string{"tier0_context": "NOT ASSESSED", "tier1_context": "NOT ASSESSED", "tier2_context": "NOT ASSESSED"}
 	for _, finding := range m.findingAllRows {
 		if findingCategoryKey(finding) == "active_directory" {
 			if scope := findingTierScopeKey(finding); scope != "" {
 				counts[scope]++
+				if highest[scope] == "NOT ASSESSED" || severityRank(finding.Severity) > severityRank(highest[scope]) {
+					highest[scope] = strings.ToUpper(finding.Severity)
+				}
 			}
 		}
 	}
 	rows := []struct {
-		name, description, status string
-		count                     int
+		name, description, severity string
+		count                       int
 	}{
-		{"Tier 0 — Identity Control Plane", "Source-backed identity-control plane context", "", counts["tier0_context"]},
-		{"Tier 1 — Server Administration", "Declared server-administration evidence scope", "", counts["tier1_context"]},
-		{"Tier 2 — Workstation Administration", "Declared workstation-administration evidence scope", "", counts["tier2_context"]},
-	}
-	for index := range rows {
-		if rows[index].count > 0 {
-			rows[index].status = "INFORMATIONAL"
-		} else {
-			rows[index].status = "NOT ASSESSED"
-		}
+		{"Tier 0 — Identity Control Plane", "Source-backed identity-control plane context", highest["tier0_context"], counts["tier0_context"]},
+		{"Tier 1 — Server Administration", "Declared server-administration evidence scope", highest["tier1_context"], counts["tier1_context"]},
+		{"Tier 2 — Workstation Administration", "Declared workstation-administration evidence scope", highest["tier2_context"], counts["tier2_context"]},
 	}
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // ADMINISTRATIVE TIERING") + "\n")
 	content.WriteString(dim.Render("Conceptual tier scopes; organization-specific policy is not inferred.") + "\n\n")
+	content.WriteString(findingTableHeader(width, "CATEGORY") + "\n\n")
 	for index, row := range rows {
 		selected := index == m.findingCursor
-		label := selectionLabel(row.name, selected)
-		prefix := selectionPrefix(selected)
-		if width >= 80 {
-			content.WriteString(fmt.Sprintf("%s%-40s %10s %s\n", prefix, label, row.status, fmt.Sprintf("%d", row.count)))
-		} else {
-			content.WriteString(fmt.Sprintf("%s%s  %s\n", prefix, label, row.status))
-		}
+		content.WriteString(findingTableRow(width, row.name, row.count, row.severity, selected) + "\n")
 		content.WriteString("   " + dim.Render(wrapPaneText(row.description, max(20, width-7))) + "\n")
 	}
 	content.WriteString(dim.Render("\n→/Enter Open Tier    ←/Esc Back    Q Quit"))
@@ -2101,25 +2136,12 @@ func (m *model) findingSubcategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Select a security condition group; evidence remains in its findings.") + "\n")
-	if width >= 80 {
-		content.WriteString(dim.Render(fmt.Sprintf("%-34s %10s", "SUBCATEGORY", "FINDINGS")) + "\n\n")
-	} else {
-		content.WriteString(dim.Render("SUBCATEGORY                    FINDINGS") + "\n\n")
-	}
+	content.WriteString(findingTableHeader(width, "SUBCATEGORY") + "\n\n")
 	for index, subcategory := range m.findingSubcategories {
 		selected := index == m.findingCursor
-		var line string
 		count := subcategory.Findings + subcategory.Observations
-		if width >= 80 {
-			name := truncateFinding(subcategory.Name, 34)
-			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, 34-ansi.StringWidthWc(name)))
-			line = fmt.Sprintf("%s%s %10d", selectionPrefix(selected), nameField, count)
-		} else {
-			nameWidth := max(12, width-14)
-			name := truncateFinding(subcategory.Name, nameWidth)
-			line = fmt.Sprintf("%s%-*s %d", selectionPrefix(selected), nameWidth, selectionLabel(name, selected)+strings.Repeat(" ", max(0, nameWidth-ansi.StringWidthWc(name))), count)
-		}
-		content.WriteString(line + "\n   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
+		content.WriteString(findingTableRow(width, subcategory.Name, count, subcategory.Highest, selected) + "\n")
+		content.WriteString("   " + dim.Render(wrapPaneText(subcategory.Description, max(20, width-7))) + "\n")
 	}
 	empty := len(m.findingSubcategories) == 0
 	selectedSubcategory := ""
@@ -2216,38 +2238,18 @@ func (m *model) findingCategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(title.Render("PwnFlow // FINDINGS") + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
-	// The category row includes the two-cell selection prefix, two inter-column
-	// gaps, and a severity field wide enough for INFORMATIONAL. The surrounding
-	// pane consumes its border and horizontal padding, so calculate from the
-	// actual inner width rather than the nominal pane width.
-	innerWidth := max(1, width-4)
-	countWidth := 10
-	severityWidth := 12
-	categoryWidth := max(16, innerWidth-2-1-countWidth-2-severityWidth)
+	columns := findingTableColumnsForWidth(width)
+	content.WriteString(findingTableHeader(width, "CATEGORY") + "\n")
 	if width >= 80 {
-		content.WriteString(dim.Render(fmt.Sprintf("  %-*s %*s  %*s", categoryWidth, "CATEGORY", countWidth, "FINDINGS", severityWidth, "SEVERITY")) + "\n")
 		content.WriteString(dim.Render("────────────────────────────────────────────────────────────────────────") + "\n\n")
 	} else {
-		countWidth = 6
-		categoryWidth = max(16, innerWidth-2-1-countWidth-2-severityWidth)
-		content.WriteString(dim.Render(fmt.Sprintf("  %-*s %*s  %*s", categoryWidth, "CATEGORY", countWidth, "COUNT", severityWidth, "SEV")) + "\n\n")
+		content.WriteString("\n")
 	}
 	for index, category := range m.findingCategories {
 		selected := index == m.findingCursor
-		var line string
 		count := category.Findings + category.Observations
-		severityText := strings.ToUpper(strings.TrimSpace(category.Highest))
-		if width >= 80 {
-			name := truncateFinding(category.Name, categoryWidth)
-			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, categoryWidth-ansi.StringWidthWc(name)))
-			line = fmt.Sprintf("%s%s %10d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%12s", severityText)))
-		} else {
-			name := truncateFinding(category.Name, categoryWidth)
-			nameField := selectionLabel(name, selected) + strings.Repeat(" ", max(0, categoryWidth-ansi.StringWidthWc(name)))
-			line = fmt.Sprintf("%s%s %6d  %s", selectionPrefix(selected), nameField, count, severityStyle(category.Highest).Render(fmt.Sprintf("%12s", severityText)))
-		}
-		content.WriteString(line + "\n")
-		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(10, categoryWidth-3))) + "\n")
+		content.WriteString(findingTableRow(width, category.Name, count, category.Highest, selected) + "\n")
+		content.WriteString("   " + dim.Render(wrapPaneText(category.Description, max(10, columns.Name-3))) + "\n")
 	}
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")

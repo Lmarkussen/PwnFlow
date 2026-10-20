@@ -1704,3 +1704,49 @@ func TestKerberosAccountEvidenceActionOpensDerivedReport(t *testing.T) {
 		t.Fatalf("account evidence action did not open derived report: view=%t path=%q", m.evidenceView, m.evidencePath)
 	}
 }
+
+func TestFindingsHierarchyUsesStableCountAndSeverityColumns(t *testing.T) {
+	rows := []storage.Finding{{FindingInput: storage.FindingInput{FindingType: "ad_writable_object_assessment", Severity: "medium", Title: "Writable object"}}}
+	categories := buildFindingCategories(rows)
+	top := (&model{findingCategoryView: true, findingCategories: categories, findingCursor: 0, width: 120, height: 30}).findingCategoryOverview(120)
+	subcategories := buildFindingSubcategories("acl", rows)
+	sub := (&model{findingCategory: "acl", findingSubcategoryView: true, findingSubcategories: subcategories, findingCursor: 0, width: 120, height: 30}).findingSubcategoryOverview(120)
+	strip := func(value string) string { return ansi.Strip(value) }
+	column := func(frame, label string) int {
+		for _, line := range strings.Split(strip(frame), "\n") {
+			if strings.Contains(line, label) && strings.Contains(line, "SEVERITY") {
+				return strings.Index(line, label)
+			}
+		}
+		return -1
+	}
+	if got, want := column(top, "FINDINGS"), column(sub, "FINDINGS"); got != want || got < 0 {
+		t.Fatalf("count column shifted: top=%d subcategory=%d\nTOP:\n%s\nSUB:\n%s", got, want, strip(top), strip(sub))
+	}
+	if got, want := column(top, "SEVERITY"), column(sub, "SEVERITY"); got != want || got < 0 {
+		t.Fatalf("severity column shifted: top=%d subcategory=%d", got, want)
+	}
+	if !strings.Contains(strip(sub), "MEDIUM") {
+		t.Fatalf("subcategory omitted aggregated severity: %s", strip(sub))
+	}
+}
+
+func TestFindingDetailsSuppressRemediationButKeepImpactEvidenceAndLimitations(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		Title: "FTP Anonymous Access Accepted", FindingType: "pwntools_ftp_anonymous_access", Severity: "medium",
+		Description: "Anonymous authentication was accepted.", ArtifactPath: "ftp.json", ArtifactRef: "/results/0",
+		EvidenceJSON: `{"auth_response":"230 Anonymous login ok"}`,
+	}}
+	m := &model{findingsView: true, findingRows: []storage.Finding{finding}, findingCursor: 0, findingDetail: true, width: 120, height: 40}
+	frame := ansi.Strip(m.View())
+	for _, forbidden := range []string{"RECOMMENDED ACTION", "source tool's recommended hardening", "disable or restrict"} {
+		if strings.Contains(strings.ToLower(frame), strings.ToLower(forbidden)) {
+			t.Fatalf("operator-facing detail contains remediation %q:\n%s", forbidden, frame)
+		}
+	}
+	for _, required := range []string{"SECURITY IMPACT", "EVIDENCE", "LIMITATIONS", "ftp.json"} {
+		if !strings.Contains(frame, required) {
+			t.Fatalf("operator-facing detail omitted %q:\n%s", required, frame)
+		}
+	}
+}
