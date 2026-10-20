@@ -161,6 +161,9 @@ func (m *model) moduleState(index int) string {
 	case "INPUT-REQ":
 		return "INPUT-REQ"
 	}
+	if provider, ok := module.(modules.ModuleListStatusProvider); ok {
+		return provider.ModuleListStatus(m.moduleRuntime())
+	}
 	return ""
 }
 

@@ -185,6 +185,14 @@ type StatusProvider interface {
 	StatusReason(*Runtime) string
 }
 
+// ModuleListStatusProvider supplies a prerequisite or readiness label for the
+// module list. It is consulted only after execution-state labels, so a live,
+// completed, failed, or skipped batch result remains the more specific status.
+// Implementations must only inspect in-memory runtime state.
+type ModuleListStatusProvider interface {
+	ModuleListStatus(*Runtime) string
+}
+
 // InputField is one value a module needs from the operator before it can run.
 type InputField struct {
 	// Key is the option key the integration passes on, such as TARGET.

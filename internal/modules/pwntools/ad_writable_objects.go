@@ -58,6 +58,13 @@ func (ADWritableObjects) StatusReason(runtime *modules.Runtime) string {
 	return "RustHound evidence is required; configure RUSTHOUND_ARTIFACT for a manual run or include RustHound in the current batch"
 }
 
+func (ADWritableObjects) ModuleListStatus(runtime *modules.Runtime) string {
+	if writableArtifact(runtime) == "" {
+		return "RUSTHOUND-REQ"
+	}
+	return ""
+}
+
 func (ADWritableObjects) DetailLines(runtime *modules.Runtime) []string {
 	requirement := "REQUIRES RUSTHOUND"
 	if writableArtifact(runtime) != "" {
@@ -155,5 +162,6 @@ var _ modules.BatchPrerequisiteProvider = ADWritableObjects{}
 var _ modules.DependencyKeyProvider = ADWritableObjects{}
 var _ modules.OptionDeclarer = ADWritableObjects{}
 var _ modules.StatusProvider = ADWritableObjects{}
+var _ modules.ModuleListStatusProvider = ADWritableObjects{}
 var _ modules.DetailProvider = ADWritableObjects{}
 var _ modules.ExecutionArtifactPathProvider = ADWritableObjects{}
