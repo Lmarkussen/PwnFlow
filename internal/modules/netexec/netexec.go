@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
@@ -584,23 +585,19 @@ func (m Module) runSpiderPlus(ctx context.Context, runtime *modules.Runtime, sin
 	runContext, cancel := context.WithTimeout(ctx, spiderPlusWallClockLimit)
 	defer cancel()
 	started := time.Now()
-	var failures []string
-	for index, target := range targets {
-		if err := runContext.Err(); err != nil {
-			return err
-		}
-		copyRuntime := *runtime
-		copyRuntime.Target = target
-		fmt.Fprintf(sink, "[i] spider_plus target %d/%d: %s\n", index+1, len(targets), target)
-		command := process.Command(runContext, "nxc", m.CommandArgs(&copyRuntime)...)
-		command.Stdout, command.Stderr = sink, sink
-		if err := process.Wait(runContext, command); err != nil {
-			failures = append(failures, target+": "+err.Error())
-		}
+	results := m.runSpiderTargets(runContext, runtime, sink, targets, m.runSpiderTarget)
+	if err := runContext.Err(); err != nil {
+		return err
 	}
 	writeSpiderSummary(runtime, sink)
 	if runContext.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("spider_plus timed out after %s", spiderPlusWallClockLimit)
+	}
+	var failures []string
+	for _, result := range results {
+		if result.err != nil {
+			failures = append(failures, result.target+": "+result.err.Error())
+		}
 	}
 	if len(failures) == len(targets) {
 		return fmt.Errorf("spider_plus failed for every discovered SMB endpoint after %s: %s", time.Since(started).Round(time.Millisecond), strings.Join(failures, "; "))
@@ -609,6 +606,83 @@ func (m Module) runSpiderPlus(ctx context.Context, runtime *modules.Runtime, sin
 		fmt.Fprintf(sink, "[i] spider_plus partial completion; failed targets: %s\n", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+type spiderTargetResult struct {
+	index   int
+	target  string
+	elapsed time.Duration
+	err     error
+}
+
+type synchronizedSink struct {
+	mu   sync.Mutex
+	sink modules.OutputSink
+}
+
+func (s *synchronizedSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sink.Write(p)
+}
+
+type spiderTargetRunner func(context.Context, *modules.Runtime, modules.OutputSink) error
+
+// runSpiderTargets keeps each discovered host as an independent NetExec
+// invocation, but overlaps the bounded network work. The old serial loop made
+// a four-host discovery take roughly four times the single-host runtime and
+// gave no indication which host was delaying completion.
+func (m Module) runSpiderTargets(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink, targets []string, run spiderTargetRunner) []spiderTargetResult {
+	if len(targets) == 0 {
+		return nil
+	}
+	workerCount := minInt(spiderPlusConcurrency, len(targets))
+	jobs := make(chan int, len(targets))
+	results := make(chan spiderTargetResult, len(targets))
+	output := &synchronizedSink{sink: sink}
+	var workers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if err := ctx.Err(); err != nil {
+					return
+				}
+				target := targets[index]
+				copyRuntime := *runtime
+				copyRuntime.Target = target
+				started := time.Now()
+				fmt.Fprintf(output, "[i] spider_plus target %d/%d: %s\n", index+1, len(targets), target)
+				err := run(ctx, &copyRuntime, output)
+				elapsed := time.Since(started).Round(time.Millisecond)
+				if err != nil {
+					fmt.Fprintf(output, "[!] spider_plus target %d/%d: %s failed after %s\n", index+1, len(targets), target, elapsed)
+				} else {
+					fmt.Fprintf(output, "[i] spider_plus target %d/%d: %s completed in %s\n", index+1, len(targets), target, elapsed)
+				}
+				results <- spiderTargetResult{index: index, target: target, elapsed: elapsed, err: err}
+			}
+		}()
+	}
+	for index := range targets {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	close(results)
+	ordered := make([]spiderTargetResult, 0, len(targets))
+	for result := range results {
+		ordered = append(ordered, result)
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left].index < ordered[right].index })
+	return ordered
+}
+
+func (m Module) runSpiderTarget(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
+	command := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
+	command.Stdout, command.Stderr = sink, sink
+	return process.Wait(ctx, command)
 }
 
 func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
@@ -686,6 +760,14 @@ func endpointParts(endpoint string) (string, string) {
 }
 
 var spiderPlusWallClockLimit = 10 * time.Minute
+var spiderPlusConcurrency = 4
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
 
 func writeSpiderSummary(runtime *modules.Runtime, sink modules.OutputSink) {
 	if runtime == nil || runtime.ExecutionOutputPath == "" {
