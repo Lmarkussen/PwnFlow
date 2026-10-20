@@ -118,6 +118,7 @@ type model struct {
 	batch             *runner.BatchRun
 	batchItems        []runner.BatchItem
 	batchRecorded     bool
+	batchRecording    bool
 	batchSummaryShown bool
 	analysisPending   bool
 	batchName         string
@@ -166,6 +167,14 @@ type model struct {
 }
 
 type tickMsg time.Time
+type batchRecordedMsg struct {
+	batch        *runner.BatchRun
+	executionIDs []int64
+	name         string
+	count        int
+	finished     time.Time
+	err          error
+}
 type findingsCompleteMsg struct{ err error }
 type findingsReanalysisMsg struct{ err error }
 type inlineEvidenceLoadedMsg struct {

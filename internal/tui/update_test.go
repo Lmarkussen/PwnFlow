@@ -133,3 +133,30 @@ func TestQuitCancellationHasBoundedFallback(t *testing.T) {
 		t.Fatalf("bounded quit fallback did not fire: cmd=%v running=%v after=%v", quit, m.running, m.quitAfterCancel)
 	}
 }
+
+func TestBatchCompletionDefersPersistenceFromUpdate(t *testing.T) {
+	batch := runner.NewBatchRun(nil)
+	batch.Start(context.Background(), nil, &modules.Runtime{}, t.TempDir(), runner.Runner{})
+	if err := batch.Wait(context.Background()); err != nil {
+		t.Fatalf("completed batch did not close: %v", err)
+	}
+	m := &model{ctx: context.Background(), batch: batch, running: true, batchName: "Default Enumeration", focus: focusNavigation}
+	command := m.syncBatch()
+	if command == nil {
+		t.Fatal("completed batch did not schedule deferred recording")
+	}
+	if m.running || m.batchRecorded || !m.batchRecording {
+		t.Fatalf("completion state was not released before recording: running=%v recorded=%v recording=%v", m.running, m.batchRecorded, m.batchRecording)
+	}
+	if updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlW}); !updated.(*model).watcher {
+		t.Fatal("watcher navigation was blocked while completion recording was deferred")
+	}
+	msg := command()
+	updated, followUp := m.Update(msg)
+	if followUp != nil {
+		t.Fatal("database-free completion unexpectedly scheduled a follow-up command")
+	}
+	if !updated.(*model).batchRecorded || updated.(*model).batchRecording {
+		t.Fatalf("deferred completion was not applied: recorded=%v recording=%v", updated.(*model).batchRecorded, updated.(*model).batchRecording)
+	}
+}

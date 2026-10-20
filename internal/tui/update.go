@@ -153,6 +153,31 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.exportADPrivilegedACL()
 		return m, nil
+	case batchRecordedMsg:
+		if msg.batch != m.batch {
+			return m, nil
+		}
+		m.batchRecording = false
+		m.batchRecorded = true
+		m.batchExecutionIDs = append([]int64(nil), msg.executionIDs...)
+		m.analysisPending = m.findings != nil
+		m.batchElevation = map[string]bool{}
+		m.detailsRefreshed = time.Time{}
+		if msg.err != nil {
+			m.status = fmt.Sprintf("%s complete; recording partial: %s", msg.name, msg.err)
+		} else {
+			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", msg.name, msg.count, msg.finished.Format("15:04:05"))
+		}
+		if m.quitAfterCancel {
+			m.quitCancelDeadline = time.Time{}
+			return m, tea.Quit
+		}
+		if m.analysisPending && !m.batchSummaryShown {
+			m.status = "enumeration complete; findings analysis pending"
+			m.batchSummaryShown = true
+			return m, m.waitForFindings()
+		}
+		return m, nil
 	case findingsReanalysisMsg:
 		m.findingsLoaded = false
 		if msg.err != nil {
@@ -1153,6 +1178,7 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.batchItems = items
 	m.batch = runner.NewBatchRun(items)
 	m.batchRecorded = false
+	m.batchRecording = false
 	m.batchSummaryShown = false
 	m.batchSummaryExported = false
 	m.collectionQualityExported = false
@@ -1223,40 +1249,11 @@ func (m *model) syncBatch() tea.Cmd {
 	select {
 	case <-m.batch.Done():
 		m.running = false
-		if !m.batchRecorded {
-			if m.db != nil {
-				for _, state := range states {
-					if state.Index >= 0 && state.Index < len(m.allModuleIDs) {
-						executionID, err := m.db.RecordExecutionID(m.ctx, m.targetID, m.allModuleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
-						if err == nil {
-							m.batchExecutionIDs = append(m.batchExecutionIDs, executionID)
-							if state.Module.ID() == "ad-gpo-evidence" {
-								_ = gpoevidence.WriteSummary(m.cfg.ResultsRoot(), m.cfg.Domain, executionID)
-								_ = gpoanalysis.WriteArtifacts(m.cfg.ResultsRoot(), m.cfg.Domain, executionID, state.Result.Finished)
-							}
-						}
-						if err == nil && m.findings != nil {
-							module := state.Module
-							artifact := findingengine.DiscoverArtifactAt(module.Tool(), state.Result.OutputPath, state.Result.Finished)
-							_ = m.findings.Submit(findingengine.Job{AssessmentID: m.targetID, ExecutionID: executionID, SourceTool: module.Tool(), ArtifactPath: artifact, ObservedAt: state.Result.Finished})
-						}
-					}
-				}
-			}
-			m.batchRecorded = true
-			m.analysisPending = m.findings != nil
+		if !m.batchRecorded && !m.batchRecording {
+			m.batchRecording = true
 			m.batchElevation = map[string]bool{}
 			m.detailsRefreshed = time.Time{}
-			m.status = fmt.Sprintf("%s complete: %d modules, finished %s", m.batchName, len(states), finished.Format("15:04:05"))
-		}
-		if m.quitAfterCancel {
-			m.quitCancelDeadline = time.Time{}
-			return tea.Quit
-		}
-		if m.analysisPending && !m.batchSummaryShown {
-			m.status = "enumeration complete; findings analysis pending"
-			m.batchSummaryShown = true
-			return m.waitForFindings()
+			return m.recordBatchCommand(states, finished)
 		}
 	default:
 		if m.quitAfterCancel && !m.quitCancelDeadline.IsZero() && time.Now().After(m.quitCancelDeadline) {
@@ -1267,6 +1264,49 @@ func (m *model) syncBatch() tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// recordBatchCommand keeps database writes and findings queue submission off the
+// Bubble Tea update loop. Findings has a bounded queue, so submitting a large
+// completed batch can legitimately wait for its worker; that wait must never
+// block keyboard dispatch or rendering.
+func (m *model) recordBatchCommand(states []runner.BatchState, finished time.Time) tea.Cmd {
+	db, findings, ctx := m.db, m.findings, m.ctx
+	batch := m.batch
+	targetID, moduleIDs := m.targetID, append([]int64(nil), m.allModuleIDs...)
+	resultsRoot, domain := m.cfg.ResultsRoot(), m.cfg.Domain
+	name := m.batchName
+	return func() tea.Msg {
+		var executionIDs []int64
+		var firstErr error
+		if db != nil {
+			for _, state := range states {
+				if state.Index < 0 || state.Index >= len(moduleIDs) {
+					continue
+				}
+				executionID, err := db.RecordExecutionID(ctx, targetID, moduleIDs[state.Index], state.Result.Started, state.Result.Finished, state.Status, state.Result.ExitCode, state.Result.OutputPath, errorText(state.Result.Err))
+				if err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
+				executionIDs = append(executionIDs, executionID)
+				if state.Module.ID() == "ad-gpo-evidence" {
+					_ = gpoevidence.WriteSummary(resultsRoot, domain, executionID)
+					_ = gpoanalysis.WriteArtifacts(resultsRoot, domain, executionID, state.Result.Finished)
+				}
+				if findings != nil {
+					module := state.Module
+					artifact := findingengine.DiscoverArtifactAt(module.Tool(), state.Result.OutputPath, state.Result.Finished)
+					if err := findings.Submit(findingengine.Job{AssessmentID: targetID, ExecutionID: executionID, SourceTool: module.Tool(), ArtifactPath: artifact, ObservedAt: state.Result.Finished}); err != nil && firstErr == nil {
+						firstErr = err
+					}
+				}
+			}
+		}
+		return batchRecordedMsg{batch: batch, executionIDs: executionIDs, name: name, count: len(states), finished: finished, err: firstErr}
+	}
 }
 
 func (m *model) waitForFindings() tea.Cmd {
