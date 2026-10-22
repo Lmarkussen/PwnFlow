@@ -629,6 +629,19 @@ func TestPXEThiefDeclaresItsDiscoveryPrerequisite(t *testing.T) {
 	}
 }
 
+func TestPXEThiefRequiresApprovalWhenRawSocketCapabilityIsUnknown(t *testing.T) {
+	previous := rawSocketPrivilegesFunc
+	rawSocketPrivilegesFunc = func() (bool, bool, string) {
+		return false, false, "capability probe unavailable"
+	}
+	t.Cleanup(func() { rawSocketPrivilegesFunc = previous })
+
+	required, reason := (PXEThief{}).ElevationRequired()
+	if !required || !strings.Contains(reason, "CAP_NET_RAW") {
+		t.Fatalf("unknown raw-socket capability did not require approval: required=%v reason=%q", required, reason)
+	}
+}
+
 func TestPXEThiefRequiresTheVerifiedRevision(t *testing.T) {
 	_, _ = toolLayout(t, "PXEThief", "pxethief.py", `case "$1" in -h) exit 0 ;; esac; exit 0`)
 	dependencyCacheTTL = 0

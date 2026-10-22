@@ -31,6 +31,10 @@ func configure(command *exec.Cmd) {
 // so the escalation continues while anything in the group is still there, and stops
 // as soon as the group is empty. PwnFlow's own process group is never a target.
 func terminate(command *exec.Cmd) {
+	terminateWithGrace(command, GracePeriod)
+}
+
+func terminateWithGrace(command *exec.Cmd, grace time.Duration) {
 	if command == nil || command.Process == nil {
 		return
 	}
@@ -48,7 +52,7 @@ func terminate(command *exec.Cmd) {
 			return
 		}
 		signalGroup(pid, group, signal)
-		if waitGroupGone(group, GracePeriod) {
+		if waitGroupGone(group, grace) {
 			return
 		}
 	}
@@ -65,6 +69,21 @@ func signalGroup(pid, group int, signal syscall.Signal) {
 		return
 	}
 	_ = syscall.Kill(-group, signal)
+}
+
+func forceKill(command *exec.Cmd) {
+	if command == nil || command.Process == nil {
+		return
+	}
+	pid := command.Process.Pid
+	if pid <= 0 || pid == syscall.Getpid() {
+		return
+	}
+	group, err := syscall.Getpgid(pid)
+	if err != nil || group <= 0 {
+		return
+	}
+	signalGroup(pid, group, syscall.SIGKILL)
 }
 
 // groupGone reports whether the process group has no members left. Signal 0 asks

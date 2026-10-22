@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	_ "modernc.org/sqlite"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -26,6 +28,48 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	return d, nil
+}
+
+// OpenReadOnly opens an existing assessment database without creating files or
+// running migrations. Findings browsing must not change the assessment store,
+// even when the database was created by an older PwnFlow version.
+func OpenReadOnly(path string) (*DB, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("database path is not a regular file")
+	}
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	d := &DB{db}
+	if err := d.validateSchema(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return d, nil
+}
+
+func (d *DB) validateSchema() error {
+	var version int
+	if err := d.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("findings database schema is unreadable: %w", err)
+	}
+	if version < 3 {
+		return fmt.Errorf("findings database schema version %d is incompatible; expected version 3 or newer", version)
+	}
+	for _, table := range []string{"targets", "findings", "finding_evidence"} {
+		var name string
+		if err := d.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {
+			return fmt.Errorf("findings database is missing required table %q: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // migrate creates the schema. The endpoints table holds SCCM discovery state:
@@ -71,6 +115,23 @@ func (d *DB) TargetID(ctx context.Context, domain, address string) (int64, error
 	var id int64
 	err := d.QueryRowContext(ctx, `SELECT id FROM targets WHERE domain=? AND target_address=?`, domain, address).Scan(&id)
 	return id, err
+}
+
+func (d *DB) TargetAddresses(ctx context.Context, domain string) ([]string, error) {
+	rows, err := d.QueryContext(ctx, `SELECT target_address FROM targets WHERE domain=? ORDER BY id`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var addresses []string
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			return nil, err
+		}
+		addresses = append(addresses, address)
+	}
+	return addresses, rows.Err()
 }
 func (d *DB) RegisterModule(ctx context.Context, name, tool, protocol, description, output string) (int64, error) {
 	_, err := d.ExecContext(ctx, `INSERT INTO modules(name,tool,protocol,description,output_filename) VALUES(?,?,?,?,?)`, name, tool, protocol, description, output)

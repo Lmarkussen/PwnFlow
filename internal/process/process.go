@@ -20,6 +20,11 @@ import (
 // next, firmer signal.
 var GracePeriod = 2 * time.Second
 
+// CancellationWait is the maximum time the runner waits for a process and its
+// output descriptors after cancellation escalation. A child that ignores the
+// signals, or keeps an inherited descriptor open, must not hold the TUI hostage.
+var CancellationWait = 2 * GracePeriod
+
 // Command builds an external tool invocation PwnFlow owns: it runs in its own
 // process group, and its context decides when it stops.
 //
@@ -49,8 +54,37 @@ func Wait(ctx context.Context, command *exec.Cmd) error {
 	case err := <-waited:
 		return err
 	case <-ctx.Done():
-		terminate(command)
-		err := <-waited
+		gracePeriod := GracePeriod
+		cancellationWait := CancellationWait
+		terminated := make(chan struct{})
+		go func() {
+			terminateWithGrace(command, gracePeriod)
+			close(terminated)
+		}()
+		timer := time.NewTimer(cancellationWait)
+		select {
+		case <-terminated:
+		case <-timer.C:
+			// terminate already attempted the full graceful-to-kill sequence.
+			// Repeat only the final targeted signal here; this path is for a
+			// process/group that did not report gone in time.
+			forceKill(command)
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		waitTimer := time.NewTimer(cancellationWait)
+		defer waitTimer.Stop()
+		var err error
+		select {
+		case err = <-waited:
+		case <-waitTimer.C:
+			forceKill(command)
+			return ctx.Err()
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}

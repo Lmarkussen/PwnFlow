@@ -54,7 +54,7 @@ type inputRequest struct {
 // defaultEnumerationModuleIDs is deliberately explicit. Adding a registration
 // must never silently add a network operation to A.
 var defaultEnumerationModuleIDs = []string{
-	"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
+	"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
 	"smb-server-info", "smb-sessions", "logged-on-users", "smb-ntlm-reflection", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
 	"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates",
 	"rusthound-ce", "sccmhunter", "pxethief",
@@ -68,6 +68,7 @@ var defaultEnumerationModuleIDs = []string{
 	"ad-writable-objects",
 	"ftp-anonymous-access",
 	"smb-spider-plus",
+	"smb-password-policy",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing
@@ -120,6 +121,11 @@ func (m *model) globalPlan() plan {
 			}
 		}
 		result.indices = append(result.indices, index)
+		if module.ID() == "networkhound-scope-validation" {
+			// The automatic path derives an exact host allowlist from the
+			// preceding topology artifact; it has no manual NETWORKS prompt.
+			continue
+		}
 		if reason := m.approvalReason(module, index); reason != "" {
 			result.approvals = append(result.approvals, approval{index: index, reason: reason})
 			result.authorizationRequired++
@@ -272,12 +278,38 @@ func (m *model) inputRequests(indices []int) []inputRequest {
 		if !ok {
 			continue
 		}
+		// The unattended profile supplies Spider Plus targets from the
+		// NetworkHound prerequisite during execution. It must never turn the
+		// default profile into an interactive endpoint prompt.
+		if m.pending.name == "Default Enumeration" && module.ID() == "smb-spider-plus" {
+			continue
+		}
+		if m.pending.name == "Default Enumeration" && module.ID() == "networkhound-scope-validation" {
+			continue
+		}
+		if provider, ok := module.(modules.BatchInputPrerequisiteProvider); ok && batchProvides(indices, m.allModules, provider.BatchInputPrerequisites()) {
+			continue
+		}
 		if len(requester.MissingInputs(runtime)) == 0 {
 			continue
 		}
 		requests = append(requests, inputRequest{index: index, module: module})
 	}
 	return requests
+}
+
+func batchProvides(indices []int, registered []modules.Module, prerequisites []string) bool {
+	if len(prerequisites) == 0 {
+		return false
+	}
+	for _, prerequisite := range prerequisites {
+		for _, index := range indices {
+			if index >= 0 && index < len(registered) && registered[index].ID() == prerequisite {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // withoutIndices drops the given registry indices from a plan.
@@ -347,6 +379,13 @@ func plural(count int) string {
 // input the plan needs, asks for approval where the plan is not plain
 // enumeration, and only then starts the batch.
 func (m *model) startPlan(p plan) tea.Cmd {
+	m.planGeneration++
+	if p.name == "Default Enumeration" && !m.canStartAutomaticEnumeration() {
+		if m.findingsOnly() {
+			m.status = "FINDINGS ONLY: tool execution is disabled"
+		}
+		return nil
+	}
 	if len(p.indices) == 0 && !p.configureOnly {
 		m.status = "nothing eligible to run: " + strings.Join(p.skipped, "; ")
 		return nil
@@ -405,12 +444,7 @@ func (m *model) continuePlan() tea.Cmd {
 		return nil
 	}
 	command := m.startBatch(p.indices, p.name)
-	if m.running && p.name == "Default Enumeration" {
-		// Once all pre-run input, approval, and elevation prompts are complete,
-		// move the operator directly to the live batch dashboard. The batch keeps
-		// running if the operator later leaves Watcher.
-		m.openWatcher()
-	}
+	m.openWatcherForAutomaticBatch(p.name)
 	// The batch reports "running"; the plan line stays with it, so the operator
 	// can still see what the run covers. An elevation prompt keeps its own text.
 	if m.running && m.planLine != "" {

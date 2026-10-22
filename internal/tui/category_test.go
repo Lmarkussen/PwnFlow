@@ -202,6 +202,7 @@ func TestEnabledModuleOutsideNetExecRunsFromEveryEntryPoint(t *testing.T) {
 	if plan := model.globalPlan(); len(plan.indices) != 1 {
 		t.Fatalf("YOLO left a non-NetExec module out of the global plan: %v", plan.indices)
 	}
+	model.focus = focusModules
 	model.executeAll()
 	if err := model.batch.Wait(context.Background()); err != nil {
 		t.Fatalf("wait for the YOLO run: %v", err)

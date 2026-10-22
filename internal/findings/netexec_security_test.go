@@ -88,3 +88,25 @@ func TestAnalyzeNetExecSecurityDeduplicatesConditions(t *testing.T) {
 		t.Fatalf("records=%d, want three unique conditions", len(inputs))
 	}
 }
+
+func TestAnalyzeNetExecSecurityParsesPasswordNotRequiredModuleOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "LDAP_password_not_required.txt")
+	body := "LDAPS 10.1.10.40 636 DC User: adenum-pwdnr Status: enabled\n" +
+		"LDAPS 10.1.10.40 636 DC User: Guest Status: disabled\n"
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := AnalyzeNetExecSecurity(context.Background(), path, 1, 2, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 2 {
+		t.Fatalf("records=%d, want two module-reported account findings", len(inputs))
+	}
+	if inputs[0].FindingType != "ad_account_passwd_notreqd" || inputs[0].Severity != "medium" || !strings.Contains(inputs[0].EvidenceJSON, `"enabled":true`) {
+		t.Fatalf("unexpected enabled account finding: %#v", inputs[0])
+	}
+	if inputs[1].Severity != "informational" || !strings.Contains(inputs[1].EvidenceJSON, `"enabled":false`) {
+		t.Fatalf("unexpected disabled account finding: %#v", inputs[1])
+	}
+}

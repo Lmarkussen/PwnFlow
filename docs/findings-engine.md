@@ -21,3 +21,24 @@ NetExec's existing `LDAP_password_policy.txt` and `LDAP_machine_account_quota.tx
 ## Operator view
 
 Press `F` for the cached Findings view. Use `/` for text search, `1`, `2`, `3`, or `0` for severity filters, and `Enter` for evidence-backed detail. Compact rows never include recovered passwords or other plaintext secrets; original restricted artifacts remain the authoritative lossless record.
+
+The Findings browser is available from a normal assessment and from
+`--findings`. Both modes use the same persisted Findings and source-aware detail
+renderer. `E — Original Evidence` opens the referenced artifact through a
+results-root boundary check; it does not rewrite the retained artifact.
+
+Critical Findings are an in-memory, read-only projection over source Findings.
+The projection separates `CONFIRMED CRITICAL` from `POTENTIAL CRITICAL — NOT
+VERIFIED`, groups each state by attack-path family, and keeps stable links to
+supporting Finding IDs and execution provenance. The navigation hierarchy is
+`Critical Findings → state → family → Finding`. Opening a row reuses the
+original Finding renderer, so source-specific Certipy, ACL, Kerberos, PXEThief,
+credential, and protocol evidence remains available rather than being replaced
+by a generic summary. The projection does not write database rows or change
+specialist-category Findings.
+
+The automatic enumeration plan is an explicit, protected list of 45 modules.
+GhostSPN is the additive audit immediately after Kerberoasting. The plan is
+separate from manually selected modules and from offline artifact analysis;
+`--reanalyze-latest` analyzes retained supported artifacts and never starts a
+collector.

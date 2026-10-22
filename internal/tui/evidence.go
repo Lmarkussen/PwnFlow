@@ -22,6 +22,40 @@ import (
 
 const maxEvidenceViewBytes = 4 << 20
 
+var userAttributeValueField = regexp.MustCompile(`(?i)\b(?:description|info|notes?)\s*[:=]\s*(.*)$`)
+
+func (m *model) hydrateHistoricalUserDescription(finding storage.Finding) storage.Finding {
+	if !strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_user_description_") {
+		return finding
+	}
+	metadata := findingMetadata(finding)
+	if metadataString(metadata, "value") != "" || finding.ArtifactPath == "" || finding.ArtifactRef == "" {
+		return finding
+	}
+	lineNumber := refLine([]string{finding.ArtifactRef})
+	if lineNumber <= 0 {
+		return finding
+	}
+	path, err := m.safeEvidencePath(finding.ArtifactPath)
+	if err != nil {
+		return finding
+	}
+	lines, err := readEvidenceLines(path)
+	if err != nil || lineNumber > len(lines) {
+		return finding
+	}
+	match := userAttributeValueField.FindStringSubmatch(lines[lineNumber-1])
+	if len(match) != 2 || strings.TrimSpace(match[1]) == "" {
+		return finding
+	}
+	metadata["value"] = strings.TrimSpace(match[1])
+	encoded, err := json.Marshal(metadata)
+	if err == nil {
+		finding.EvidenceJSON = string(encoded)
+	}
+	return finding
+}
+
 // hydrateHistoricalACLInventory provides a read-only compatibility path for
 // ACL observations persisted before relationship_overview was added. It only
 // reads the Finding's own artifact and requires the embedded execution ID to
@@ -92,6 +126,7 @@ type inlineEvidence struct {
 }
 
 var pxeInlineVariable = regexp.MustCompile(`(?i)\b(OSDJoinAccount|OSDJoinPassword|OSDLocalAdminPassword)\b\s*(?:[:=\-]|=>)?\s*(.*)$`)
+var pxeStyledField = regexp.MustCompile(`^(\s*)(OSDJoin|OSD)(Account|Password|LocalAdminPassword)(\s*(?:=|-|:)\s*)(.*)$`)
 
 func (m *model) findingInlineEvidence(finding storage.Finding) tea.Cmd {
 	if !findingHasInlineEvidence(finding) {
@@ -110,7 +145,7 @@ func findingHasInlineEvidence(finding storage.Finding) bool {
 	}
 	if strings.EqualFold(finding.SourceTool, "NetExec") {
 		typeName := strings.ToLower(finding.FindingType)
-		return strings.Contains(typeName, "material_collected") || strings.HasPrefix(typeName, "ad_user_description_")
+		return strings.Contains(typeName, "material_collected")
 	}
 	return false
 }
@@ -131,20 +166,36 @@ func loadInlineEvidence(cfg config.Config, finding storage.Finding) inlineEviden
 	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &metadata)
 	if strings.EqualFold(finding.SourceTool, "PXEThief") {
 		result.section = "RECOVERED CREDENTIALS"
-		result.lines = extractPXEInline(lines, metadata, finding)
+		if values := pxeCredentialValues(metadata); len(values) == 3 {
+			for _, name := range []string{"OSDJoinAccount", "OSDJoinPassword", "OSDLocalAdminPassword"} {
+				result.lines = append(result.lines, fmt.Sprintf("%-22s = %s", name, values[name]))
+			}
+		} else {
+			result.lines = extractPXEInline(lines, metadata, finding)
+		}
 		if len(result.lines) == 0 {
 			result.error = "Recovered credential evidence could not be loaded from the referenced artifact."
 		}
 		return result
 	}
 	if strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_user_description_") {
-		result.section = "RECOVERED CREDENTIAL EXPOSURE"
+		metadataValue := metadataString(metadata, "value")
+		result.section = "OBSERVED DIRECTORY ATTRIBUTE"
 		lineNumber := refLine([]string{finding.ArtifactRef})
 		if lineNumber > 0 && lineNumber <= len(lines) {
-			result.lines = []string{lines[lineNumber-1]}
+			line := lines[lineNumber-1]
+			if match := userAttributeValueField.FindStringSubmatch(line); len(match) == 2 && metadataValue == "" {
+				metadataValue = strings.TrimSpace(match[1])
+			}
+		}
+		principal := fallbackText(metadataString(metadata, "principal"), finding.AffectedObject)
+		attribute := fallbackText(metadataString(metadata, "attribute"), "info")
+		result.lines = []string{fmt.Sprintf("Account     : %s", principal), fmt.Sprintf("Attribute   : %s", attribute)}
+		if metadataValue != "" {
+			result.lines = append(result.lines, fmt.Sprintf("Value       : %s", metadataValue))
 		}
 		if len(result.lines) == 0 {
-			result.error = "Recovered credential evidence could not be loaded from the referenced artifact."
+			result.error = "Directory attribute evidence could not be loaded from the referenced artifact."
 		}
 		return result
 	}
@@ -367,22 +418,30 @@ func kerberosPrincipalInline(line string) string {
 	} else if strings.HasPrefix(strings.ToLower(value), "$krb5tgs$") {
 		value = value[len("$krb5tgs$"):]
 	}
-	if start := strings.IndexByte(value, '*'); start >= 0 {
-		value = value[start+1:]
-		if end := strings.IndexByte(value, '*'); end >= 0 {
-			value = value[:end]
-		}
-	}
 	parts := strings.Split(value, "$")
 	if strings.HasPrefix(strings.ToLower(line), "$krb5asrep$") && len(parts) > 1 {
 		return strings.TrimSpace(strings.SplitN(parts[1], ":", 2)[0])
 	}
-	if strings.HasPrefix(strings.ToLower(line), "$krb5tgs$") && len(parts) > 0 {
-		principal := strings.TrimSpace(parts[0])
-		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
-			principal += "@" + strings.TrimSpace(parts[1])
+	if strings.HasPrefix(strings.ToLower(line), "$krb5tgs$") {
+		for index, part := range parts {
+			if !strings.HasPrefix(part, "*") {
+				continue
+			}
+			principal := strings.TrimSpace(strings.TrimPrefix(part, "*"))
+			if principal == "" {
+				return ""
+			}
+			if strings.Contains(principal, "\\") {
+				return principal
+			}
+			if index+1 < len(parts) && strings.TrimSpace(parts[index+1]) != "" && parts[index+1] != "*" {
+				return principal + "@" + strings.TrimSpace(parts[index+1])
+			}
+			if index > 0 && strings.TrimSpace(parts[index-1]) != "" && parts[index-1] != "*" {
+				return principal + "@" + strings.TrimSpace(parts[index-1])
+			}
+			return principal
 		}
-		return principal
 	}
 	return ""
 }
@@ -397,10 +456,12 @@ func kerberosPrincipalMatches(expected, observed string) bool {
 		if at := strings.LastIndexByte(value, '@'); at >= 0 {
 			return value[:at], value[at+1:], true
 		}
-		return value, "", false
+		return strings.TrimSuffix(value, "$"), "", false
 	}
 	expectedName, expectedDomain, expectedQualified := normalize(expected)
 	observedName, observedDomain, observedQualified := normalize(observed)
+	expectedName = strings.TrimSuffix(expectedName, "$")
+	observedName = strings.TrimSuffix(observedName, "$")
 	if expectedName == "" || expectedName != observedName {
 		return false
 	}
@@ -571,4 +632,12 @@ func safeEvidencePathForRoot(rawRoot, raw string) (string, error) {
 		}
 	}
 	return path, nil
+}
+
+func stylePXECredentialLine(line string) string {
+	match := pxeStyledField.FindStringSubmatch(line)
+	if len(match) != 6 {
+		return line
+	}
+	return match[1] + infoBlueStyle().Render(match[2]+match[3]) + match[4] + warn.Render(match[5])
 }

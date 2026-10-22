@@ -129,6 +129,7 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	command := exec.CommandContext(ctx, program, args...)
 	command.Dir = filepath.Dir(outputPath)
 	output, err := command.CombinedOutput()
+	var structured []byte
 	if strings.HasSuffix(outputPath, ".json") {
 		stdoutPath := strings.TrimSuffix(outputPath, ".json") + ".log"
 		if writeErr := os.WriteFile(stdoutPath, output, 0o600); writeErr != nil {
@@ -137,11 +138,22 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 		if normalizeErr := normalizeJSONArtifact(outputPath); normalizeErr != nil && err == nil {
 			err = normalizeErr
 		}
+		if err == nil {
+			structured, _ = os.ReadFile(outputPath)
+		}
 	} else if writeErr := os.WriteFile(outputPath, output, 0o600); writeErr != nil {
 		return writeErr
 	}
 	if _, writeErr := sink.Write(output); writeErr != nil {
 		return writeErr
+	}
+	// The runner keeps the published artifact open as a stdout sink. Restore
+	// tool-generated structured output after that sink has received diagnostics;
+	// otherwise a table/log stream can overwrite a JSON artifact in place.
+	if len(structured) > 0 {
+		if writeErr := os.WriteFile(outputPath, structured, 0o600); writeErr != nil {
+			return writeErr
+		}
 	}
 	if err != nil {
 		if ctx.Err() != nil {
@@ -239,7 +251,11 @@ func gpoRemoteArgs(r *modules.Runtime, output string) []string {
 	return []string{"remote", "-s", r.Target, "-d", r.Domain, "-u", r.Username, "-p", r.Password, "-o", output}
 }
 func ghostSPNArgs(r *modules.Runtime, output string) []string {
-	return []string{"--server", r.Target, "--domain", r.Domain, "--username", r.Username, "--password", r.Password, "--output", output}
+	username := r.Username
+	if !strings.Contains(username, "\\") && !strings.Contains(username, "@") {
+		username = r.Domain + "\\" + username
+	}
+	return []string{"--server", r.Target, "--domain", r.Domain, "--username", username, "--password", r.Password, "--output", output}
 }
 func sccmOfflineArgs(r *modules.Runtime, output string) []string {
 	return []string{"--help", "--output", output}

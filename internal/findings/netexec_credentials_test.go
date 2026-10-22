@@ -59,6 +59,9 @@ func TestAnalyzeNetExecCredentialsCapturesKeywordOnlyAttributes(t *testing.T) {
 			exposures++
 		case "ad_user_description_keyword_observed":
 			observations++
+			if strings.Contains(finding.AffectedObject, "two") && !strings.Contains(finding.EvidenceJSON, `"value":"password policy managed by helpdesk"`) {
+				t.Fatalf("keyword observation did not preserve attribute value: %s", finding.EvidenceJSON)
+			}
 		default:
 			t.Fatalf("unexpected finding type %q", finding.FindingType)
 		}

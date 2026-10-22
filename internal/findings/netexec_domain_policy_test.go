@@ -53,6 +53,47 @@ func TestAnalyzeNetExecDomainPolicyFindsPolicyConditions(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSMBPasswordPolicyProducesStructuredSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SMB_password_policy.txt")
+	body := strings.Join([]string{
+		"SMB 10.1.10.40 445 DC [+] sccm.lab\\operator",
+		"Domain: sccm.lab",
+		"Minimum password length: 12",
+		"Maximum password age: 42 days",
+		"Minimum password age: 1 day",
+		"Password history length: 24",
+		"Account lockout threshold: 0 (disabled)",
+		"Account lockout duration: 30 minutes",
+		"Reset account lockout counter after: 30 minutes",
+		"Password complexity: Enabled",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := AnalyzeNetExecDomainPolicy(context.Background(), path, 7, 9, time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 || inputs[0].FindingType != "ad_domain_policy_password_policy_snapshot" {
+		t.Fatalf("SMB snapshot findings=%#v", inputs)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal([]byte(inputs[0].EvidenceJSON), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence["domain"] != "sccm.lab" || evidence["policy_scope"] != "domain default policy" {
+		t.Fatalf("snapshot context=%v", evidence)
+	}
+	fields, ok := evidence["fields"].(map[string]any)
+	if !ok || fields["account_lockout_threshold"] == nil || fields["password_complexity"] == nil {
+		t.Fatalf("snapshot fields=%v", evidence["fields"])
+	}
+	threshold := fields["account_lockout_threshold"].(map[string]any)
+	if threshold["state"] != "disabled" {
+		t.Fatalf("lockout threshold state=%v", threshold["state"])
+	}
+}
+
 func TestAnalyzeNetExecDomainPolicyRejectsUnsupportedValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "LDAP_password_policy.txt")
 	body := strings.Join([]string{
@@ -168,6 +209,16 @@ func TestNetExecDomainPolicyUsesSQLitePipeline(t *testing.T) {
 	}
 	if policyCount != 2 {
 		t.Fatalf("persisted policy findings=%d, want two", policyCount)
+	}
+}
+
+func TestNetExecGPPArtifactIsAssociatedWithExecution(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SMB_gpp_password.txt")
+	if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := netExecArtifactForExecution("GPP Passwords", path); got != path {
+		t.Fatalf("GPP artifact=%q, want %q", got, path)
 	}
 }
 

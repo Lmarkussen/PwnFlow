@@ -125,6 +125,53 @@ func TestScopedValidationRetainsFTPAndTelnetPorts(t *testing.T) {
 	}
 }
 
+func TestAutomaticServiceValidationUsesCurrentTopologyHostsAndExactPorts(t *testing.T) {
+	entry := module(t, "networkhound-scope-validation")
+	topology := filepath.Join(t.TempDir(), "network_opengraph.json")
+	data := `{"graph":{"nodes":[{"kinds":["Computer"],"properties":{"ip_addresses":["198.51.100.12","198.51.100.12"]}},{"kinds":["Computer"],"properties":{"ip_addresses":["198.51.100.13","127.0.0.1","0.0.0.0"]}}]}}`
+	if err := os.WriteFile(topology, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimeWith(t, nil)
+	runtime.AutomaticBatch = true
+	runtime.BatchArtifacts = map[string]string{"networkhound-topology": topology}
+	args := entry.CommandArgs(runtime)
+	want := []string{"--networks", "198.51.100.12,198.51.100.13", "-Pn", "--port-scan", "--ports", "21,445", "--scan-timeout", "3", "--scan-threads", "10"}
+	for index, value := range want {
+		if index >= len(args) || args[index] != value {
+			t.Fatalf("automatic arguments[%d:] = %v, want prefix %v", index, args, want)
+		}
+	}
+	if strings.Contains(strings.Join(args, " "), "/24") {
+		t.Fatalf("automatic service validation expanded a network: %v", args)
+	}
+}
+
+func TestAutomaticServiceCommandWritesAutomaticArtifactName(t *testing.T) {
+	module := module(t, "networkhound-scope-validation")
+	runtime := &modules.Runtime{AutomaticBatch: true, ResultsRoot: t.TempDir(), BatchArtifacts: map[string]string{
+		"networkhound-topology": filepath.Join(t.TempDir(), "topology.json"),
+	}}
+	topology := runtime.BatchArtifacts["networkhound-topology"]
+	if err := os.WriteFile(topology, []byte(`{"nodes":[{"kinds":["Computer"],"properties":{"ip_addresses":["198.51.100.12"]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := module.commandArgs(runtime, t.TempDir())
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--output ") || !strings.HasSuffix(args[len(args)-1], "ad_host_service.json") {
+		t.Fatalf("automatic output argument=%#v", args)
+	}
+}
+
+func TestAutomaticTopologyHostsRejectMissingArtifact(t *testing.T) {
+	entry := module(t, "networkhound-scope-validation")
+	runtime := runtimeWith(t, nil)
+	runtime.AutomaticBatch = true
+	if err := entry.Check(context.Background(), runtime); err == nil || !strings.Contains(err.Error(), "topology artifact") {
+		t.Fatalf("missing topology was not rejected clearly: %v", err)
+	}
+}
+
 func TestOpenSMBEndpointsUsesOnlyOpenInScopePort445(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "network_scope.json")
 	data := `{"devices":[{"ip_addresses":["198.51.100.10"],"open_ports":[21,445]},{"ip":"198.51.100.11","open_ports":[23]},{"ip":"203.0.113.10","open_ports":[445]}]}`

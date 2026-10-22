@@ -153,8 +153,8 @@ func TestBatchCompletionDefersPersistenceFromUpdate(t *testing.T) {
 	}
 	msg := command()
 	updated, followUp := m.Update(msg)
-	if followUp != nil {
-		t.Fatal("database-free completion unexpectedly scheduled a follow-up command")
+	if followUp == nil {
+		t.Fatal("database-free completion did not re-arm the refresh loop")
 	}
 	if !updated.(*model).batchRecorded || updated.(*model).batchRecording {
 		t.Fatalf("deferred completion was not applied: recorded=%v recording=%v", updated.(*model).batchRecorded, updated.(*model).batchRecording)

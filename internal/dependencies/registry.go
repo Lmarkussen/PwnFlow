@@ -185,12 +185,14 @@ func check(ctx context.Context, definition Definition) Status {
 		return checkToolLayout(ctx, definition)
 	}
 	status := Status{Definition: definition, State: "missing"}
-	path, executable, err := findExecutable(ctx, definition)
+	path, _, err := findExecutable(ctx, definition)
 	if err != nil {
 		status.Detail = fmt.Sprintf("binary is not installed; install with %s", installationDescription(definition))
 		return status
 	}
-	status.FoundExecutable = executable
+	// Keep the resolved path, not only the candidate name. Managed user-scoped
+	// installs such as pipx may be discoverable outside the current PATH.
+	status.FoundExecutable = path
 	probeArgs := definition.ProbeArgs
 	if len(probeArgs) == 0 {
 		probeArgs = []string{"--help"}

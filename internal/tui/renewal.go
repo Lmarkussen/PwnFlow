@@ -44,6 +44,7 @@ func (m *model) nextRenewal() (renewalRequest, bool) {
 func (m *model) requestRenewalPrompt(request renewalRequest) {
 	m.renewalReply = request.reply
 	m.renewing = true
+	m.elevationGeneration = m.planGeneration
 	m.renewalModule = request.moduleID
 	m.elevationPrompt = true
 	m.elevationModules = []string{request.moduleID}

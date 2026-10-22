@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -11,6 +12,83 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/runner"
 )
+
+func TestWatcherTickRefreshesExecutionStateWithoutKeyboardInput(t *testing.T) {
+	m, _ := watcherAbortModel(t)
+	defer func() {
+		m.batch.Cancel()
+		_ = m.batch.Wait(context.Background())
+	}()
+
+	m.watcherListContent = "stale watcher state"
+	_, _ = m.Update(tickMsg(time.Now()))
+	if !strings.Contains(ansi.Strip(m.watcherListContent), "RUNNING") {
+		t.Fatalf("watcher tick did not refresh the execution state: %q", m.watcherListContent)
+	}
+}
+
+func TestWatcherRefreshRemainsArmedAfterSequentialBatchCompletion(t *testing.T) {
+	m, _ := watcherAbortModel(t)
+	defer func() {
+		if m.batch != nil {
+			m.batch.Cancel()
+			_ = m.batch.Wait(context.Background())
+		}
+	}()
+
+	first := m.batch
+	first.Cancel()
+	if err := first.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, command := m.Update(batchRecordedMsg{batch: first, name: "Default Enumeration", finished: time.Now()}); command == nil {
+		t.Fatal("first batch completion did not re-arm watcher refresh")
+	}
+
+	// Start a fresh batch in the same model; this mirrors the second execution
+	// regression rather than constructing a separate TUI instance.
+	m.batch = nil
+	m.running = false
+	m.executeSelected()
+	if m.batch == nil || !m.running {
+		t.Fatal("second batch did not start")
+	}
+	m.watcher = true
+	m.watcherListContent = "stale watcher state"
+	_, command := m.Update(tickMsg(time.Now()))
+	if command == nil {
+		t.Fatal("second batch tick was not scheduled")
+	}
+	if strings.Contains(ansi.Strip(m.watcherListContent), "stale watcher state") {
+		t.Fatalf("second batch did not refresh watcher state: %q", m.watcherListContent)
+	}
+	m.batch.Cancel()
+	_ = m.batch.Wait(context.Background())
+}
+
+func TestCtrlXAbortAllClearsBatchStateForFreshRun(t *testing.T) {
+	m, _ := watcherAbortModel(t)
+	updated, command := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlX})
+	if command != nil {
+		t.Fatal("Ctrl+X unexpectedly returned an asynchronous command")
+	}
+	m = updated.(*model)
+	if m.status != "cancelling all executions" {
+		t.Fatalf("unexpected abort status: %q", m.status)
+	}
+	if m.planGeneration == 0 || m.pending.name != "" || len(m.pending.indices) != 0 {
+		t.Fatalf("abort did not invalidate pending plan state: generation=%d pending=%#v", m.planGeneration, m.pending)
+	}
+	if err := m.batch.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = m.Update(tickMsg(time.Now()))
+	m.closeWatcher()
+	m.focus = focusNavigation
+	if m.running || !m.canStartAutomaticEnumeration() {
+		t.Fatalf("fresh automatic run remained blocked after Ctrl+X: running=%v status=%q", m.running, m.status)
+	}
+}
 
 func TestWrapWatcherOutputPreservesLongLines(t *testing.T) {
 	input := "LDAP  198.51.100.10  389  DC  [+] corp.example\\svc-audit: [REDACTED] (Pwn3d!)"

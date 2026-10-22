@@ -459,11 +459,14 @@ func rawSocketFailure(output string) bool {
 // tailBuffer keeps the most recent output of a tool so a failure can be classified
 // without holding the whole stream in memory.
 type tailBuffer struct {
+	mu    sync.Mutex
 	limit int
 	data  []byte
 }
 
 func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.data = append(b.data, p...)
 	if b.limit > 0 && len(b.data) > b.limit {
 		b.data = append([]byte(nil), b.data[len(b.data)-b.limit:]...)
@@ -471,7 +474,11 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b *tailBuffer) String() string { return string(b.data) }
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
+}
 
 // multiSink forwards output to every sink in order.
 type multiSink []modules.OutputSink

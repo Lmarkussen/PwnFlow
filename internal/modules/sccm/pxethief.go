@@ -56,10 +56,10 @@ func (PXEThief) BatchPrerequisites() []string { return []string{moduleIDSCCMHunt
 // CAP_NET_RAW, which this process only has when the operator granted it.
 func (PXEThief) ElevationRequired() (bool, string) {
 	available, known, _ := rawSocketPrivilegesFunc()
-	if known && !available {
-		return true, rawSocketHint
+	if known && available {
+		return false, ""
 	}
-	return false, ""
+	return true, rawSocketHint
 }
 
 // elevationCommand resolves how one PXEThief invocation runs: the managed
@@ -73,7 +73,7 @@ func (m PXEThief) elevationCommand(ctx context.Context, runtime *modules.Runtime
 		return "", nil, false, err
 	}
 	available, known, _ := rawSocketPrivilegesFunc()
-	if !known || available {
+	if known && available {
 		return program, base, false, nil
 	}
 	if runtime == nil || runtime.Elevation == nil || !runtime.Elevation.ElevationApproved(moduleIDPXEThief) {

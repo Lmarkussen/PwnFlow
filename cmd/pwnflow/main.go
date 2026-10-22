@@ -27,6 +27,80 @@ import (
 
 var version = "0.1.0"
 
+type findingsSelection struct {
+	db       *storage.DB
+	domain   string
+	target   string
+	targetID int64
+}
+
+func openFindingsSelection(ctx context.Context, root, domain, target string) (findingsSelection, error) {
+	resultsRoot := filepath.Join(root, "results")
+	if domain != "" {
+		cleanDomain, err := config.SafePathPart(domain)
+		if err != nil {
+			return findingsSelection{}, fmt.Errorf("invalid findings domain: %w", err)
+		}
+		domain = cleanDomain
+	} else {
+		entries, err := os.ReadDir(resultsRoot)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return findingsSelection{}, fmt.Errorf("findings database not found: %s", filepath.Join(resultsRoot, "<domain>", "enumeration.db"))
+			}
+			return findingsSelection{}, fmt.Errorf("cannot inspect findings directory %s: %w", resultsRoot, err)
+		}
+		var domains []string
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			path := filepath.Join(resultsRoot, entry.Name(), "enumeration.db")
+			if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+				domains = append(domains, entry.Name())
+			}
+		}
+		if len(domains) == 0 {
+			return findingsSelection{}, fmt.Errorf("findings database not found under %s", resultsRoot)
+		}
+		if len(domains) > 1 {
+			return findingsSelection{}, fmt.Errorf("multiple findings databases found; specify --domain (available: %s)", strings.Join(domains, ", "))
+		}
+		domain = domains[0]
+	}
+
+	dbPath := filepath.Join(resultsRoot, domain, "enumeration.db")
+	db, err := storage.OpenReadOnly(dbPath)
+	if err != nil {
+		return findingsSelection{}, fmt.Errorf("cannot open findings database %s read-only: %w", dbPath, err)
+	}
+	closeOnError := func(err error) (findingsSelection, error) {
+		_ = db.Close()
+		return findingsSelection{}, err
+	}
+	addresses, err := db.TargetAddresses(ctx, domain)
+	if err != nil {
+		return closeOnError(fmt.Errorf("cannot read findings assessments: %w", err))
+	}
+	if target != "" {
+		target, err = config.SafeTargetPart(target)
+		if err != nil {
+			return closeOnError(fmt.Errorf("invalid findings target: %w", err))
+		}
+	} else if len(addresses) == 1 {
+		target = addresses[0]
+	} else if len(addresses) == 0 {
+		return closeOnError(fmt.Errorf("findings database contains no assessments for domain %q", domain))
+	} else {
+		return closeOnError(fmt.Errorf("multiple assessments found; specify --dc-ip or --target (available: %s)", strings.Join(addresses, ", ")))
+	}
+	targetID, err := db.TargetID(ctx, domain, target)
+	if err != nil {
+		return closeOnError(fmt.Errorf("assessment %s/%s was not found in findings database: %w", domain, target, err))
+	}
+	return findingsSelection{db: db, domain: domain, target: target, targetID: targetID}, nil
+}
+
 // multiFlag collects a repeatable string flag in order.
 type multiFlag []string
 
@@ -58,9 +132,39 @@ func main() {
 	resetFindings := flag.Bool("reset-findings", false, "remove derived Findings history for this assessment; original artifacts remain")
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	reanalyzeLatest := flag.Bool("reanalyze-latest", false, "offline-analyze the latest supported saved artifacts; never starts modules")
+	findingsOnly := flag.Bool("findings", false, "browse existing Findings and evidence without network access or execution")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	if *findingsOnly {
+		if *flushDB || *resetFindings || *reanalyzeLatest {
+			fail(errors.New("--findings cannot be combined with database maintenance or reanalysis flags"))
+		}
+		root, err := config.ProjectRoot()
+		if err != nil {
+			fail(err)
+		}
+		domainValue := *domain
+		targetValue, err := resolveDCIP(*dcIP, *targetAlias)
+		if err != nil {
+			fail(err)
+		}
+		selection, err := openFindingsSelection(ctx, root, domainValue, targetValue)
+		if err != nil {
+			fail(err)
+		}
+		defer selection.db.Close()
+		cfg, err := config.NewFindingsOnly(selection.target, selection.domain, root)
+		if err != nil {
+			fail(err)
+		}
+		if err := tui.RunFindingsOnly(ctx, cfg, selection.db, selection.targetID, version); err != nil && !errors.Is(err, tui.ErrQuit) {
+			fail(err)
+		}
+		return
+	}
 	target, targetErr := resolveDCIP(*dcIP, *targetAlias)
 	if targetErr != nil {
 		fail(targetErr)
@@ -72,8 +176,6 @@ func main() {
 	passwordValue := *passwordFlag
 	passwordProvided := false
 	flag.Visit(func(f *flag.Flag) { passwordProvided = passwordProvided || f.Name == "password" })
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	if *flushDB && (*resetFindings || *reanalyzeLatest) {
 		fail(errors.New("--flushdb cannot be combined with --reset-findings or --reanalyze-latest"))
 	}

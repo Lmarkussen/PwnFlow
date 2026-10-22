@@ -26,6 +26,11 @@ func SMBEnumerationModules() []modules.Module {
 			output:      "SMB_server_info.txt",
 		},
 		{
+			id: "smb-password-policy", name: "SMB Password Policy",
+			description: "Reads the domain password and lockout policy through SMB --pass-pol and preserves the original policy output for offline review.",
+			args:        []string{"--pass-pol"}, output: "SMB_password_policy.txt",
+		},
+		{
 			id: "smb-shares", name: "SMB Shares",
 			description: "Enumerates shares and the permissions the authenticated account has on each one.",
 			args:        []string{"--shares"}, output: "SMB_shares.txt",

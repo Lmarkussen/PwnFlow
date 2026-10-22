@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 )
 
 type ftpMock struct {
@@ -152,6 +153,25 @@ func TestFTPAnonymousUsesCurrentNetworkHoundArtifact(t *testing.T) {
 	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{
 		"networkhound-scope-validation": {"NETWORKS": "198.51.100.0/24"},
 	}, BatchArtifacts: map[string]string{"networkhound-scope-validation": artifact}}
+	endpoints, reason := discoveredEndpoints(runtime)
+	if reason != "NetworkHound" || len(endpoints) != 1 || endpoints[0] != "198.51.100.42:21" {
+		t.Fatalf("discovery=%v reason=%q", endpoints, reason)
+	}
+}
+
+func TestFTPAnonymousUsesAutomaticServiceArtifact(t *testing.T) {
+	artifact := filepath.Join(t.TempDir(), "ad_host_service.json")
+	topology := filepath.Join(t.TempDir(), "topology.json")
+	if err := os.WriteFile(artifact, []byte(`{"nodes":[{"properties":{"ip_addresses":["198.51.100.42"],"open_ports":[21]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(topology, []byte(`{"nodes":[{"kinds":["Computer"],"properties":{"ip_addresses":["198.51.100.42"]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &modules.Runtime{
+		AutomaticBatch: true,
+		BatchArtifacts: map[string]string{networkhound.AutomaticServiceArtifactKey: artifact, "networkhound-topology": topology},
+	}
 	endpoints, reason := discoveredEndpoints(runtime)
 	if reason != "NetworkHound" || len(endpoints) != 1 || endpoints[0] != "198.51.100.42:21" {
 		t.Fatalf("discovery=%v reason=%q", endpoints, reason)

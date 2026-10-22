@@ -37,6 +37,7 @@ func (l *executionLog) executed() []string {
 // execution, so a batch can be checked for content, order, and duplicates.
 type selectionModule struct {
 	id       string
+	name     string
 	family   modules.ToolFamily
 	category modules.Category
 	protocol modules.Protocol
@@ -45,8 +46,13 @@ type selectionModule struct {
 	slow     bool
 }
 
-func (m selectionModule) ID() string                     { return m.id }
-func (m selectionModule) Name() string                   { return m.id }
+func (m selectionModule) ID() string { return m.id }
+func (m selectionModule) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return m.id
+}
 func (m selectionModule) ToolFamily() modules.ToolFamily { return m.family }
 func (m selectionModule) Category() modules.Category     { return m.category }
 func (m selectionModule) Tool() string                   { return "test tool" }
@@ -372,6 +378,7 @@ func TestGlobalShortcutsWorkFromNavigationPane(t *testing.T) {
 	if m.findingsView {
 		t.Fatal("Finder did not close explicitly")
 	}
+	m.focus = focusModules
 	dispatch(tea.KeyCtrlA)
 	if !m.running || m.batch == nil || m.batchName != "Default Enumeration" || len(m.batchItems) != len(profileIDs) {
 		t.Fatalf("Ctrl+A from navigation did not start the fixed profile: running=%v batch=%v name=%q items=%d", m.running, m.batch != nil, m.batchName, len(m.batchItems))

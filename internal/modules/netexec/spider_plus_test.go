@@ -75,6 +75,38 @@ func TestSpiderPlusManualEndpointOptionIsAcceptedButOutputPathIsNotConfigurable(
 	}
 }
 
+func TestSpiderPlusManualRunRequestsExactEndpointsWithoutDiscovery(t *testing.T) {
+	module := spiderPlusModuleForTest(t)
+	fields := module.MissingInputs(&modules.Runtime{})
+	if len(fields) != 1 || fields[0].Key != "SMB_ENDPOINTS" {
+		t.Fatalf("manual Spider Plus did not request exact endpoints: %#v", fields)
+	}
+}
+
+func TestSpiderPlusUsesExactManualEndpointsWithoutNetworkHoundArtifact(t *testing.T) {
+	module := spiderPlusModuleForTest(t)
+	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{
+		module.ID(): {"SMB_ENDPOINTS": "198.51.100.10:445,198.51.100.11"},
+	}}
+	targets, err := module.spiderTargets(runtime)
+	if err != nil {
+		t.Fatalf("exact manual endpoints were rejected: %v", err)
+	}
+	if got, want := strings.Join(targets, ","), "198.51.100.10,198.51.100.11"; got != want {
+		t.Fatalf("targets = %q, want %q", got, want)
+	}
+}
+
+func TestSpiderPlusManualEndpointsStillRejectNonSMBPort(t *testing.T) {
+	module := spiderPlusModuleForTest(t)
+	runtime := &modules.Runtime{ModuleOptions: map[string]map[string]string{
+		module.ID(): {"SMB_ENDPOINTS": "198.51.100.10:139"},
+	}}
+	if _, err := module.spiderTargets(runtime); err == nil || !strings.Contains(err.Error(), "TCP/445") {
+		t.Fatalf("non-SMB endpoint was accepted: %v", err)
+	}
+}
+
 func TestSpiderPlusRequiresApprovedNetworkHoundScope(t *testing.T) {
 	module := spiderPlusModuleForTest(t)
 	for _, test := range []struct {
@@ -137,6 +169,27 @@ func TestSpiderPlusUsesCurrentNetworkHoundSMBEndpoints(t *testing.T) {
 	}
 	if _, err := json.Marshal(args); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSpiderPlusAutomaticRunUsesAutomaticServiceArtifact(t *testing.T) {
+	module := spiderPlusModuleForTest(t)
+	artifact := filepath.Join(t.TempDir(), "ad_host_service.json")
+	topology := filepath.Join(t.TempDir(), "topology.json")
+	if err := os.WriteFile(artifact, []byte(`{"nodes":[{"properties":{"ip_addresses":["198.51.100.10"],"open_ports":[445]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(topology, []byte(`{"nodes":[{"kinds":["Computer"],"properties":{"ip_addresses":["198.51.100.10"]}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &modules.Runtime{
+		AutomaticBatch: true,
+		BatchArtifacts: map[string]string{networkhound.AutomaticServiceArtifactKey: artifact, "networkhound-topology": topology},
+		ModuleOptions:  map[string]map[string]string{"networkhound-scope-validation": {"NETWORKS": ""}},
+	}
+	targets, err := module.spiderTargets(runtime)
+	if err != nil || !strings.EqualFold(strings.Join(targets, ","), "198.51.100.10") {
+		t.Fatalf("automatic targets=%v, err=%v", targets, err)
 	}
 }
 

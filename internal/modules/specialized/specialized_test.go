@@ -50,7 +50,7 @@ func TestCommandBuildersMatchInstalledCLIs(t *testing.T) {
 		"mssqlrelay-check":     {"check", "-target", "198.51.100.42", "-u", "operator@example.test", "-p", "synthetic-password", "-windows-auth"},
 		"mssqlpwner-enumerate": {"example.test/operator:synthetic-password@198.51.100.42", "-windows-auth", "enumerate"},
 		"gpoparser-remote":     {"remote", "-s", "198.51.100.42", "-d", "example.test", "-u", "operator", "-p", "synthetic-password", "-o", "artifact"},
-		"ghostspn-audit":       {"--server", "198.51.100.42", "--domain", "example.test", "--username", "operator", "--password", "synthetic-password", "--output", "artifact"},
+		"ghostspn-audit":       {"--server", "198.51.100.42", "--domain", "example.test", "--username", "example.test\\operator", "--password", "synthetic-password", "--output", "artifact"},
 	}
 	for _, module := range Modules() {
 		want, ok := cases[module.ID()]

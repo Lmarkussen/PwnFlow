@@ -52,6 +52,9 @@ func (m *model) modulePaneLayout() (footer string, rows int) {
 				return candidate, 1
 			}
 		}
+		if candidate := wrapFooter(minimalHelpText, width); budget-compactModulePaneChromeLines-moduleFooterChromeLines-lipgloss.Height(candidate) >= 1 {
+			return candidate, 1
+		}
 		return "", max(1, budget-compactModulePaneChromeLines)
 	}
 	for _, candidate := range []string{

@@ -52,6 +52,11 @@ func (m *Manager) ReanalyzeLatest(ctx context.Context, assessmentID int64, sourc
 		return err
 	}
 	artifact := DiscoverArtifact(sourceTool, output)
+	if artifact == "" && strings.EqualFold(sourceTool, "PwnFlow / RustHound Analysis") {
+		if info, statErr := os.Stat(output); statErr == nil && !info.IsDir() {
+			artifact = output
+		}
+	}
 	if artifact == "" {
 		if err := m.db.MarkAnalysisUnsupportedForExecution(ctx, assessmentID, executionID, sourceTool, "no supported finalized artifact for the latest execution"); err != nil {
 			return err
@@ -68,11 +73,36 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 	if err := m.reanalyzeLatestNetExec(ctx, assessmentID); err != nil {
 		return err
 	}
-	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief"} {
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis"} {
+		if strings.EqualFold(source, "PwnFlow / RustHound Analysis") {
+			if err := m.reanalyzeWritableObjects(ctx, assessmentID, source); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := m.ReanalyzeLatest(ctx, assessmentID, source); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) reanalyzeWritableObjects(ctx context.Context, assessmentID int64, sourceTool string) error {
+	executions, err := m.db.ExecutionsForTool(ctx, assessmentID, sourceTool)
+	if err != nil {
+		return err
+	}
+	for _, execution := range executions {
+		if strings.TrimSpace(execution.OutputPath) == "" {
+			continue
+		}
+		if info, statErr := os.Stat(execution.OutputPath); statErr != nil || info.IsDir() {
+			continue
+		}
+		if err := m.Submit(Job{AssessmentID: assessmentID, ExecutionID: execution.ID, SourceTool: sourceTool, ArtifactPath: execution.OutputPath, ObservedAt: time.Now().UTC(), Force: true}); err != nil {
 			return err
 		}
 	}
@@ -112,11 +142,19 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "user info") && strings.HasSuffix(path, "ldap_get_users_info.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "password-not-required") && strings.HasSuffix(path, "ldap_password_not_required.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "password policy") && strings.HasSuffix(path, "ldap_password_policy.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "smb password policy") && strings.HasSuffix(path, "smb_password_policy.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "fine-grained password policy") && strings.HasSuffix(path, "ldap_fine_grained_password_policy.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.Contains(name, "machine account quota") && strings.HasSuffix(path, "ldap_machine_account_quota.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.Contains(name, "gpp password") && strings.HasSuffix(path, "smb_gpp_password.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.HasSuffix(path, "smb_gpp_password.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	default:
 		return ""
@@ -125,7 +163,7 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 
 func isNetExecDomainPolicyArtifact(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
-	return base == "ldap_password_policy.txt" || base == "ldap_machine_account_quota.txt"
+	return base == "ldap_password_policy.txt" || base == "ldap_machine_account_quota.txt" || base == "smb_password_policy.txt"
 }
 
 type queuedJob struct {
@@ -282,7 +320,9 @@ func (m *Manager) analyze(queued queuedJob) {
 			}
 		}
 		var parserInputs []storage.FindingInput
-		if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
+		if strings.Contains(lowerPath, "gpp_password") || strings.Contains(lowerPath, "gpp-password") {
+			parserInputs, err = AnalyzeNetExecGPP(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
 			parserInputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
@@ -294,7 +334,7 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "masscan":
 		inputs, err = AnalyzeMasscan(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
-	case "ad writable object assessment":
+	case "ad writable object assessment", "pwnflow / rusthound analysis":
 		inputs, err = AnalyzeWritableObjectReport(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "pwnflow ftp probe":
 		inputs, err = AnalyzeFTPAnonymous(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
@@ -464,12 +504,14 @@ func ParserVersionFor(tool string) string {
 	case "pxethief":
 		return PXEThiefParserVersion
 	case "netexec", "netexec (nxc)":
+		// NetExec jobs may include specialized artifact parsers selected by
+		// artifact identity; the security parser remains the base version.
 		return netExecSecurityParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		return specializedParserVersion
 	case "masscan":
 		return masscanParserVersion
-	case "ad writable object assessment":
+	case "ad writable object assessment", "pwnflow / rusthound analysis":
 		return writableObjectsParserVersion
 	case "pwnflow ftp probe":
 		return ftpAnonymousParserVersion

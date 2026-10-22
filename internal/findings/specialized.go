@@ -203,7 +203,10 @@ func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, no
 					if severity == "" || severity == "self" || severity == "excluded" {
 						severity = "informational"
 					}
-					findings = append(findings, specializedFinding(assessmentID, executionID, "ghostspn_orphaned_spn", "Orphaned or stale SPN: "+spn, reason, severity, principal, string(evidence), path, ref, now))
+					if ghostSPNAccountTypeObservation(reason) {
+						severity = "informational"
+					}
+					findings = append(findings, specializedFinding(assessmentID, executionID, "ghostspn_orphaned_spn", ghostSPNTitle(spn, reason, typed), reason, severity, principal, string(evidence), path, ref, now))
 				}
 			}
 			for key, child := range typed {
@@ -215,18 +218,35 @@ func parseGhostSPN(data []byte, path string, assessmentID, executionID int64, no
 	return findings, nil
 }
 
+func ghostSPNAccountTypeObservation(reason string) bool {
+	return strings.Contains(strings.ToLower(reason), "user account spns cannot request service tickets")
+}
+
+func ghostSPNTitle(spn, reason string, record map[string]any) string {
+	if ghostSPNAccountTypeObservation(reason) {
+		return "SPN Account-Type Observation: " + spn
+	}
+	lowerReason := strings.ToLower(reason)
+	dnsStatus, _ := record["dns_status"].(string)
+	if strings.Contains(lowerReason, "orphan") || strings.Contains(lowerReason, "stale") || strings.Contains(lowerReason, "ghost") || strings.Contains(strings.ToLower(dnsStatus), "not resolved") {
+		return "Potential Orphaned SPN: " + spn
+	}
+	return "SPN Configuration Anomaly: " + spn
+}
+
 func parseGPO(data []byte, path string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
 	var structured any
 	if json.Unmarshal(data, &structured) == nil {
 		var findings []storage.FindingInput
-		var walk func(any, string)
-		walk = func(item any, ref string) {
+		var walk func(any, string, map[string]string)
+		walk = func(item any, ref string, context map[string]string) {
 			switch typed := item.(type) {
 			case []any:
 				for index, child := range typed {
-					walk(child, fmt.Sprintf("%s/%d", ref, index))
+					walk(child, fmt.Sprintf("%s/%d", ref, index), context)
 				}
 			case map[string]any:
+				nextContext := mergeGPOContext(context, typed)
 				for key, child := range typed {
 					text, ok := child.(string)
 					if ok {
@@ -236,15 +256,17 @@ func parseGPO(data []byte, path string, assessmentID, executionID int64, now tim
 							if strings.Contains(lower, "cpassword") {
 								kind, severity = "gpo_preference_credential_exposed", "high"
 							}
-							evidence, _ := json.Marshal(map[string]any{"field": key, "configuration": text})
-							findings = append(findings, specializedFinding(assessmentID, executionID, kind, "GPO security configuration observed", "gpoParser output contains an explicit security-relevant policy setting. Applicability and resulting access must be confirmed from GPO linkage and filtering data.", severity, "", string(evidence), path, ref+"/"+key, now))
+							evidence := gpoConfigurationEvidence(key, text, nextContext)
+							affected := firstGPOContext(nextContext, "gpo_name", "name", "gpo_guid", "guid")
+							description := "gpoParser observed a Group Policy configuration value; applicability and resulting access remain unverified."
+							findings = append(findings, specializedFinding(assessmentID, executionID, kind, "GPO security configuration observed", description, severity, affected, evidence, path, ref+"/"+key, now))
 						}
 					}
-					walk(child, ref+"/"+key)
+					walk(child, ref+"/"+key, nextContext)
 				}
 			}
 		}
-		walk(structured, "")
+		walk(structured, "", nil)
 		return findings, nil
 	}
 	var findings []storage.FindingInput
@@ -267,6 +289,44 @@ func parseGPO(data []byte, path string, assessmentID, executionID int64, now tim
 		findings = append(findings, specializedFinding(assessmentID, executionID, kind, "GPO security configuration observed", "gpoParser output contains an explicit security-relevant policy setting. Applicability and resulting access must be confirmed from the GPO linkage and filtering data.", severity, "", string(evidence), path, fmt.Sprintf("line:%d", line), now))
 	}
 	return findings, scanner.Err()
+}
+
+func mergeGPOContext(parent map[string]string, object map[string]any) map[string]string {
+	result := make(map[string]string, len(parent)+4)
+	for key, value := range parent {
+		result[key] = value
+	}
+	for key, value := range object {
+		text, ok := value.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "gpo", "gpo_name", "name", "display_name", "guid", "gpo_guid", "object_guid", "distinguished_name", "target", "scope", "setting", "policy":
+			result[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(text)
+		}
+	}
+	return result
+}
+
+func firstGPOContext(context map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(context[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func gpoConfigurationEvidence(field, value string, context map[string]string) string {
+	evidence := map[string]any{"field": field, "configuration": value, "setting": field, "configured_value": value}
+	for _, key := range []string{"gpo", "gpo_name", "name", "display_name", "guid", "gpo_guid", "object_guid", "distinguished_name", "target", "scope", "setting", "policy"} {
+		if text := strings.TrimSpace(context[key]); text != "" {
+			evidence[key] = text
+		}
+	}
+	encoded, _ := json.Marshal(evidence)
+	return string(encoded)
 }
 
 func parseMSSQLRelay(data []byte, path string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {

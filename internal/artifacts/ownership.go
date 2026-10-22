@@ -1,10 +1,14 @@
 package artifacts
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -52,6 +56,35 @@ func NormalizeTree(root string) error {
 	})
 }
 
+// NormalizeTreeWithSudo returns ownership for one newly-created execution tree.
+// It first uses the current process identity and only invokes non-interactive sudo
+// for explicitly enumerated foreign-owned paths. Symlinks and their targets are
+// never followed, and the caller remains responsible for passing a run-scoped
+// directory rather than a historical results root.
+func NormalizeTreeWithSudo(ctx context.Context, root string) error {
+	paths, err := foreignPaths(root)
+	if err != nil || len(paths) == 0 {
+		return err
+	}
+	uid, gid, err := OperatorIDs()
+	if err != nil {
+		return err
+	}
+	owner := fmt.Sprintf("%d:%d", uid, gid)
+	for _, path := range paths {
+		if err := os.Chown(path, uid, gid); err == nil {
+			continue
+		} else if !isPermissionError(err) {
+			return fmt.Errorf("change owner of %s: %w", path, err)
+		}
+		command := exec.CommandContext(ctx, "sudo", "-n", "chown", owner, "--", path)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("change owner of %s through sudo: %w (%s)", path, err, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
+}
+
 // NormalizePaths changes ownership only for explicitly named files. It does not
 // recurse into their parent directories and therefore cannot rewrite history.
 func NormalizePaths(paths ...string) error {
@@ -82,6 +115,81 @@ func NormalizePaths(paths ...string) error {
 		}
 	}
 	return nil
+}
+
+// NormalizePathsWithSudo is the file-scoped counterpart to NormalizeTreeWithSudo.
+func NormalizePathsWithSudo(ctx context.Context, paths ...string) error {
+	uid, gid, err := OperatorIDs()
+	if err != nil {
+		return err
+	}
+	owner := fmt.Sprintf("%d:%d", uid, gid)
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if ok && int(stat.Uid) == uid && int(stat.Gid) == gid {
+			continue
+		}
+		if err := os.Chown(path, uid, gid); err == nil {
+			continue
+		} else if !isPermissionError(err) {
+			return fmt.Errorf("change owner of %s: %w", path, err)
+		}
+		command := exec.CommandContext(ctx, "sudo", "-n", "chown", owner, "--", path)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("change owner of %s through sudo: %w (%s)", path, err, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
+}
+
+func foreignPaths(root string) ([]string, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("ownership root is not a real directory: %s", root)
+	}
+	uid, gid, err := OperatorIDs()
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0)
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if ok && (int(stat.Uid) != uid || int(stat.Gid) != gid) {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths, err
+}
+
+func isPermissionError(err error) bool {
+	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
 }
 
 // EnsureDirectory creates a scoped directory without following symlink path

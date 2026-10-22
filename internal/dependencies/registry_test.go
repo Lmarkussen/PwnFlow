@@ -118,7 +118,7 @@ func TestPipxExecutableDiscoveryUsesUserBinWithoutRestart(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("PATH", "/usr/bin")
 	status := DefaultRegistry().CheckOne(context.Background(), BloodHoundPy)
-	if !status.Available || status.FoundExecutable != "bloodhound-ce-python" || !strings.Contains(status.Detail, bin) {
+	if !status.Available || status.FoundExecutable != executable || !strings.Contains(status.Detail, bin) {
 		t.Fatalf("unexpected pipx discovery status: %#v", status)
 	}
 }
@@ -141,7 +141,7 @@ func TestCargoBinDiscoveryFindsRustHoundWithoutPathEntry(t *testing.T) {
 	t.Setenv("PIPX_BIN_DIR", filepath.Join(dir, "pipx-bin"))
 	t.Setenv("PATH", filepath.Join(dir, "empty-path"))
 	status := DefaultRegistry().CheckOne(context.Background(), RustHoundCE)
-	if !status.Available || status.State != "installed" || status.FoundExecutable != "rusthound-ce" {
+	if !status.Available || status.State != "installed" || status.FoundExecutable != executable {
 		t.Fatalf("unexpected Cargo discovery status: %#v", status)
 	}
 	if status.Version != "rusthound-ce 2.5.25" || !strings.Contains(status.Detail, cargoBin) {
@@ -254,7 +254,7 @@ func TestCertipyIsDetectedUnderEitherCommandName(t *testing.T) {
 			if !status.Available || status.State != "installed" {
 				t.Fatalf("Certipy was not detected as %s: %#v", name, status)
 			}
-			if status.FoundExecutable != name {
+			if status.FoundExecutable != filepath.Join(dir, name) {
 				t.Fatalf("unexpected executable: %q", status.FoundExecutable)
 			}
 		})

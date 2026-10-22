@@ -302,6 +302,9 @@ type ElevationRequester interface {
 
 type Runtime struct {
 	Target, Domain, Username, Password, ResultsRoot string
+	// AutomaticBatch distinguishes the curated automatic workflow from a manual
+	// module run. A missing NETWORKS option must never trigger discovery.
+	AutomaticBatch bool
 	// BatchArtifacts contains source artifacts published by earlier modules in
 	// the current sequential batch. It is never populated from historical runs.
 	BatchArtifacts map[string]string
@@ -383,6 +386,10 @@ type Module interface {
 // registration/display path.
 type ExecutionArtifactPathProvider interface {
 	ExecutionArtifactPath(resultsRoot string, started time.Time) string
+}
+
+type ExecutionArtifactTreeProvider interface {
+	ExecutionArtifactTree() bool
 }
 
 // ExecutionPolicy is implemented by integrations that intentionally keep a
@@ -474,6 +481,12 @@ type DependencyKeyProvider interface {
 // freshly written results. The named modules are matched by their IDs.
 type BatchPrerequisiteProvider interface {
 	BatchPrerequisites() []string
+}
+
+// BatchInputPrerequisiteProvider lets a module defer an operator input when a
+// selected batch includes the module that will provide the value safely.
+type BatchInputPrerequisiteProvider interface {
+	BatchInputPrerequisites() []string
 }
 
 // DetailProvider is implemented by modules that expose their fixed configuration

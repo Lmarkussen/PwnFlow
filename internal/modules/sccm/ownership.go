@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
+
+	"github.com/pwnflow/pwnflow/internal/artifacts"
 )
 
 // elevationFailure reports whether output shows sudo refusing to run without a
@@ -32,9 +33,8 @@ func restoreOwnership(ctx context.Context, directory string) error {
 	if _, err := os.Stat(directory); err != nil {
 		return nil
 	}
-	owner := strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
-	if err := runCommand(ctx, "sudo", []string{"-n", "chown", "-R", owner, directory}, "", "", discardSink{}); err != nil {
-		return fmt.Errorf("chown of %s failed: %w", directory, err)
+	if err := artifacts.NormalizeTreeWithSudo(ctx, directory); err != nil {
+		return fmt.Errorf("ownership handoff for %s failed: %w", directory, err)
 	}
 	return nil
 }

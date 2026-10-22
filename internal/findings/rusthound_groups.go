@@ -28,13 +28,13 @@ type GroupMembershipReport struct {
 }
 
 type PrivilegedGroup struct {
-	ID, Name, Domain string
-	Privilege        string
-	Artifact         string
-	ArtifactRef      string
-	DirectMembers    []GroupPrincipal
-	NestedMembers    []GroupPrincipal
-	Unresolved       []GroupPrincipal
+	ID, Name, Domain, DomainSID string
+	Privilege                   string
+	Artifact                    string
+	ArtifactRef                 string
+	DirectMembers               []GroupPrincipal
+	NestedMembers               []GroupPrincipal
+	Unresolved                  []GroupPrincipal
 }
 
 type GroupPrincipal struct {
@@ -128,7 +128,7 @@ func AnalyzeRustHoundGroups(ctx context.Context, inputPath string, assessmentID,
 		if !ok {
 			continue
 		}
-		item := PrivilegedGroup{ID: group.ID, Name: principalName(group), Domain: group.Domain, Privilege: privilege, Artifact: group.Artifact, ArtifactRef: group.Ref + "/Members"}
+		item := PrivilegedGroup{ID: group.ID, Name: principalName(group), Domain: group.Domain, DomainSID: group.DomainSID, Privilege: privilege, Artifact: group.Artifact, ArtifactRef: group.Ref + "/Members"}
 		for _, edge := range groupMembers[groupIdentity(group.ID)] {
 			principal := resolveGroupPrincipal(objects, edge.Member)
 			if foreignReference(principal.ID, group.DomainSID) {
@@ -161,6 +161,19 @@ func AnalyzeRustHoundGroups(ctx context.Context, inputPath string, assessmentID,
 	for _, group := range privileged {
 		evidence, _ := json.Marshal(map[string]any{"group_id": group.ID, "group_name": group.Name, "privilege": group.Privilege, "direct_members": len(group.DirectMembers), "nested_members": len(group.NestedMembers), "unresolved": len(group.Unresolved), "coverage": report.Coverage})
 		inputs = append(inputs, groupFinding(assessmentID, executionID, group, "ad_privileged_group_membership_inventory", "Privileged AD group membership inventory", string(evidence), now))
+		effective := uniqueResolvedMembers(group.DirectMembers, group.NestedMembers)
+		summaryEvidence, _ := json.Marshal(map[string]any{
+			"domain":                 group.Domain,
+			"domain_sid":             group.DomainSID,
+			"group_id":               group.ID,
+			"group_name":             group.Name,
+			"direct_member_count":    len(group.DirectMembers),
+			"effective_member_count": len(effective),
+			"unresolved_count":       len(group.Unresolved),
+			"coverage":               report.Coverage,
+			"collection_timestamp":   now.UTC(),
+		})
+		inputs = append(inputs, groupFinding(assessmentID, executionID, group, "domain_information_privileged_group_membership", "Domain Privileged Group Membership Summary", string(summaryEvidence), now))
 		if len(group.NestedMembers) > 0 {
 			paths := make([]string, 0, len(group.NestedMembers))
 			for _, member := range group.NestedMembers {
@@ -186,6 +199,21 @@ func AnalyzeRustHoundGroups(ctx context.Context, inputPath string, assessmentID,
 		report.Artifact = files[0]
 	}
 	return report, inputs, nil
+}
+
+func uniqueResolvedMembers(groups ...[]GroupPrincipal) []GroupPrincipal {
+	seen := map[string]bool{}
+	result := make([]GroupPrincipal, 0)
+	for _, principals := range groups {
+		for _, principal := range principals {
+			if principal.Type == "group" || principal.Type == "unknown" || principal.Type == "foreign" || principal.Deleted || seen[groupIdentity(principal.ID)] {
+				continue
+			}
+			seen[groupIdentity(principal.ID)] = true
+			result = append(result, principal)
+		}
+	}
+	return result
 }
 
 func rustHoundGroupFiles(inputPath string) ([]string, error) {

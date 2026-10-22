@@ -101,10 +101,15 @@ func (m *model) skipInput() tea.Cmd {
 // cancelPlan abandons the whole pending run, which is what Ctrl+C means while a
 // prompt is open.
 func (m *model) cancelPlan() {
+	m.planGeneration++
 	m.inputPrompt = false
 	m.inputQueue = nil
+	m.elevationPrompt = false
 	m.approvalPrompt = false
 	m.approvalIndices = nil
+	m.elevationModules = nil
+	m.pendingIndices = nil
+	m.pendingName = ""
 	m.pending = plan{}
 	m.status = "cancelled"
 }

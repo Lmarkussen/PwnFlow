@@ -34,8 +34,16 @@ func TestAnalyzeSpecializedMSSQLAndGhostSPN(t *testing.T) {
 		t.Fatal(err)
 	}
 	findings, err = AnalyzeSpecialized(context.Background(), actualGhost, "ghostSPN", 1, 2, nowForTest())
-	if err != nil || len(findings) != 1 || findings[0].AffectedObject != "svc_sql" || findings[0].Severity != "high" {
+	if err != nil || len(findings) != 1 || findings[0].AffectedObject != "svc_sql" || findings[0].Severity != "high" || !strings.HasPrefix(findings[0].Title, "Potential Orphaned SPN:") {
 		t.Fatalf("unexpected actual ghostSPN findings: %#v %v", findings, err)
+	}
+	accountType := filepath.Join(dir, "ghost-account-type.json")
+	if err := os.WriteFile(accountType, []byte(`[{"spn":"kadmin/changepw","hostname":"changepw","account_sam":"krbtgt","exploitability":"LOW","reason":"User account SPNs cannot request service tickets","dns_status":"Not Checked"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	findings, err = AnalyzeSpecialized(context.Background(), accountType, "ghostSPN", 1, 2, nowForTest())
+	if err != nil || len(findings) != 1 || findings[0].Severity != "informational" || !strings.HasPrefix(findings[0].Title, "SPN Account-Type Observation:") {
+		t.Fatalf("unexpected account-type GhostSPN finding: %#v %v", findings, err)
 	}
 }
 
@@ -109,5 +117,21 @@ func TestAnalyzeGPOEvidenceDoesNotFabricateEmptyObservation(t *testing.T) {
 	}
 	if _, err := AnalyzeSpecialized(context.Background(), filepath.Join(dir, "GPO_metadata.json"), "AD GPO Evidence", 1, 78, nowForTest()); err == nil {
 		t.Fatal("empty collection produced an observation")
+	}
+}
+
+func TestAnalyzeSpecializedGPOConfigurationPreservesContext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+	content := `{"gpos":[{"name":"Workstation Policy","guid":"{11111111-2222-3333-4444-555555555555}","security":{"S-1-5-32-555":"Remote Desktop Users"}}]}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := AnalyzeSpecialized(context.Background(), path, "gpoParser", 1, 761, nowForTest())
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("findings=%#v err=%v", findings, err)
+	}
+	if !strings.Contains(findings[0].EvidenceJSON, "Workstation Policy") || !strings.Contains(findings[0].EvidenceJSON, "S-1-5-32-555") {
+		t.Fatalf("GPO context was not preserved: %s", findings[0].EvidenceJSON)
 	}
 }

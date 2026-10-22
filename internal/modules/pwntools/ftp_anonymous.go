@@ -215,18 +215,44 @@ func discoveredEndpoints(runtime *modules.Runtime) ([]string, string) {
 		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable"
 	}
 	path, ok := "", false
+	artifactKey := "networkhound-scope-validation"
+	if runtime.AutomaticBatch {
+		artifactKey = networkhound.AutomaticServiceArtifactKey
+	}
 	if runtime.BatchArtifacts != nil {
-		path, ok = runtime.BatchArtifacts["networkhound-scope-validation"]
+		path, ok = runtime.BatchArtifacts[artifactKey]
 	}
 	if !ok {
+		if runtime.AutomaticBatch {
+			return nil, "SKIPPED — NetworkHound current-batch service artifact is missing"
+		}
 		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable"
 	}
-	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
+	scope := ""
+	if runtime.AutomaticBatch {
+		topology := ""
+		if runtime.BatchArtifacts != nil {
+			topology = runtime.BatchArtifacts["networkhound-topology"]
+		}
+		addresses, err := networkhound.TopologyHostAddresses(topology)
+		if err != nil || len(addresses) == 0 {
+			return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable: current topology scope is missing or invalid"
+		}
+		scope = strings.Join(addresses, ",")
+	} else {
+		scope, _ = runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
+		if err := networkhound.ValidateScope(scope); err != nil {
+			return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable: approved scope is missing or invalid"
+		}
+	}
 	endpoints, err := networkhound.OpenFTPEndpoints(path, scope)
 	if err != nil {
 		return nil, "SKIPPED — NetworkHound FTP discovery evidence unavailable: " + err.Error()
 	}
 	if len(endpoints) == 0 {
+		if runtime.AutomaticBatch {
+			return nil, "SKIPPED — No confirmed TCP/21 endpoints in current batch"
+		}
 		return nil, "SKIPPED — No confirmed open FTP endpoints in current NetworkHound results."
 	}
 	return endpoints, "NetworkHound"

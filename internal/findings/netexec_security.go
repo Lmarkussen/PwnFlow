@@ -19,9 +19,10 @@ import (
 const netExecSecurityParserVersion = "netexec-security-v1"
 
 var (
-	netExecSMBSigningLine = regexp.MustCompile(`(?i)^\s*SMB\s+(\S+)\s+(\d+)\s+(\S+).*?\(\s*signing\s*:\s*(true|false)\s*\)`)
-	netExecAccountLine    = regexp.MustCompile(`(?i)\b(?:samaccountname|sAMAccountName|username|user|account|principal)\s*[:=]\s*([A-Za-z0-9._$\\/@-]+)`) //nolint:lll
-	netExecUACLine        = regexp.MustCompile(`(?i)\b(?:useraccountcontrol|uac)\s*[:=]\s*([^\s,;]+(?:\s*[|,]\s*[A-Za-z_]+)*)`)
+	netExecSMBSigningLine              = regexp.MustCompile(`(?i)^\s*SMB\s+(\S+)\s+(\d+)\s+(\S+).*?\(\s*signing\s*:\s*(true|false)\s*\)`)
+	netExecAccountLine                 = regexp.MustCompile(`(?i)\b(?:samaccountname|sAMAccountName|username|user|account|principal)\s*[:=]\s*([A-Za-z0-9._$\\/@-]+)`) //nolint:lll
+	netExecPasswordNotRequiredUserLine = regexp.MustCompile(`(?i)\bUser:\s*([^\s]+)\s+Status:\s*(enabled|disabled)`)
+	netExecUACLine                     = regexp.MustCompile(`(?i)\b(?:useraccountcontrol|uac)\s*[:=]\s*([^\s,;]+(?:\s*[|,]\s*[A-Za-z_]+)*)`)
 )
 
 const (
@@ -71,6 +72,24 @@ func AnalyzeNetExecSecurity(ctx context.Context, artifactPath string, assessment
 			return nil, err
 		}
 		line := netExecANSI.ReplaceAllString(scanner.Text(), "")
+
+		if strings.Contains(strings.ToLower(artifactPath), "password_not_required") {
+			if match := netExecPasswordNotRequiredUserLine.FindStringSubmatch(line); len(match) == 3 {
+				account := strings.TrimSpace(match[1])
+				enabled := strings.EqualFold(match[2], "enabled")
+				severity := "medium"
+				if !enabled {
+					severity = "informational"
+				}
+				evidence := netExecAccountControlEvidence{Account: account, Flag: "PASSWD_NOTREQD", UAC: "PASSWD_NOTREQD (module-reported)", Enabled: &enabled, AccountClass: "user"}
+				result = appendUniqueNetExecSecurity(result, seen, storage.FindingInput{
+					FindingKey: stableNetExecSecurityKey(assessmentID, "passwd-not-required", strings.ToLower(account)), AssessmentID: assessmentID,
+					SourceTool: "NetExec (nxc)", SourceExecution: executionID, FindingType: "ad_account_passwd_notreqd", Title: "Password Not Required Account",
+					Description: "NetExec's dedicated password-not-required query identified this account. This does not prove that the account has a blank password.", Severity: severity, Confidence: "explicit-module-result", AffectedObjectID: strings.ToLower(account), AffectedObject: account,
+					EvidenceJSON: mustMarshalNetExecSecurity(evidence), ArtifactPath: artifactPath, ArtifactRef: fmt.Sprintf("line:%d", lineNumber), ObservedAt: now, Status: "open", ParserVersion: netExecSecurityParserVersion,
+				})
+			}
+		}
 
 		if match := netExecSMBSigningLine.FindStringSubmatch(line); len(match) == 5 && strings.EqualFold(match[4], "false") {
 			evidence := netExecSMBSigningEvidence{Protocol: "SMB", Target: match[1], Port: match[2], Host: match[3], SigningRequired: false}

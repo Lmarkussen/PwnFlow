@@ -18,6 +18,7 @@ import (
 )
 
 type model struct {
+	mode                         ApplicationMode
 	ctx                          context.Context
 	cfg                          config.Config
 	db                           *storage.DB
@@ -49,7 +50,18 @@ type model struct {
 	findingRowTops               map[string]int
 	findingCategories            []findingCategory
 	findingAllRows               []storage.Finding
+	criticalProjection           findingengine.CriticalProjection
+	criticalNavigationLevel      int
+	criticalState                findingengine.CriticalState
+	criticalFamily               string
+	criticalStateCursor          int
+	criticalFamilyCursor         int
+	criticalSourceFindings       []storage.Finding
+	criticalSourceIndex          int
 	findingsLoaded               bool
+	findingsLoading              bool
+	findingsLoadGeneration       uint64
+	findingsAsync                bool
 	findingsAnalysisStatus       string
 	inlineEvidence               inlineEvidence
 	inlineEvidenceTop            int
@@ -77,7 +89,6 @@ type model struct {
 	selectedModules              map[string]bool
 	running                      bool
 	watcher                      bool
-	easterEgg                    bool
 	focusBeforeWatcher           paneFocus
 	quitConfirm                  bool
 	quitAfterCancel              bool
@@ -107,26 +118,28 @@ type model struct {
 	// moduleInputs holds the values the operator typed in this session, keyed by
 	// module then option key. It is never persisted, so it cannot reach another
 	// assessment.
-	moduleInputs      map[string]map[string]string
-	textInput         textinput.Model
-	batchElevation    map[string]bool
-	detailsRefreshed  time.Time
-	buffer            *runner.Buffer
-	last              []byte
-	status            string
-	started           time.Time
-	width, height     int
-	version           string
-	outputBuffers     map[int]*runner.Buffer
-	batch             *runner.BatchRun
-	batchItems        []runner.BatchItem
-	batchRecorded     bool
-	batchRecording    bool
-	batchSummaryShown bool
-	analysisPending   bool
-	batchName         string
-	batchRequested    int
-	batchSkipped      []string
+	moduleInputs        map[string]map[string]string
+	textInput           textinput.Model
+	batchElevation      map[string]bool
+	detailsRefreshed    time.Time
+	buffer              *runner.Buffer
+	last                []byte
+	status              string
+	started             time.Time
+	width, height       int
+	version             string
+	outputBuffers       map[int]*runner.Buffer
+	batch               *runner.BatchRun
+	batchItems          []runner.BatchItem
+	batchRecorded       bool
+	batchRecording      bool
+	batchSummaryShown   bool
+	analysisPending     bool
+	batchName           string
+	batchRequested      int
+	batchSkipped        []string
+	planGeneration      uint64
+	elevationGeneration uint64
 
 	batchSummaryExported       bool
 	collectionQualityExported  bool
@@ -169,7 +182,20 @@ type model struct {
 	watcherModule    int
 }
 
+type ApplicationMode int
+
+const (
+	ModeNormal ApplicationMode = iota
+	ModeFindingsOnly
+)
+
 type tickMsg time.Time
+type findingsLoadedMsg struct {
+	generation uint64
+	rows       []storage.Finding
+	status     string
+	err        error
+}
 type batchRecordedMsg struct {
 	batch        *runner.BatchRun
 	executionIDs []int64
@@ -197,12 +223,16 @@ func newTextInput() textinput.Model {
 }
 
 func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered []modules.Module, moduleIDs []int64, targetID int64, version string, availability ...map[string]string) *model {
+	return newModelWithMode(ctx, cfg, db, registered, moduleIDs, targetID, version, ModeNormal, availability...)
+}
+
+func newModelWithMode(ctx context.Context, cfg config.Config, db *storage.DB, registered []modules.Module, moduleIDs []int64, targetID int64, version string, mode ApplicationMode, availability ...map[string]string) *model {
 	moduleAvailability := map[string]string{}
 	if len(availability) > 0 && availability[0] != nil {
 		moduleAvailability = availability[0]
 	}
-	m := &model{ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24, findingViewMode: "findings"}
-	if db != nil {
+	m := &model{mode: mode, ctx: ctx, cfg: cfg, db: db, allModules: registered, allModuleIDs: moduleIDs, availability: moduleAvailability, toolFamilies: modules.ToolFamilies(), targetID: targetID, version: version, selectedModules: make(map[string]bool), outputBuffers: make(map[int]*runner.Buffer), outputViewport: viewport.New(1, 1), outputFollow: true, outputModule: -1, watcherViewport: viewport.New(1, 1), watcherListViewport: viewport.New(1, 1), watcherFollow: true, watcherModule: -1, watcherAuto: true, watcherFocus: focusModules, focusBeforeWatcher: focusNavigation, width: 80, height: 24, findingViewMode: "findings"}
+	if db != nil && mode != ModeFindingsOnly {
 		m.findings = findingengine.NewManager(ctx, db)
 	}
 	// A model without a database - a test, or a run that could not open the
@@ -220,6 +250,25 @@ func newModel(ctx context.Context, cfg config.Config, db *storage.DB, registered
 	m.resizeOutput()
 	return m
 }
+
+func newFindingsOnlyModel(ctx context.Context, cfg config.Config, db *storage.DB, targetID int64, version string) *model {
+	m := newModelWithMode(ctx, cfg, db, nil, nil, targetID, version, ModeFindingsOnly)
+	m.findingsView = true
+	m.findingsFromWatcher = false
+	m.findingDetail = false
+	m.findingViewMode = "all"
+	m.findingCategoryView = true
+	m.findingCategory = ""
+	m.findingTieringView = false
+	m.findingTieringParent = false
+	m.findingCursor = 0
+	m.findingsLoaded = false
+	m.findingsAsync = true
+	m.refreshFindings()
+	return m
+}
+
+func (m *model) findingsOnly() bool { return m.mode == ModeFindingsOnly }
 
 // moduleRuntime is the configuration modules run and report with: the operator's
 // target, domain, and credentials, and the assessment's discovery store.
@@ -363,17 +412,21 @@ func (m *model) filterModules() {
 		}
 	}
 	// Keep the registry order authoritative for execution, but make each visible
-	// Tool Runner list predictable: native commands first, then registered
-	// NetExec -M modules, with case-insensitive display-name ordering in each
-	// group. The parallel moduleKeys slice preserves selection identity.
+	// Tool Runner list predictable with case-insensitive display-name ordering.
+	// The parallel moduleKeys slice preserves selection identity.
 	sort.SliceStable(m.modules, func(left, right int) bool {
 		leftModule, rightModule := m.modules[left], m.modules[right]
-		leftGroup := moduleListGroup(leftModule)
-		rightGroup := moduleListGroup(rightModule)
-		if leftGroup != rightGroup {
-			return leftGroup < rightGroup
+		leftName := strings.ToLower(leftModule.Name())
+		rightName := strings.ToLower(rightModule.Name())
+		if leftName != rightName {
+			return leftName < rightName
 		}
-		return strings.ToLower(leftModule.Name()) < strings.ToLower(rightModule.Name())
+		leftID := strings.ToLower(leftModule.ID())
+		rightID := strings.ToLower(rightModule.ID())
+		if leftID != rightID {
+			return leftID < rightID
+		}
+		return leftModule.ID() < rightModule.ID()
 	})
 	// Sorting the modules above must move their identity companions with them.
 	// Rebuild the visible slices from the sorted module IDs rather than allowing
@@ -395,15 +448,6 @@ func (m *model) filterModules() {
 	m.watcherSelected = min(m.watcherSelected, max(0, len(m.allModules)-1))
 	m.moduleTop = 0
 	m.scrollModuleList()
-}
-
-type netExecModuleMetadata interface{ ModuleName() string }
-
-func moduleListGroup(module modules.Module) int {
-	if metadata, ok := module.(netExecModuleMetadata); ok && strings.TrimSpace(metadata.ModuleName()) != "" {
-		return 1
-	}
-	return 0
 }
 
 // globalIndex maps a module row in the visible scope to its index in the

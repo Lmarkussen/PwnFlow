@@ -75,3 +75,23 @@ func TestModulePaneFooterStaysAnchoredAcrossListLengthsAndResizes(t *testing.T) 
 		}
 	}
 }
+
+func TestNavigationValuesDoNotPushToolRunnerOffScreen(t *testing.T) {
+	m := statusModel(t, netexec.EnumerationModules())
+	m.width, m.height = 80, 18
+	m.categories = []modules.Category{modules.Category("a deliberately long category value that must stay on one row")}
+	m.categoryIndex = 0
+	navigation, modulePane, outputPane := m.layoutHeights()
+	if navigation+modulePane+outputPane != m.height {
+		t.Fatalf("layout does not fill terminal: navigation=%d module=%d output=%d", navigation, modulePane, outputPane)
+	}
+	if navigation >= m.height {
+		t.Fatalf("navigation consumed the terminal: %d/%d", navigation, m.height)
+	}
+	if rows := strings.Count(ansi.Strip(m.navigationView()), "\n") + 1; rows > navigation {
+		t.Fatalf("navigation rendered beyond its measured height: rows=%d height=%d", rows, navigation)
+	}
+	if !strings.Contains(ansi.Strip(m.View()), "ENUMERATION MODULES") {
+		t.Fatal("module/configuration pane is not visible below navigation")
+	}
+}

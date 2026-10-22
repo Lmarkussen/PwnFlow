@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/ldaptransport"
+	"github.com/pwnflow/pwnflow/internal/storage"
 	"github.com/pwnflow/pwnflow/internal/trust"
 )
 
@@ -155,5 +157,56 @@ func TestCLIHelpColorPolicy(t *testing.T) {
 	colored := (cliTheme{enabled: true}).paint("value", "1;92")
 	if !strings.Contains(colored, "\x1b[1;92m") {
 		t.Fatalf("enabled theme did not style output: %q", colored)
+	}
+}
+
+func TestOpenFindingsSelectionUsesExistingDatabaseWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "results", "example.test", "enumeration.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := db.UpsertTarget(ctx, "example.test", "dc01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := openFindingsSelection(ctx, root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.domain != "example.test" || selection.target != "dc01" || selection.targetID <= 0 {
+		t.Fatalf("selection = %+v", selection)
+	}
+	if err := selection.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("findings selection changed the database")
+	}
+}
+
+func TestOpenFindingsSelectionReportsMissingDatabase(t *testing.T) {
+	root := t.TempDir()
+	_, err := openFindingsSelection(context.Background(), root, "example.test", "")
+	if err == nil || !strings.Contains(err.Error(), "cannot open findings database") {
+		t.Fatalf("missing database error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "results")); !os.IsNotExist(statErr) {
+		t.Fatalf("missing database lookup created results directory: %v", statErr)
 	}
 }

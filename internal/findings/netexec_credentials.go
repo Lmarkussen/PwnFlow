@@ -19,6 +19,7 @@ const netExecCredentialParserVersion = "netexec-ad-user-credentials-v2"
 var credentialKeyword = regexp.MustCompile(`(?i)\b(?:passwords?|passwd|pwd|passphrase|pass|secrets?|credentials?|creds|user[ _-]+name|login|logon|tokens?|api[ _-]?key)\b`)
 var userField = regexp.MustCompile(`(?i)\buser\s*[:=]\s*([^\s,;]+)`)
 var attributeField = regexp.MustCompile(`(?i)\b(description|info|notes?)\s*[:=]`)
+var attributeValueField = regexp.MustCompile(`(?i)\b(?:description|info|notes?)\s*[:=]\s*(.*)$`)
 var assignmentAfterKeyword = regexp.MustCompile(`(?i)(?:passwords?|passwd|pwd|passphrase|pass|secrets?|credentials?|creds|user[ _-]?name|login|logon|tokens?|api[ _-]?key)\s*(?:[:=]|=>)\s*["']?([^"'\r\n,;]+)`)
 
 // AnalyzeNetExecCredentials extracts keyword observations and potential
@@ -73,6 +74,10 @@ func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessm
 		}
 		keywords := credentialKeyword.FindAllString(line, -1)
 		keyword := strings.ToLower(keywords[0])
+		attributeValue := ""
+		if match := attributeValueField.FindStringSubmatch(line); len(match) == 2 {
+			attributeValue = strings.TrimSpace(match[1])
+		}
 		potential := credentialAssignmentPresent(line)
 		findingType := "ad_user_description_keyword_observed"
 		title := "Credential-related keyword in " + attribute
@@ -91,7 +96,11 @@ func AnalyzeNetExecCredentials(ctx context.Context, artifactPath string, assessm
 			continue
 		}
 		seen[key] = true
-		evidence, _ := json.Marshal(map[string]any{"attribute": attribute, "keyword": keyword, "principal": principal, "line": lineNumber})
+		evidenceFields := map[string]any{"attribute": attribute, "keyword": keyword, "principal": principal, "line": lineNumber}
+		if attributeValue != "" && !potential {
+			evidenceFields["value"] = attributeValue
+		}
+		evidence, _ := json.Marshal(evidenceFields)
 		result = append(result, storage.FindingInput{
 			FindingKey: key, AssessmentID: assessmentID, SourceTool: "NetExec", SourceExecution: executionID,
 			FindingType: findingType, Title: title, Description: description, Severity: severity,

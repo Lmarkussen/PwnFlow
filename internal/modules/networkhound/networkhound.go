@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -49,9 +50,11 @@ const (
 	toolFolder = "NetworkHound"
 	script     = "NetworkHound.py"
 
-	outputFolder  = "Enumeration/NetworkHound"
-	artifactRel   = "Enumeration/NetworkHound/artifacts"
-	runTimeLayout = "20060102-150405"
+	outputFolder                = "Enumeration/NetworkHound"
+	artifactRel                 = "Enumeration/NetworkHound/artifacts"
+	runTimeLayout               = "20060102-150405"
+	automaticServiceArtifactKey = "networkhound-ad-host-services"
+	automaticServiceOutput      = "ad_host_service.json"
 
 	// redactedValue replaces the credential in anything PwnFlow displays.
 	redactedValue = "[REDACTED]"
@@ -65,6 +68,8 @@ const (
 	// keeps the scan bounded to what the module documents.
 	defaultPorts = "21,22,23,25,53,80,110,135,139,143,443,445,993,995,1433,1521,3306,3389,5432,5900,5985,8080,8443"
 )
+
+const AutomaticServiceArtifactKey = automaticServiceArtifactKey
 
 // options are the upstream options this package relies on. They are matched
 // against the installed checkout's own help output, so a revision that renames or
@@ -149,23 +154,26 @@ func (m Module) scoped() bool { return m.definition.SlugValue == "scope-validati
 // secondaryConnections states what the module may contact, so the operator does not
 // have to infer it from the description.
 func (m Module) secondaryConnections() []string {
+	if !m.scoped() {
+		return []string{
+			"queries the configured domain controller over LDAP",
+			"resolves computer names through DNS on the configured domain controller",
+			"does not connect to the computers it discovers",
+		}
+	}
 	if m.scoped() {
 		return []string{
 			"connects only to the addresses in the network scope supplied for this run",
 			"does not query Active Directory and does not follow AD-discovered computers",
 		}
 	}
-	return []string{
-		"queries the configured domain controller over LDAP",
-		"resolves computer names through DNS on the configured domain controller",
-		"does not connect to the computers it discovers",
-	}
+	return nil
 }
 
 // MissingInputs implements modules.InputRequester: the scoped registration cannot
 // run without a scope, and PwnFlow asks for it before the batch starts.
 func (m Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
-	if !m.scoped() {
+	if !m.scoped() || (runtime != nil && runtime.AutomaticBatch) {
 		return nil
 	}
 	if _, ok := runtime.ModuleOption(m.ID(), "NETWORKS"); ok {
@@ -203,7 +211,7 @@ func (m Module) StatusReason(runtime *modules.Runtime) string {
 // PlanApproval implements modules.ApprovalRequester: a network scan is not
 // something a global run may start on its own, so it is named in the plan.
 func (m Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
-	if !m.scoped() {
+	if !m.scoped() || (runtime != nil && runtime.AutomaticBatch) {
 		return false, ""
 	}
 	scope, ok := runtime.ModuleOption(m.ID(), "NETWORKS")
@@ -329,6 +337,19 @@ func (m Module) Check(ctx context.Context, runtime *modules.Runtime) error {
 		}
 		return nil
 	}
+	if runtime.AutomaticBatch {
+		addresses, err := topologyHostAddresses(runtime.BatchArtifacts["networkhound-topology"])
+		if err != nil {
+			return modules.SkipError{Reason: "AD-host service validation unavailable: " + err.Error()}
+		}
+		if len(addresses) == 0 {
+			return modules.SkipError{Reason: "AD-host service validation skipped: topology contained no valid host IPs"}
+		}
+		if _, err := strconv.Atoi(m.value(runtime, "SCAN_THREADS", "10")); err != nil {
+			return fmt.Errorf("SCAN_THREADS must be a number")
+		}
+		return nil
+	}
 	scope, ok := runtime.ModuleOption(m.ID(), "NETWORKS")
 	if !ok {
 		return fmt.Errorf("this registration scans a network scope and none has been supplied; set it with --module-options %s.NETWORKS=<scope>", m.ID())
@@ -403,6 +424,9 @@ func installedHelp(ctx context.Context, found dependencies.Status) (string, erro
 // RunArtifactDirectory is the per-run directory: one directory per run, so no run
 // overwrites another's JSON.
 func (m Module) RunArtifactDirectory(runtime *modules.Runtime, started time.Time) string {
+	if m.scoped() && runtime != nil && runtime.AutomaticBatch {
+		return filepath.Join(runtime.ResultsRoot, artifactRel, "ad-host-service-"+started.Format(runTimeLayout))
+	}
 	return filepath.Join(runtime.ResultsRoot, artifactRel, m.definition.SlugValue+"-"+started.Format(runTimeLayout))
 }
 
@@ -415,14 +439,25 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 func (m Module) commandArgs(runtime *modules.Runtime, runDirectory string) []string {
 	if m.scoped() {
 		scope, _ := runtime.ModuleOption(m.ID(), "NETWORKS")
+		ports := m.portList(runtime)
+		scanTimeout := m.value(runtime, "SCAN_TIMEOUT", "10")
+		scanThreads := m.value(runtime, "SCAN_THREADS", "10")
+		if runtime.AutomaticBatch {
+			targets, _ := topologyHostAddresses(runtime.BatchArtifacts["networkhound-topology"])
+			scope = strings.Join(targets, ",")
+			ports, scanTimeout, scanThreads = "21,445", "3", "10"
+		}
 		args := []string{
 			"--networks", scope,
 			"-Pn",
 			"--port-scan",
-			"--ports", m.portList(runtime),
-			"--scan-timeout", m.value(runtime, "SCAN_TIMEOUT", "10"),
-			"--scan-threads", m.value(runtime, "SCAN_THREADS", "10"),
-			"--output", filepath.Join(runDirectory, scopeOutput),
+			"--ports", ports,
+			"--scan-timeout", scanTimeout,
+			"--scan-threads", scanThreads,
+			"--output", filepath.Join(runDirectory, automaticServiceOutput),
+		}
+		if !runtime.AutomaticBatch {
+			args[len(args)-1] = filepath.Join(runDirectory, scopeOutput)
 		}
 		if enabled(runtime, m.ID(), "VALIDATE_HTTP") {
 			args = append(args, "--valid-http")
@@ -481,6 +516,9 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	outputName := topologyOutput
 	if m.scoped() {
 		outputName = scopeOutput
+		if runtime.AutomaticBatch {
+			outputName = automaticServiceOutput
+		}
 	}
 	fmt.Fprintf(sink, "[i] NetworkHound %s: writing %s\n", m.definition.SlugValue, filepath.Join(runDirectory, outputName))
 	args := append(append([]string(nil), base...), m.commandArgs(runtime, runDirectory)...)
@@ -499,15 +537,54 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	if runErr != nil {
 		return fmt.Errorf("NetworkHound %s failed after %s: %w", m.definition.SlugValue, time.Since(started).Round(time.Millisecond), runErr)
 	}
-	if m.scoped() {
-		artifact := filepath.Join(runDirectory, scopeOutput)
+	if !m.scoped() {
+		artifact := filepath.Join(runDirectory, topologyOutput)
 		if _, err := os.Stat(artifact); err != nil {
-			return fmt.Errorf("NetworkHound scope validation did not produce %s: %w", scopeOutput, err)
+			return fmt.Errorf("NetworkHound topology did not produce %s: %w", topologyOutput, err)
 		}
 		if runtime.BatchArtifacts == nil {
 			runtime.BatchArtifacts = make(map[string]string)
 		}
 		runtime.BatchArtifacts[m.ID()] = artifact
+	}
+	if m.scoped() {
+		artifact := filepath.Join(runDirectory, scopeOutput)
+		if runtime.AutomaticBatch {
+			artifact = filepath.Join(runDirectory, automaticServiceOutput)
+		}
+		if _, err := os.Stat(artifact); err != nil {
+			return fmt.Errorf("NetworkHound scope validation did not produce %s: %w", filepath.Base(artifact), err)
+		}
+		addresses := []string(nil)
+		if runtime.AutomaticBatch {
+			data, err := os.ReadFile(artifact)
+			if err != nil || !json.Valid(data) {
+				return fmt.Errorf("NetworkHound AD-host service output is not valid JSON")
+			}
+			addresses, _ = topologyHostAddresses(runtime.BatchArtifacts["networkhound-topology"])
+			metadata := map[string]any{
+				"source_topology_artifact": runtime.BatchArtifacts["networkhound-topology"],
+				"hosts_scanned":            addresses,
+				"ports":                    []int{21, 445},
+				"complete":                 true,
+			}
+			metadataBytes, _ := json.MarshalIndent(metadata, "", "  ")
+			if err := os.WriteFile(filepath.Join(runDirectory, "ad_host_service_metadata.json"), metadataBytes, 0o600); err != nil {
+				return fmt.Errorf("write NetworkHound service metadata: %w", err)
+			}
+		}
+		if runtime.BatchArtifacts == nil {
+			runtime.BatchArtifacts = make(map[string]string)
+		}
+		if runtime.AutomaticBatch {
+			runtime.BatchArtifacts[AutomaticServiceArtifactKey] = artifact
+			scope := strings.Join(addresses, ",")
+			smb, _ := OpenPortEndpoints(artifact, scope, 445)
+			ftp, _ := OpenPortEndpoints(artifact, scope, 21)
+			fmt.Fprintf(sink, "[i] AD-host service validation: %d scoped hosts; TCP/21, TCP/445; %d SMB endpoints, %d FTP endpoints\n", len(addresses), len(smb), len(ftp))
+		} else {
+			runtime.BatchArtifacts[m.ID()] = artifact
+		}
 	}
 	return nil
 }
@@ -524,6 +601,80 @@ func OpenFTPEndpoints(path, scope string) ([]string, error) {
 // TCP/445 as open. It never probes a host or consults historical results.
 func OpenSMBEndpoints(path, scope string) ([]string, error) {
 	return OpenPortEndpoints(path, scope, 445)
+}
+
+// topologyHostAddresses returns only valid IPv4 addresses attached to current
+// topology Computer nodes. It never expands a network or resolves a hostname.
+func topologyHostAddresses(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("current-batch NetworkHound topology artifact is missing")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("NetworkHound topology is invalid JSON: %w", err)
+	}
+	seen := make(map[string]bool)
+	var addresses []string
+	var walk func(any)
+	walk = func(value any) {
+		object, ok := value.(map[string]any)
+		if !ok {
+			if list, ok := value.([]any); ok {
+				for _, child := range list {
+					walk(child)
+				}
+			}
+			return
+		}
+		computer := false
+		if kinds, ok := object["kinds"].([]any); ok {
+			for _, kind := range kinds {
+				if text, ok := kind.(string); ok && text == "Computer" {
+					computer = true
+				}
+			}
+		}
+		if computer {
+			if properties, ok := object["properties"].(map[string]any); ok {
+				collectTopologyIPs(properties["ip_addresses"], seen, &addresses)
+			}
+		}
+		for _, child := range object {
+			walk(child)
+		}
+	}
+	walk(document)
+	sort.Strings(addresses)
+	return addresses, nil
+}
+
+// TopologyHostAddresses exposes the current-batch topology allowlist to
+// consumers that need to reapply it while reading a derived artifact.
+func TopologyHostAddresses(path string) ([]string, error) {
+	return topologyHostAddresses(path)
+}
+
+func collectTopologyIPs(value any, seen map[string]bool, addresses *[]string) {
+	switch value := value.(type) {
+	case string:
+		ip := net.ParseIP(strings.TrimSpace(value))
+		if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return
+		}
+		address := ip.To4().String()
+		if !seen[address] {
+			seen[address] = true
+			*addresses = append(*addresses, address)
+		}
+	case []any:
+		for _, child := range value {
+			collectTopologyIPs(child, seen, addresses)
+		}
+	}
 }
 
 // OpenPortEndpoints returns literal, in-scope addresses whose open_ports list

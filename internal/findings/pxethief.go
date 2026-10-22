@@ -34,10 +34,10 @@ var pxeCredentialPattern = regexp.MustCompile(`(?i)\b(OSDJoinAccount|OSDJoinPass
 var pxeCredentialNames = map[string]bool{"osdjoinaccount": true, "osdjoinpassword": true, "osdlocaladminpassword": true}
 
 type pxeCredentialObservation struct {
-	Name, Account string
-	Line          int
-	Ref           string
-	Context       string
+	Name, Account, Value string
+	Line                 int
+	Ref                  string
+	Context              string
 }
 
 // AnalyzePXEThief consumes finalized PXEThief logs and task-sequence files only.
@@ -51,7 +51,14 @@ func AnalyzePXEThief(ctx context.Context, inputPath string, assessmentID, execut
 	if err != nil {
 		return nil, err
 	}
-	var findings []storage.FindingInput
+	type aggregate struct {
+		path, context, endpoint, account string
+		values                           map[string]string
+		variables                        []string
+		refs, paths, endpoints           []string
+		line                             int
+	}
+	aggregates := make(map[string]*aggregate)
 	for _, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -60,51 +67,109 @@ func AnalyzePXEThief(ctx context.Context, inputPath string, assessmentID, execut
 		if err != nil {
 			return nil, err
 		}
-		if len(observations) == 0 {
-			continue
-		}
-		groups := map[string]map[string]pxeCredentialObservation{}
+		groups := make(map[string]map[string]pxeCredentialObservation)
 		for _, item := range observations {
 			if groups[item.Context] == nil {
-				groups[item.Context] = map[string]pxeCredentialObservation{}
+				groups[item.Context] = make(map[string]pxeCredentialObservation)
 			}
 			if _, ok := groups[item.Context][strings.ToLower(item.Name)]; !ok {
 				groups[item.Context][strings.ToLower(item.Name)] = item
 			}
 		}
-		contexts := make([]string, 0, len(groups))
-		for context := range groups {
-			contexts = append(contexts, context)
-		}
-		sort.Strings(contexts)
-		for _, context := range contexts {
-			seen := groups[context]
+		for context, seen := range groups {
+			values := make(map[string]string, len(seen))
 			variables := make([]string, 0, len(seen))
-			account := ""
 			refs := make([]string, 0, len(seen))
+			account := ""
+			line := 0
 			for _, name := range []string{"OSDJoinAccount", "OSDJoinPassword", "OSDLocalAdminPassword"} {
 				if item, ok := seen[strings.ToLower(name)]; ok {
 					variables = append(variables, item.Name)
+					values[item.Name] = item.Value
 					refs = append(refs, item.Ref)
+					if line == 0 {
+						line = item.Line
+					}
 					if strings.EqualFold(item.Name, "OSDJoinAccount") {
-						account = item.Account
+						account = normalizePXEAccount(item.Value)
 					}
 				}
 			}
-			endpoint := endpointFromArtifact(path)
-			evidence, _ := json.Marshal(map[string]any{"credential_variables": variables, "account_identity": account, "task_sequence_context": context, "artifact_records": refs, "value_present": true})
-			findingKey := pxeFindingKey(assessmentID, path, context, variables)
-			findings = append(findings, storage.FindingInput{
-				FindingKey: findingKey, AssessmentID: assessmentID, SourceTool: "PXEThief", SourceExecution: executionID,
-				FindingType: "sccm_task_sequence_credentials_exposed", Title: "SCCM task-sequence credentials exposed",
-				Description: fmt.Sprintf("PXEThief recovered credential-bearing task-sequence variables (%s) from a finalized artifact. The original restricted artifact contains the complete values; this finding intentionally does not copy passwords.", strings.Join(variables, ", ")),
-				Severity:    "high", Confidence: "observed-recovered-value", AffectedObjectID: endpoint, AffectedObject: endpoint,
-				RelatedObjectID: account, RelatedObject: account, EvidenceJSON: string(evidence), ArtifactPath: path, ArtifactRef: refs[0], ObservedAt: now,
-				Status: "open", ParserVersion: PXEThiefParserVersion,
-			})
+			complete := len(values) == len(pxeCredentialNames)
+			identity := "incomplete\x00" + path + "\x00" + context + "\x00" + strings.Join(refs, ",")
+			if complete {
+				parts := make([]string, 0, len(values))
+				for _, name := range []string{"OSDJoinAccount", "OSDJoinPassword", "OSDLocalAdminPassword"} {
+					parts = append(parts, name+"\x00"+values[name])
+				}
+				identity = "complete\x00" + strings.Join(parts, "\x00")
+			}
+			entry := aggregates[identity]
+			if entry == nil {
+				entry = &aggregate{path: path, context: context, endpoint: endpointFromArtifact(path), account: account, values: values, variables: variables, refs: refs, line: line}
+				aggregates[identity] = entry
+			} else {
+				entry.refs = appendUnique(entry.refs, refs...)
+				entry.paths = appendUnique(entry.paths, path)
+				entry.endpoints = appendUnique(entry.endpoints, endpointFromArtifact(path))
+			}
 		}
 	}
+	identities := make([]string, 0, len(aggregates))
+	for identity := range aggregates {
+		identities = append(identities, identity)
+	}
+	sort.Strings(identities)
+	findings := make([]storage.FindingInput, 0, len(identities))
+	for _, identity := range identities {
+		entry := aggregates[identity]
+		if len(entry.values) == 0 || len(entry.variables) == 0 {
+			continue
+		}
+		paths := appendUnique(entry.paths, entry.path)
+		endpoints := appendUnique(entry.endpoints, entry.endpoint)
+		evidence, _ := json.Marshal(map[string]any{
+			"credential_variables": variablesSorted(entry.variables), "credential_values": entry.values,
+			"account_identity": entry.account, "task_sequence_context": entry.context,
+			"artifact_records": entry.refs, "artifact_paths": paths, "source_identities": endpoints,
+			"value_present": true,
+		})
+		findingKey := "pxethief:" + hex.EncodeToString(sha256Bytes([]byte(fmt.Sprintf("%d\x00%s", assessmentID, identity))))
+		findings = append(findings, storage.FindingInput{
+			FindingKey: findingKey, AssessmentID: assessmentID, SourceTool: "PXEThief", SourceExecution: executionID,
+			FindingType: "sccm_task_sequence_credentials_exposed", Title: "SCCM task-sequence credentials exposed",
+			Description: fmt.Sprintf("PXEThief recovered SCCM task-sequence credential material (%s) from finalized evidence.", strings.Join(variablesSorted(entry.variables), ", ")),
+			Severity:    "high", Confidence: "observed-recovered-value", AffectedObjectID: endpoints[0], AffectedObject: endpoints[0],
+			RelatedObjectID: entry.account, RelatedObject: entry.account, EvidenceJSON: string(evidence), ArtifactPath: entry.path, ArtifactRef: entry.refs[0], ObservedAt: now,
+			Status: "open", ParserVersion: PXEThiefParserVersion,
+		})
+	}
 	return findings, nil
+}
+
+func sha256Bytes(value []byte) []byte {
+	hash := sha256.Sum256(value)
+	return hash[:]
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	seen := make(map[string]bool, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if value != "" && !seen[value] {
+			values = append(values, value)
+			seen[value] = true
+		}
+	}
+	return values
+}
+
+func variablesSorted(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i]) < strings.ToLower(result[j]) })
+	return result
 }
 
 func IngestPXEThief(ctx context.Context, db *storage.DB, inputPath string, assessmentID, executionID int64, now time.Time) error {
@@ -191,7 +256,7 @@ func parsePXELines(data []byte, path string) []pxeCredentialObservation {
 		if !credentialValuePresent(value) {
 			continue
 		}
-		item := pxeCredentialObservation{Name: canonicalPXEName(match[1]), Line: line, Ref: fmt.Sprintf("line:%d", line), Context: contextName}
+		item := pxeCredentialObservation{Name: canonicalPXEName(match[1]), Value: value, Line: line, Ref: fmt.Sprintf("line:%d", line), Context: contextName}
 		if strings.EqualFold(item.Name, "OSDJoinAccount") {
 			item.Account = value
 		}
@@ -237,7 +302,7 @@ func parsePXEXML(data []byte, path string) ([]pxeCredentialObservation, error) {
 			if !credentialValuePresent(strings.TrimSpace(value)) {
 				continue
 			}
-			observation := pxeCredentialObservation{Name: name, Line: line, Ref: fmt.Sprintf("xml:var[%d]", line), Context: "xml"}
+			observation := pxeCredentialObservation{Name: name, Value: strings.TrimSpace(value), Line: line, Ref: fmt.Sprintf("xml:var[%d]", line), Context: "xml"}
 			if strings.EqualFold(name, "OSDJoinAccount") {
 				observation.Account = strings.TrimSpace(value)
 			}
@@ -259,6 +324,14 @@ func credentialValuePresent(value string) bool {
 	}
 	return true
 }
+func normalizePXEAccount(value string) string {
+	value = strings.TrimSpace(value)
+	for strings.Contains(value, `\\`) {
+		value = strings.ReplaceAll(value, `\\`, `\`)
+	}
+	return value
+}
+
 func canonicalPXEName(value string) string {
 	for name := range pxeCredentialNames {
 		if strings.EqualFold(name, value) {

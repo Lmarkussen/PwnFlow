@@ -81,6 +81,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		moduleIDs[i] = id
 	}
 	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
+	model.findingsAsync = true
 	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
 	if model.batch != nil {
 		model.cancelBatch()
@@ -88,5 +89,11 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 		_ = model.batch.Wait(waitContext)
 		cancel()
 	}
+	return err
+}
+
+func RunFindingsOnly(ctx context.Context, cfg config.Config, db *storage.DB, targetID int64, version string) error {
+	model := newFindingsOnlyModel(ctx, cfg, db, targetID, version)
+	_, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
 	return err
 }

@@ -147,6 +147,13 @@ func (m Module) BatchPrerequisites() []string {
 	return nil
 }
 
+func (m Module) BatchInputPrerequisites() []string {
+	if m.ID() == "smb-spider-plus" {
+		return []string{"networkhound-scope-validation"}
+	}
+	return nil
+}
+
 // ModuleName is the `-M` value, exposed so the inventory tooling and the tests
 // can compare the registry against `nxc <protocol> -L`.
 func (m Module) ModuleName() string { return m.definition.ModuleName }
@@ -211,6 +218,16 @@ func (m Module) missingOptionReason(runtime *modules.Runtime) string {
 // MissingInputs implements modules.InputRequester: the values this registration
 // still needs before it can run, each with the sentence that explains it.
 func (m Module) MissingInputs(runtime *modules.Runtime) []modules.InputField {
+	if m.ID() == "smb-spider-plus" {
+		if _, supplied := m.optionValue(runtime, "SMB_ENDPOINTS"); supplied {
+			return nil
+		}
+		return []modules.InputField{{
+			Key:     "SMB_ENDPOINTS",
+			Prompt:  "provide the exact TCP/445 SMB endpoints Spider Plus may inspect; no subnet is inferred",
+			Example: "198.51.100.40:445,198.51.100.41:445",
+		}}
+	}
 	missing := m.missingOptionValues(runtime)
 	fields := make([]modules.InputField, 0, len(missing))
 	for _, key := range missing {
@@ -565,6 +582,8 @@ func (m Module) ExecutionArtifactPath(resultsRoot string, started time.Time) str
 	return filepath.Join(resultsRoot, "Enumeration", "NetExec", "SMB_spider_plus", "executions", stamp, "transcript.txt")
 }
 
+func (m Module) ExecutionArtifactTree() bool { return m.ID() == "smb-spider-plus" }
+
 func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
 	if m.ID() == "smb-spider-plus" {
 		return m.runSpiderPlus(ctx, runtime, sink)
@@ -697,10 +716,12 @@ func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
 		return nil, fmt.Errorf("runtime is required")
 	}
 	scope, _ := runtime.ModuleOption("networkhound-scope-validation", "NETWORKS")
-	if err := networkhound.ValidateScope(scope); err != nil {
-		return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: approved scope is missing or invalid"}
-	}
 	if override, ok := m.optionValue(runtime, "SMB_ENDPOINTS"); ok {
+		if strings.TrimSpace(scope) != "" {
+			if err := networkhound.ValidateScope(scope); err != nil {
+				return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: approved scope is missing or invalid"}
+			}
+		}
 		targets, err := parseSMBTargets(override, scope)
 		if err != nil {
 			return nil, err
@@ -710,11 +731,29 @@ func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
 		}
 		return targets, nil
 	}
+	artifactKey := "networkhound-scope-validation"
+	if runtime.AutomaticBatch {
+		artifactKey = networkhound.AutomaticServiceArtifactKey
+		topology := ""
+		if runtime.BatchArtifacts != nil {
+			topology = runtime.BatchArtifacts["networkhound-topology"]
+		}
+		addresses, err := networkhound.TopologyHostAddresses(topology)
+		if err != nil || len(addresses) == 0 {
+			return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: current topology scope is missing or invalid"}
+		}
+		scope = strings.Join(addresses, ",")
+	} else if err := networkhound.ValidateScope(scope); err != nil {
+		return nil, modules.SkipError{Reason: "NetworkHound SMB discovery unavailable: approved scope is missing or invalid"}
+	}
 	artifact := ""
 	if runtime.BatchArtifacts != nil {
-		artifact = runtime.BatchArtifacts["networkhound-scope-validation"]
+		artifact = runtime.BatchArtifacts[artifactKey]
 	}
 	if artifact == "" {
+		if runtime.AutomaticBatch {
+			return nil, modules.SkipError{Reason: "SKIPPED — NetworkHound current-batch service artifact is missing"}
+		}
 		return nil, modules.SkipError{Reason: "SKIPPED — NetworkHound SMB discovery unavailable"}
 	}
 	targets, err := networkhound.OpenSMBEndpoints(artifact, scope)
@@ -722,6 +761,9 @@ func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
 		return nil, modules.SkipError{Reason: "SKIPPED — NetworkHound SMB discovery unavailable: " + err.Error()}
 	}
 	if len(targets) == 0 {
+		if runtime.AutomaticBatch {
+			return nil, modules.SkipError{Reason: "SKIPPED — No confirmed TCP/445 endpoints in current batch"}
+		}
 		return nil, modules.SkipError{Reason: "SKIPPED — No open SMB endpoints found"}
 	}
 	for index := range targets {
@@ -742,7 +784,10 @@ func parseSMBTargets(value, scope string) ([]string, error) {
 		if port != "" && port != "445" {
 			return nil, fmt.Errorf("SMB endpoint %q is not TCP/445", raw)
 		}
-		if net.ParseIP(host) == nil || !networkhound.AddressInScope(host, scope) {
+		if net.ParseIP(host) == nil {
+			return nil, fmt.Errorf("SMB endpoint %q is not an IP address", raw)
+		}
+		if scope != "" && !networkhound.AddressInScope(host, scope) {
 			return nil, fmt.Errorf("SMB endpoint %q is outside the approved NetworkHound scope", raw)
 		}
 		if !seen[host] {

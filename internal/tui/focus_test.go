@@ -25,6 +25,13 @@ func TestPaneHeaderKeepsFocusIndicatorVisibleAtWidth(t *testing.T) {
 	}
 }
 
+func TestPaneHeaderBoundsUnfocusedLongLabels(t *testing.T) {
+	header := paneHeader("OUTPUT // SMB Password Policy // completed // FOLLOW", false, 24)
+	if got := ansi.StringWidthWc(header); got > 24 {
+		t.Fatalf("unfocused header width %d exceeds 24: %q", got, ansi.Strip(header))
+	}
+}
+
 func TestMainViewFocusIndicatorFollowsTab(t *testing.T) {
 	m := newModel(context.Background(), config.Config{}, nil, []modules.Module{viewTestModule{}}, []int64{1}, 1, "test")
 	m.width, m.height = 100, 30

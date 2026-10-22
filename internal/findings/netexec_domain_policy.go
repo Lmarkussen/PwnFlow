@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,6 +45,9 @@ func AnalyzeNetExecDomainPolicy(ctx context.Context, artifactPath string, assess
 	defer file.Close()
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	if strings.EqualFold(filepath.Base(artifactPath), "SMB_password_policy.txt") {
+		return analyzeSMBPasswordPolicy(ctx, artifactPath, assessmentID, executionID, now)
 	}
 
 	var result []storage.FindingInput
@@ -110,6 +114,110 @@ func AnalyzeNetExecDomainPolicy(ctx context.Context, artifactPath string, assess
 		return nil, err
 	}
 	return result, nil
+}
+
+func analyzeSMBPasswordPolicy(ctx context.Context, artifactPath string, assessmentID, executionID int64, now time.Time) ([]storage.FindingInput, error) {
+	file, err := os.Open(artifactPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	fields := map[string]any{}
+	domain := ""
+	firstFieldLine := 0
+	lineNumber := 0
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	for scanner.Scan() {
+		lineNumber++
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		line := netExecANSI.ReplaceAllString(scanner.Text(), "")
+		if match := domainPolicyDomain.FindStringSubmatch(line); len(match) == 2 {
+			domain = normalizeDomain(match[1])
+		}
+		if match := domainPolicyIdentity.FindStringSubmatch(line); len(match) == 2 {
+			domain = normalizeDomain(match[1])
+		}
+		for key, labels := range smbPolicyFieldLabels {
+			value, ok := valueAfterLabel(line, labels...)
+			if !ok {
+				continue
+			}
+			if firstFieldLine == 0 {
+				firstFieldLine = lineNumber
+			}
+			fields[key] = normalizedPolicyValue(value)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if domain == "" || len(fields) == 0 {
+		return nil, nil
+	}
+	evidence := map[string]any{
+		"source_execution_id":            executionID,
+		"domain":                         domain,
+		"policy_scope":                   "domain default policy",
+		"fields":                         fields,
+		"fine_grained_policy_limitation": "Fine-grained password policies may override this domain default for selected users or groups; this snapshot does not reconcile those policies.",
+	}
+	encoded, _ := json.Marshal(evidence)
+	input := domainPolicyFinding(assessmentID, executionID, now, artifactPath, firstFieldLine, domain, "password_policy_snapshot", "Domain Password Policy Snapshot", "informational", "The SMB password-policy output records the observed domain default password and lockout policy. Unknown, disabled, unlimited and finite values are retained as reported; this does not establish that the default applies to every account.", fields)
+	input.EvidenceJSON = string(encoded)
+	return []storage.FindingInput{input}, nil
+}
+
+var smbPolicyFieldLabels = map[string][]string{
+	"minimum_password_length":    {"minimum password length", "minpwdlength"},
+	"maximum_password_age":       {"maximum password age", "maxpwdage"},
+	"minimum_password_age":       {"minimum password age", "minpwdage"},
+	"password_history_length":    {"password history length", "pwdhistorylength"},
+	"account_lockout_threshold":  {"account lockout threshold", "lockoutthreshold"},
+	"account_lockout_duration":   {"account lockout duration", "lockoutduration"},
+	"lockout_observation_window": {"reset account lockout counter after", "lockout observation window", "lockoutobservationwindow"},
+	"password_complexity":        {"password complexity", "pwdcomplexity"},
+}
+
+func valueAfterLabel(line string, labels ...string) (string, bool) {
+	lower := strings.ToLower(line)
+	for _, label := range labels {
+		index := strings.Index(lower, label)
+		if index < 0 {
+			continue
+		}
+		value := strings.TrimSpace(line[index+len(label):])
+		value = strings.TrimSpace(strings.TrimLeft(value, ":= "))
+		if value != "" {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func normalizedPolicyValue(value string) map[string]any {
+	result := map[string]any{"raw": strings.TrimSpace(value), "state": policyValueState(value)}
+	if numeric, err := strconv.ParseInt(strings.Fields(value)[0], 10, 64); err == nil {
+		result["numeric"] = numeric
+	}
+	return result
+}
+
+func policyValueState(value string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case lower == "", strings.Contains(lower, "unknown"), strings.Contains(lower, "not available"):
+		return "unknown"
+	case strings.Contains(lower, "disabled"):
+		return "disabled"
+	case strings.Contains(lower, "unlimited"), lower == "never", strings.Contains(lower, "does not expire"):
+		return "unlimited"
+	default:
+		return "observed"
+	}
 }
 
 func domainPolicyFinding(assessmentID, executionID int64, now time.Time, artifactPath string, line int, domain, detector, title, severity, description string, evidence map[string]any) storage.FindingInput {

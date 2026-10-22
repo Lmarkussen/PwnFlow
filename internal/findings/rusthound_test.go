@@ -53,6 +53,38 @@ func TestAnalyzeRustHoundACLsAndZIP(t *testing.T) {
 	}
 }
 
+func TestAnalyzeRustHoundEmitsDirectUserGenericAllFinding(t *testing.T) {
+	root := t.TempDir()
+	collection := filepath.Join(root, "collection")
+	if err := os.Mkdir(collection, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeExport(t, filepath.Join(collection, "users.json"), "users", []map[string]any{
+		{"ObjectIdentifier": "S-1-5-21-1-1101", "Properties": map[string]any{"name": "PF-ACL-Test-Operator", "domain": "SCCM.LAB"}},
+		{"ObjectIdentifier": "S-1-5-21-1-1102", "Properties": map[string]any{"name": "PF-ACL-Test-Target"}, "Aces": []map[string]any{{
+			"PrincipalSID": "S-1-5-21-1-1101", "PrincipalType": "User", "RightName": "GenericAll", "IsInherited": false,
+		}}},
+	})
+
+	findings, report, err := AnalyzeRustHound(context.Background(), collection, 7, 12, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ACLs != 1 || len(findings) != 1 {
+		t.Fatalf("expected one direct GenericAll finding, report=%+v findings=%+v", report, findings)
+	}
+	finding := findings[0]
+	if finding.FindingType != "ad_acl_genericall" || finding.Severity != "medium" || finding.Confidence != "observed-direct-ace" {
+		t.Fatalf("unexpected GenericAll finding: %+v", finding)
+	}
+	if finding.RelatedObjectID != "S-1-5-21-1-1101" || finding.AffectedObjectID != "S-1-5-21-1-1102" {
+		t.Fatalf("finding identity was not preserved: %+v", finding)
+	}
+	if !strings.Contains(finding.EvidenceJSON, `"effective_authorization":"not_verified"`) {
+		t.Fatalf("finding overstated effective authorization: %s", finding.EvidenceJSON)
+	}
+}
+
 func TestAnalyzeRustHoundRejectsUnsafeZIPEntry(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "unsafe.zip")
 	createZIP(t, archive, map[string][]byte{"../escape.json": []byte(`{}`)})

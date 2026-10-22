@@ -6,7 +6,7 @@ Unless `--password` is explicitly supplied, startup prompts for a password in ra
 
 ## Security model
 
-Passwords are read from a hidden terminal prompt, are never stored in SQLite or result metadata, and are redacted from streamed output and files. NetExec currently requires its password argument for this operation; this unavoidable process-inspection limitation is documented here and the command is never passed through a shell. Use an isolated assessment host and restrict process visibility.
+Passwords are read from a hidden terminal prompt, are never stored in SQLite or result metadata, and are redacted from command previews and credential-option arguments written to execution logs. Retained tool output remains evidence and may intentionally contain recovered material in the authorized original Finding/evidence views. NetExec currently requires its password argument for this operation; this unavoidable process-inspection limitation is documented here and the command is never passed through a shell. Use an isolated assessment host and restrict process visibility.
 
 ## Build and run
 
@@ -42,6 +42,18 @@ Offline RustHound ACL analysis and the structured findings storage API are
 documented in [the artifact schema note](rusthound-artifact-schema.md). Findings
 processing is explicit and read-only; it does not replace BloodHound CE's graph
 analysis or automatically process partial artifacts at startup.
+
+### Findings review
+
+Press `F` to review persisted Findings without starting a module. The same
+source-backed detail renderer is used by normal review and `--findings` mode.
+Finding details preserve evidence provenance, `TECHNIQUES`, and `E — Original
+Evidence`; recovered Kerberos material and other operator-authorized source
+material remain available in their relevant detail screens. Critical Findings
+are a read-only in-memory projection over those original Findings. The Critical
+browser is hierarchical: `Critical Findings → Confirmed` or `Potential — Not
+Verified → family → Finding`. It does not create database records or replace
+specialist-category detail.
 
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `Ctrl+R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `Ctrl+A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 
@@ -94,6 +106,11 @@ gated; declined items are recorded and the eligible remainder continues.
 Masscan is deliberately excluded from this profile. Run it manually with
 `Enter` after entering and approving its target and port inputs.
 
+The protected profile contains exactly 45 modules. Its order is defined
+explicitly in `internal/tui/plan.go`; GhostSPN (`ghostspn-audit`) immediately
+follows Kerberoasting. This count and ordering are part of the assessment
+workflow contract, not a documentation-only list.
+
 ### Network assessment: NetworkHound
 
 NetworkHound (<https://github.com/MorDavid/NetworkHound>, Mor David) is installed as an upstream checkout with its own virtual environment under `~/.local/share/pwnflow/tools/NetworkHound`. It is distributed under a **non-commercial license**, so PwnFlow neither vendors nor redistributes its source: `./install.sh` fetches the upstream checkout and the runtime drives the installed copy.
@@ -132,7 +149,7 @@ PwnFlow is an enumeration and assessment framework, so the NetExec registry hold
 
 Module Information explains a registration before you run it: the transport, the NetExec module or native flag, the options (yours and the defaults), and whether the target has to grant an administrator right.
 
-Controls: Navigation uses `↑/↓` to select a row and `←/→` to change its value. Modules use `↑/↓`, `PgUp`/`PgDn`, `Home`/`End`, `Space` to select, `Enter` to run the highlighted module, `I` to fill in a value a module needs, `Ctrl+R` to run the selection, and `Ctrl+A` to run Default Enumeration; the module list scrolls with the selection, and its header shows the window (`ENUMERATION MODULES // 9-21/24`) when the list is longer than the pane. While a prompt is open, `Enter` answers it, `Esc` skips that one module, and `Ctrl+C` abandons the plan. Output uses arrows, `PgUp`/`PgDn`, `Home`, and `End`. `Tab` cycles Navigation → Modules → Output; `Ctrl+W` opens the operator-controlled watcher; `Esc` closes it; `?` shows help; `Q` quits when idle.
+Controls: Navigation uses `↑/↓` to select a row and `←/→` to change its value. Modules use `↑/↓`, `PgUp`/`PgDn`, `Home`/`End`, `Space` to select, `Enter` to run the highlighted module, `I` to fill in a value a module needs, `Ctrl+R` to run the selection, and `Ctrl+A` to run Default Enumeration; the module list scrolls with the selection, and its header reports the current window and total dynamically. While a prompt is open, `Enter` answers it, `Esc` skips that one module, and `Ctrl+C` abandons the plan. Output uses arrows, `PgUp`/`PgDn`, `Home`, and `End`. `Tab` cycles Navigation → Modules → Output; `Ctrl+W` opens the operator-controlled watcher; `Esc` closes it; `?` shows help; `Q` quits when idle.
 
 ## Development
 

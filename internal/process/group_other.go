@@ -17,3 +17,10 @@ func terminate(command *exec.Cmd) {
 	}
 	_ = command.Process.Kill()
 }
+
+func forceKill(command *exec.Cmd) {
+	if command == nil || command.Process == nil {
+		return
+	}
+	_ = command.Process.Kill()
+}

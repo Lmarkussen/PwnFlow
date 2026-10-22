@@ -42,6 +42,20 @@ func New(target, domain, username, password, root string) (Config, error) {
 	}
 	return Config{Target: cleanTarget, Domain: clean, Username: username, Password: password, Root: root}, nil
 }
+
+// NewFindingsOnly validates the path components needed to browse an existing
+// assessment without requiring a target credential or DC configuration.
+func NewFindingsOnly(target, domain, root string) (Config, error) {
+	cleanTarget, err := SafeTargetPart(target)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid target: %w", err)
+	}
+	cleanDomain, err := SafePathPart(domain)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid domain: %w", err)
+	}
+	return Config{Target: cleanTarget, Domain: cleanDomain, Root: root}, nil
+}
 func (c Config) ResultsRoot() string { return filepath.Join(c.Root, "results", c.Domain) }
 
 // SafeTargetPart validates an operator-supplied target address. The value is

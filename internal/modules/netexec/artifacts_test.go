@@ -79,3 +79,16 @@ func TestNetExecArtifactPathsFollowTheCategory(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlySpiderPlusOwnsAnExecutionArtifactTree(t *testing.T) {
+	for _, module := range append(SMBEnumerationModules(), LDAPEnumerationModules()...) {
+		provider, ok := module.(modules.ExecutionArtifactTreeProvider)
+		if !ok {
+			continue
+		}
+		want := module.ID() == "smb-spider-plus"
+		if provider.ExecutionArtifactTree() != want {
+			t.Fatalf("module %s tree ownership=%v, want %v", module.ID(), provider.ExecutionArtifactTree(), want)
+		}
+	}
+}

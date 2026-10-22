@@ -81,6 +81,61 @@ func TestManagerIngestsRustHoundAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestManagerDispatchesPwnFlowRustHoundWritableAnalysis(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "assessment.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.UpsertTarget(ctx, "example.test", "198.51.100.11"); err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := db.TargetID(ctx, "example.test", "198.51.100.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(id,name,tool,protocol,description,output_filename) VALUES(9,'AD Writable Object Assessment','PwnFlow / RustHound Analysis','N/A','test','writable-objects.json')`); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := db.RecordExecutionID(ctx, assessment, 9, time.Now(), time.Now(), "completed", 0, "writable-objects.json", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(t.TempDir(), "writable-objects.json")
+	report := WritableObjectReport{
+		SchemaVersion: 1, ParserVersion: writableObjectsParserVersion, Status: "partial", Coverage: "source-backed-potential",
+		Domain: "example.test", AuthenticatedUser: "alice", SourceArtifact: "rusthound-artifact",
+		Relationships:           []WritableObjectRelationship{{PrincipalID: "S-1-5-21-1-1100", TargetID: "S-1-5-21-1-1200", TargetName: "target", TargetType: "users", Permission: "GenericAll", Decision: "unknown", Inheritance: "explicit", Evaluation: "indeterminate", Artifact: "groups.json", ArtifactRef: "/data/0/Aces/0"}},
+		QualifyingRelationships: 1, IncludedRelationships: 1,
+	}
+	if _, err := WriteWritableObjectReportAt(artifact, report); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(ctx, db)
+	defer manager.Close()
+	if err := manager.Submit(Job{AssessmentID: assessment, ExecutionID: execution, SourceTool: "PwnFlow / RustHound Analysis", ArtifactPath: artifact, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.ListFindings(ctx, assessment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].FindingType != "ad_writable_object_assessment" {
+		t.Fatalf("writable analysis was not ingested: %#v", rows)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM analysis_jobs WHERE execution_id=?`, execution).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != storage.AnalysisComplete {
+		t.Fatalf("analysis status=%q, want %q", status, storage.AnalysisComplete)
+	}
+}
+
 func TestDetectionCatalogueDeclaresUnsupportedProtocolChecks(t *testing.T) {
 	catalogue := DetectionCatalogue()
 	var found bool

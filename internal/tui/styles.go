@@ -16,11 +16,12 @@ var (
 	// amber marks a decision the operator has to make. It is deliberately unlike
 	// the green used for progress and results, so a privilege confirmation cannot be
 	// mistaken for one of them.
-	amber = lipgloss.Color("#FFAA33")
-	title = lipgloss.NewStyle().Bold(true).Foreground(green)
-	dim   = lipgloss.NewStyle().Foreground(muted)
-	focus = lipgloss.NewStyle().Bold(true).Foreground(focusBlue)
-	warn  = lipgloss.NewStyle().Bold(true).Foreground(amber)
+	amber      = lipgloss.Color("#FFAA33")
+	title      = lipgloss.NewStyle().Bold(true).Foreground(green)
+	dim        = lipgloss.NewStyle().Foreground(muted)
+	focus      = lipgloss.NewStyle().Bold(true).Foreground(focusBlue)
+	warn       = lipgloss.NewStyle().Bold(true).Foreground(amber)
+	unverified = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D8A7FF"))
 )
 
 var (
@@ -29,7 +30,7 @@ var (
 	severityCriticalStyle = lipgloss.NewStyle().Foreground(red).Bold(true)
 	severityHighStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF7A7A")).Bold(true)
 	severityMediumStyle   = lipgloss.NewStyle().Foreground(amber).Bold(true)
-	severityLowStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#D8D36A"))
+	severityLowStyle      = dim
 	severityInfoStyle     = lipgloss.NewStyle().Foreground(infoBlue)
 	watcherInfoStyle      = lipgloss.NewStyle().Foreground(infoBlue).Bold(true)
 	abortedStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8C42")).Bold(true)
@@ -96,11 +97,11 @@ func paneHeader(label string, focused bool, width int) string {
 // paneHeaderWith renders a pane header with a chosen label style, so a pane that is
 // asking the operator something can stand out without changing any other pane.
 func paneHeaderWith(style lipgloss.Style, label string, focused bool, width int) string {
-	if !focused {
-		return style.Render(label)
-	}
 	if width < 1 {
 		width = 1
+	}
+	if !focused {
+		return style.Render(ansi.TruncateWc(label, width, "…"))
 	}
 	indicatorWidth := ansi.StringWidthWc(focusText)
 	if width <= indicatorWidth {

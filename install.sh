@@ -1013,7 +1013,7 @@ if [[ ${install_sccmsecrets} -eq 1 ]]; then run_install_attempt install_sccmsecr
 if [[ ${install_mssqlrelay} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlrelay_status mssqlrelay git+https://github.com/CompassSecurity/mssqlrelay.git mssqlrelay mssqlrelay_status Microsoft; fi
 if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlpwner_status MSSqlPwner git+https://github.com/ScorpionesLabs/MSSqlPwner.git mssqlpwner mssqlpwner_status mssqlpwner; fi
 if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
-if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git ghostspn ghostspn_status ghost; fi
+if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git@f5df2cd072d9c3ba81b01590e433b21449d91394 ghostspn ghostspn_status ghost; fi
 if [[ ${install_masscan} -eq 1 ]]; then run_install_attempt install_masscan masscan_status; fi
 if [[ ${install_sphunter} -eq 1 ]]; then run_install_attempt install_sphunter sphunter_status; fi
 print_summary

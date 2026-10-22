@@ -90,11 +90,11 @@ func (r Runner) ExecuteWithBuffer(ctx context.Context, m modules.Module, runtime
 	if err != nil && ctx.Err() != nil {
 		_, _ = sink.Write([]byte("\n[i] execution stopped before the tool finished; the output above is partial\n"))
 	}
-	if _, ok := m.(modules.ExecutionArtifactPathProvider); ok {
-		if err := artifacts.NormalizeTree(filepath.Dir(path)); err != nil {
+	if tree, ok := m.(modules.ExecutionArtifactTreeProvider); ok && tree.ExecutionArtifactTree() {
+		if err := artifacts.NormalizeTreeWithSudo(ctx, filepath.Dir(path)); err != nil {
 			_, _ = sink.writeSanitized([]byte(fmt.Sprintf("\n[i] artifact ownership handoff incomplete: %v\n", err)))
 		}
-	} else if err := artifacts.NormalizePaths(path, history); err != nil {
+	} else if err := artifacts.NormalizePathsWithSudo(ctx, path, history); err != nil {
 		_, _ = sink.writeSanitized([]byte(fmt.Sprintf("\n[i] artifact ownership handoff incomplete: %v\n", err)))
 	}
 	result.Finished = time.Now()

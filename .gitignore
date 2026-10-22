@@ -1,4 +1,14 @@
 /bin/
+*.bak
+*.log
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.tar
+*.tar.gz
+*.tmp
+*.zip
 *.test
 *.out
 *.prof
@@ -10,6 +20,9 @@
 .env.*
 *.secret
 *.credentials
+.DS_Store
+.idea/
+.vscode/
 # Local list of real environment identifiers to keep out of the repository. The
 # file itself is never tracked, so the identifiers stay out of source control.
 .sanitization-denylist

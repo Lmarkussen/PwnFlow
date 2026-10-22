@@ -5,6 +5,8 @@ package sccm
 import (
 	"os"
 	"syscall"
+
+	"github.com/pwnflow/pwnflow/internal/artifacts"
 )
 
 // foreignOwnedEntry reports whether the directory holds an entry that another account
@@ -14,7 +16,10 @@ func foreignOwnedEntry(directory string) bool {
 	if err != nil {
 		return false
 	}
-	uid := os.Getuid()
+	uid, gid, err := artifacts.OperatorIDs()
+	if err != nil {
+		return false
+	}
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
@@ -24,7 +29,7 @@ func foreignOwnedEntry(directory string) bool {
 		if !ok {
 			continue
 		}
-		if int(stat.Uid) != uid {
+		if int(stat.Uid) != uid || int(stat.Gid) != gid {
 			return true
 		}
 	}

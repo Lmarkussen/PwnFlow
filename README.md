@@ -1,104 +1,69 @@
-# PwnFlow
+<p align="center">
+  <img src="assets/pwnflow.png" width="400" alt="PwnFlow logo">
+</p>
 
-**A focused Bubble Tea workbench for authorized Active Directory enumeration.**
+<h1 align="center">PwnFlow</h1>
 
-PwnFlow gives an operator one target-aware interface for planning, configuring,
-running, and reviewing read-oriented AD assessment modules. It keeps each tool's
-native command builder and evidence layout while adding consistent availability,
-approval, cancellation, redaction, and SQLite history handling.
+<p align="center"><strong>Active Directory Enumeration &amp; Security Evidence — From Discovery to Findings.</strong></p>
 
-## What it provides
+## What is PwnFlow?
 
-- A responsive terminal UI with direct access to small tool families and useful
-  protocol navigation for NetExec.
-- Registry-wide selection (`Space`), selected execution (`R`), and a global plan
-  (`A`) with per-operation input and approval gates.
-- Buffered output, lossless findings, restrictive artifact permissions, and
-  per-assessment SQLite history.
-- Operator-controlled local sudo handoff for PXEThief; PwnFlow never receives
-  or transports the sudo password.
-- Watcher output with selected-module abort (`x`), immutable execution identity,
-  partial-artifact preservation, and process-group cleanup.
+PwnFlow is a Go/Bubble Tea terminal application for authorized Active Directory enumeration, evidence collection, and Findings review. It discovers and organizes source-backed evidence for operator decisions; it does not automatically exploit vulnerabilities.
 
-## Supported families
+Original assessment artifacts remain available for review, while Findings provide structured, provenance-aware summaries and navigation.
 
-| Family | Integrations |
-| --- | --- |
-| NetExec | LDAP, SMB, WINRM, WMI, MSSQL, SSH, FTP, RDP, VNC, NFS; credential auditing and dumping |
-| Network | NetworkHound topology and scoped validation; RelayKing targeted and domain audit |
-| SCCM | SCCMhunter discovery and PXEThief |
-| AD CS | Certipy find-only collection |
-| Active Directory | RustHound-CE LDAP-only collection |
+## Features
 
-The browser presents NetExec by protocol. The other families present their
-registered modules directly, without an unnecessary category or `N/A` protocol
-folder.
+- Protected 45-module automatic enumeration profile with GhostSPN immediately after Kerberoasting.
+- Terminal Tool Runner with approvals, cancellation, availability checks, and watcher output.
+- Per-assessment evidence collection with access to original artifacts.
+- Source-backed Findings with recovered material and uncertainty preserved.
+- Confirmed Critical and Potential Critical — Not Verified projections over original Findings.
+- Offline Findings review through `--findings`, without network access or execution.
 
-## Quick start
+## Installation
+
+Kali Linux is the supported installation target. Go 1.22 or newer is required for development builds.
 
 ```bash
 git clone git@github.com:Lmarkussen/PwnFlow.git
 cd PwnFlow
 ./install.sh
 make build
-./bin/pwnflow --target <DC> --domain <DOMAIN> --username <USER>
 ```
 
-The unqualified `./install.sh` checks and installs all declared dependencies.
-Use `--with-*` selectors only when a targeted installation is wanted. PwnFlow
-does not install tools at startup. Kali Linux is the supported installation
-target.
+The installer checks and installs supported external tools. Use its documented `--with-*` selectors when a targeted installation is required.
 
-For development:
+## Usage
 
 ```bash
-make test
-make vet
-make check
+# Start an authenticated assessment; enter the password at the terminal prompt.
+./bin/pwnflow --dc-ip <DOMAIN_CONTROLLER> --domain <DOMAIN> --username <USER>
+
+# Start the application, then use Ctrl+A for the protected automatic profile.
+./bin/pwnflow --dc-ip <DOMAIN_CONTROLLER> --domain <DOMAIN> --username <USER>
+
+# Start the Tool Runner and select an individual module with Enter.
+./bin/pwnflow --dc-ip <DOMAIN_CONTROLLER> --domain <DOMAIN> --username <USER>
+
+# Browse an existing assessment without network access or execution.
+./bin/pwnflow --findings --domain <DOMAIN> --dc-ip <DOMAIN_CONTROLLER>
 ```
 
-## Controls
+Use `--module-options MODULE.KEY=VALUE` for supported module inputs. Avoid `--password` on shared systems because external tools may expose command-line arguments to local process inspection.
 
-| Key | Action |
-| --- | --- |
-| `↑`/`↓`, `Tab` | Navigate rows, panes, and module lists |
-| `Space` | Toggle a module in the registry-wide selection |
-| `Enter` | Run the highlighted module |
-| `R` | Run the selected modules |
-| `A` | Plan the complete eligible registry |
-| `I` | Configure an input-required module |
-| `Ctrl+W` | Open the execution watcher |
-| `x` | Ask to abort the selected running execution |
-| `Ctrl+C`, `q` | Cancel or quit with confirmation when work is active |
+## Architecture
+
+```text
+Discovery → Enumeration → Evidence → Findings → Operator
+```
+
+PwnFlow keeps retained artifacts and source provenance intact. The Critical view is a read-only, in-memory projection that prioritizes confirmed attack paths and separates potential, not-verified candidates without replacing the original Finding details.
 
 ## Documentation
 
-- [Operator guide](docs/operator-guide.md) — installation, module behavior,
-  scope notes, sudo handling, and troubleshooting details.
-- [NetExec inventory](docs/netexec-inventory.md) — registered protocols,
-  capabilities, options, and validation notes.
-- [Enumeration tool candidates](docs/enumeration-tool-candidates.md) — current
-  research, overlap analysis, and prioritized additions; no tools are integrated
-  by that document.
-- [RustHound artifact schema](docs/rusthound-artifact-schema.md) — the observed
-  JSON/ACL shape and the limits of local findings analysis.
-
-## Security and authorization
-
-PwnFlow is target-agnostic and does not grant authorization. Run it only against
-systems and domains you are explicitly authorized to assess. NetworkHound's
-upstream project is distributed under a non-commercial license; PwnFlow does not
-vendor or redistribute it. The installer fetches the upstream checkout when that
-dependency is selected. Review upstream licenses and terms before use.
-
-Passwords are prompted for in the terminal where possible, are redacted from
-operator-facing previews and stored findings, and are not written to SQLite.
-NetExec's native password argument is an unavoidable process-visibility caveat;
-use an isolated assessment host and restrict process visibility accordingly.
-
-## Credits
-
-PwnFlow integrates and credits NetExec, RustHound-CE, Certipy, SCCMhunter,
-PXEThief, NetworkHound, RelayKing, and the upstream projects used by them.
-See the [operator guide](docs/operator-guide.md) for the detailed upstream
-attribution and license notes.
+- [Operator guide](docs/operator-guide.md) — installation, controls, modules, scope, and troubleshooting.
+- [Findings engine](docs/findings-engine.md) — analysis lifecycle, evidence boundaries, and Critical Findings.
+- [NetExec inventory](docs/netexec-inventory.md) — protocols, capabilities, and options.
+- [RustHound artifact schema](docs/rusthound-artifact-schema.md) — retained directory evidence and analysis limits.
+- [Specialized tools](docs/specialized-tools.md) — integrated external tool versions and scope.

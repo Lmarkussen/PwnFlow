@@ -18,9 +18,10 @@ import (
 // shortGrace keeps the escalation tests quick without changing the mechanism.
 func shortGrace(t *testing.T) {
 	t.Helper()
-	previous := GracePeriod
+	previous, previousWait := GracePeriod, CancellationWait
 	GracePeriod = 300 * time.Millisecond
-	t.Cleanup(func() { GracePeriod = previous })
+	CancellationWait = 2 * GracePeriod
+	t.Cleanup(func() { GracePeriod, CancellationWait = previous, previousWait })
 }
 
 // alive reports whether a pid still exists.

@@ -10,9 +10,6 @@ import (
 )
 
 func (m *model) View() string {
-	if m.easterEgg {
-		return m.easterEggView()
-	}
 	if m.watcher {
 		return m.watcherView()
 	}
@@ -102,7 +99,7 @@ func wrapFooter(text string, width int) string {
 	if width < 1 {
 		width = 1
 	}
-	return ansi.HardwrapWc(text, width, true)
+	return ansi.Wordwrap(text, width, " \t")
 }
 
 func (m *model) navigationView() string {
@@ -123,7 +120,13 @@ func (m *model) navigationView() string {
 	}
 	for index, row := range rows {
 		selected := index == m.navigationRow && m.focus == focusNavigation
-		line := fmt.Sprintf("%s%-14s  ◀ %s ▶", selectionPrefix(selected), row.label, selectionLabel(row.value, selected))
+		// Navigation values are user/configuration supplied and can be much
+		// longer than the pane. Truncating the value keeps a row on one physical
+		// line, so the module/configuration pane below it cannot be pushed off a
+		// short terminal.
+		valueWidth := max(1, width-4-2-14-2-2-2)
+		value := ansi.TruncateWc(row.value, valueWidth, "…")
+		line := fmt.Sprintf("%s%-14s  ◀ %s ▶", selectionPrefix(selected), row.label, selectionLabel(value, selected))
 		content.WriteString(line + "\n")
 	}
 	content.WriteString(dim.Render("↑↓ Select row   ←→ Change value   Tab Next"))

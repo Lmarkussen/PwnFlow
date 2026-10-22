@@ -8,12 +8,8 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 43 {
-		t.Fatalf("Default Enumeration has %d entries, want 43", len(defaultEnumerationModuleIDs))
-	}
-	base := defaultEnumerationModuleIDs[:32]
-	if len(base) != 32 || base[0] != "password-not-required" || base[31] != "relayking-domain-audit" {
-		t.Fatal("the original 32-entry profile was not preserved as the prefix")
+	if len(defaultEnumerationModuleIDs) != 45 {
+		t.Fatalf("Default Enumeration has %d entries, want 45", len(defaultEnumerationModuleIDs))
 	}
 	wantPrefix := []string{
 		"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
@@ -21,15 +17,27 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 		"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 	}
+	profileWithoutGhostSPN := make([]string, 0, len(defaultEnumerationModuleIDs)-1)
+	ghostSPNCount := 0
+	for _, id := range defaultEnumerationModuleIDs {
+		if id == "ghostspn-audit" {
+			ghostSPNCount++
+			continue
+		}
+		profileWithoutGhostSPN = append(profileWithoutGhostSPN, id)
+	}
+	if ghostSPNCount != 1 {
+		t.Fatalf("GhostSPN appears %d times in Default Enumeration, want once", ghostSPNCount)
+	}
 	for index, id := range wantPrefix {
-		if defaultEnumerationModuleIDs[index] != id {
-			t.Fatalf("original profile entry %d=%q, want %q", index+1, defaultEnumerationModuleIDs[index], id)
+		if profileWithoutGhostSPN[index] != id {
+			t.Fatalf("original profile entry %d=%q, want %q", index+1, profileWithoutGhostSPN[index], id)
 		}
 	}
 	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check"}
 	for index, id := range wantAuth {
-		if defaultEnumerationModuleIDs[33+index] != id {
-			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[33+index], id)
+		if defaultEnumerationModuleIDs[34+index] != id {
+			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[34+index], id)
 		}
 	}
 	for _, id := range defaultEnumerationModuleIDs {
@@ -42,20 +50,23 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 			t.Fatal("path-prompting offline gpoParser entered Default Enumeration")
 		}
 	}
-	if defaultEnumerationModuleIDs[32] != "gpoparser-remote" {
-		t.Fatalf("GPO remote analysis is not after the existing Default Enumeration prefix: %q", defaultEnumerationModuleIDs[32])
+	if defaultEnumerationModuleIDs[33] != "gpoparser-remote" {
+		t.Fatalf("GPO remote analysis is not after the existing Default Enumeration prefix: %q", defaultEnumerationModuleIDs[33])
 	}
-	if defaultEnumerationModuleIDs[39] != "sphunter-tenant-discovery" {
-		t.Fatalf("SPHunter is not the additive entry 40: %q", defaultEnumerationModuleIDs[39])
+	if defaultEnumerationModuleIDs[40] != "sphunter-tenant-discovery" {
+		t.Fatalf("SPHunter is not the additive entry 41: %q", defaultEnumerationModuleIDs[40])
 	}
-	if defaultEnumerationModuleIDs[40] != "ad-writable-objects" {
-		t.Fatalf("AD writable analysis is not additive entry 41: %q", defaultEnumerationModuleIDs[40])
+	if defaultEnumerationModuleIDs[41] != "ad-writable-objects" {
+		t.Fatalf("AD writable analysis is not additive entry 42: %q", defaultEnumerationModuleIDs[41])
 	}
-	if defaultEnumerationModuleIDs[41] != "ftp-anonymous-access" {
-		t.Fatalf("FTP anonymous access is not additive entry 42: %q", defaultEnumerationModuleIDs[41])
+	if defaultEnumerationModuleIDs[42] != "ftp-anonymous-access" {
+		t.Fatalf("FTP anonymous access is not additive entry 43: %q", defaultEnumerationModuleIDs[42])
 	}
-	if defaultEnumerationModuleIDs[42] != "smb-spider-plus" {
-		t.Fatalf("SMB Spider Plus is not additive entry 43: %q", defaultEnumerationModuleIDs[42])
+	if defaultEnumerationModuleIDs[43] != "smb-spider-plus" {
+		t.Fatalf("SMB Spider Plus is not additive entry 44: %q", defaultEnumerationModuleIDs[43])
+	}
+	if defaultEnumerationModuleIDs[44] != "smb-password-policy" {
+		t.Fatalf("SMB password policy is not additive entry 45: %q", defaultEnumerationModuleIDs[44])
 	}
 }
 
@@ -113,6 +124,7 @@ func TestDefaultEnumerationDoesNotPromptForSMBSpiderTargetOrApproval(t *testing.
 	m := newModel(context.Background(), config.Config{Target: "198.51.100.10", Domain: "example.test", Username: "operator", Root: t.TempDir()}, nil, registered, make([]int64, len(registered)), 1, "production-test")
 	m.width, m.height = 140, 45
 	m.resizeOutput()
+	m.focus = focusModules
 	m.startPlan(plan{
 		name:      "Default Enumeration",
 		requested: 1,

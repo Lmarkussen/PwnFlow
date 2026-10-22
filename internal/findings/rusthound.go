@@ -244,6 +244,50 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		} else {
 			report.ACLRecordsOmitted++
 		}
+		if rightKey == "genericall" && aceInheritance(ace.ACE) == "explicit" &&
+			strings.EqualFold(ace.Object.Type, "users") &&
+			strings.EqualFold(aceString(ace.ACE, "PrincipalType"), "user") &&
+			principalID != "" && ace.Object.ID != "" {
+			evidence, _ := json.Marshal(map[string]any{
+				"domain":                  report.Domain,
+				"principal_id":            principalID,
+				"principal_name":          principalName,
+				"target_id":               ace.Object.ID,
+				"target_name":             ace.Object.Name,
+				"target_type":             ace.Object.Type,
+				"permission":              right,
+				"ace_decision":            aceDecision(ace.ACE),
+				"inheritance":             aceInheritance(ace.ACE),
+				"effective_authorization": "not_verified",
+				"source_artifact":         ace.Artifact,
+				"source_reference":        ace.RefPrefix,
+				"qualification":           "direct_genericall_user_target",
+			})
+			keyHash := sha256.Sum256([]byte(strings.Join([]string{
+				strings.ToLower(report.Domain), principalID, ace.Object.ID, rightKey, "explicit",
+			}, "\x00")))
+			findings = append(findings, storage.FindingInput{
+				FindingKey:       "ad-acl-genericall:" + hex.EncodeToString(keyHash[:]),
+				AssessmentID:     assessmentID,
+				SourceTool:       "RustHound-CE",
+				SourceExecution:  executionID,
+				FindingType:      "ad_acl_genericall",
+				Title:            "Excessive GenericAll Control Over AD User",
+				Description:      "A direct GenericAll relationship was observed between a user principal and an AD user object. Effective authorization and exploitation were not verified.",
+				Severity:         "medium",
+				Confidence:       "observed-direct-ace",
+				AffectedObjectID: ace.Object.ID,
+				AffectedObject:   ace.Object.Name,
+				RelatedObjectID:  principalID,
+				RelatedObject:    principalName,
+				EvidenceJSON:     string(evidence),
+				ArtifactPath:     ace.Artifact,
+				ArtifactRef:      ace.RefPrefix,
+				ObservedAt:       now,
+				Status:           "open",
+				ParserVersion:    ParserVersion,
+			})
+		}
 	}
 	report.Findings = len(findings)
 	return findings, report, nil
@@ -475,7 +519,7 @@ func delegationFindings(object collectedObject, assessmentID, executionID int64,
 	}
 	result := make([]storage.FindingInput, 0, 2)
 	if unconstrained, known := rawBoolValue(object.Properties, "unconstraineddelegation"); known && unconstrained {
-		evidence, _ := json.Marshal(map[string]any{"object_id": object.ID, "object_name": object.Name, "delegation_type": "unconstrained", "direct_property": true})
+		evidence, _ := json.Marshal(delegationEvidence(object, "unconstrained", map[string]any{"direct_property": true}))
 		result = append(result, storage.FindingInput{
 			FindingKey: stableSourceKey(assessmentID, "rusthound-unconstrained-delegation", object.ID, "unconstrained"), AssessmentID: assessmentID,
 			SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "unconstrained_delegation_configured",
@@ -487,7 +531,7 @@ func delegationFindings(object collectedObject, assessmentID, executionID int64,
 	trusted, trustedKnown := rawBoolValue(object.Properties, "trustedtoauth")
 	services := rawStringSlice(object.Properties, "allowedtodelegate")
 	if (trustedKnown && trusted) || len(services) > 0 {
-		evidence, _ := json.Marshal(map[string]any{"object_id": object.ID, "object_name": object.Name, "delegation_type": "constrained", "trusted_to_auth": trusted, "trusted_to_auth_known": trustedKnown, "allowed_to_delegate": services})
+		evidence, _ := json.Marshal(delegationEvidence(object, "constrained", map[string]any{"trusted_to_auth": trusted, "trusted_to_auth_known": trustedKnown, "allowed_to_delegate": services}))
 		result = append(result, storage.FindingInput{
 			FindingKey: stableSourceKey(assessmentID, "rusthound-constrained-delegation", object.ID, services), AssessmentID: assessmentID,
 			SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "constrained_delegation_configured",
@@ -497,6 +541,28 @@ func delegationFindings(object collectedObject, assessmentID, executionID int64,
 		})
 	}
 	return result
+}
+
+func delegationEvidence(object collectedObject, delegationType string, extra map[string]any) map[string]any {
+	objectType := object.Type
+	if strings.EqualFold(objectType, "users") {
+		objectType = "User"
+	} else if strings.EqualFold(objectType, "computers") {
+		objectType = "Computer"
+	}
+	evidence := map[string]any{"object_id": object.ID, "object_name": object.Name, "delegation_type": delegationType, "object_type": objectType}
+	for _, field := range []struct{ output, source string }{{"domain", "domain"}, {"distinguishedname", "distinguishedname"}, {"useraccountcontrol", "useraccountcontrol"}, {"enabled", "enabled"}, {"serviceprincipalnames", "serviceprincipalnames"}} {
+		if raw, ok := object.Properties[field.source]; ok {
+			var value any
+			if json.Unmarshal(raw, &value) == nil {
+				evidence[field.output] = value
+			}
+		}
+	}
+	for key, value := range extra {
+		evidence[key] = value
+	}
+	return evidence
 }
 
 func rawBoolValue(fields map[string]json.RawMessage, key string) (bool, bool) {

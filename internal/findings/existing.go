@@ -45,7 +45,9 @@ func AnalyzeCertipy(ctx context.Context, artifactPath string, assessmentID, exec
 			vulnerability := template["[!] Vulnerabilities"]
 			for _, esc := range extractESCIdentifiers(vulnerability) {
 				objectName, objectLabel := certipyObjectIdentity(kind, name, template)
-				evidence, _ := json.Marshal(map[string]any{"object_type": kind, "object_name": name, "enabled": template["Enabled"], "esc": esc, "vulnerability": vulnerability, "owner": template["Owner"], "manager_approval": template["Requires Manager Approval"], "authorized_signatures": template["Authorized Signatures Required"]})
+				evidenceValue := map[string]any{"object_type": kind, "object_name": name, "enabled": template["Enabled"], "esc": esc, "vulnerability": vulnerability, "owner": template["Owner"], "manager_approval": template["Requires Manager Approval"], "authorized_signatures": template["Authorized Signatures Required"]}
+				addCertipyCriticalPath(evidenceValue, template, kind, esc)
+				evidence, _ := json.Marshal(evidenceValue)
 				ref := "/" + section + "/" + jsonPointer(name) + "/[!] Vulnerabilities"
 				constraints := certipyConstraints(template, kind)
 				result = append(result, storage.FindingInput{
@@ -59,6 +61,86 @@ func AnalyzeCertipy(ctx context.Context, artifactPath string, assessmentID, exec
 		}
 	}
 	return result, nil
+}
+
+func addCertipyCriticalPath(evidence, object map[string]any, kind, esc string) {
+	if kind == "template" && strings.EqualFold(esc, "ESC1") {
+		clientAuthentication, _ := object["Client Authentication"].(bool)
+		enrolleeSuppliesSubject, _ := object["Enrollee Supplies Subject"].(bool)
+		enabled, _ := object["Enabled"].(bool)
+		managerApproval, managerApprovalPresent := object["Requires Manager Approval"].(bool)
+		authorizedSignatures, signaturesPresent := numericValue(object["Authorized Signatures Required"])
+		enrollmentPrincipals := certipyEnrollmentPrincipals(object)
+		lowPrivilegeEnrollment := hasLowPrivilegeEnrollment(enrollmentPrincipals)
+		evidence["critical_path"] = map[string]any{
+			"verified":                  enabled && enrolleeSuppliesSubject && clientAuthentication && managerApprovalPresent && !managerApproval && signaturesPresent && authorizedSignatures == 0 && lowPrivilegeEnrollment,
+			"enrollee_supplies_subject": enrolleeSuppliesSubject,
+			"client_authentication_eku": clientAuthentication,
+			"low_privilege_enrollment":  lowPrivilegeEnrollment,
+			"enrollment_principals":     enrollmentPrincipals,
+			"manager_approval":          managerApproval,
+			"authorized_signatures":     authorizedSignatures,
+		}
+	}
+	if kind == "ca" && strings.EqualFold(esc, "ESC8") {
+		vulnerability, _ := object["[!] Vulnerabilities"].(map[string]any)
+		_, webEnrollmentHTTP := vulnerability["ESC8"]
+		evidence["critical_path"] = map[string]any{
+			"verified":            false,
+			"web_enrollment_http": webEnrollmentHTTP,
+		}
+	}
+}
+
+func certipyEnrollmentPrincipals(object map[string]any) []string {
+	seen := map[string]bool{}
+	var result []string
+	add := func(value any) {
+		values, ok := value.([]any)
+		if !ok {
+			return
+		}
+		for _, item := range values {
+			name, ok := item.(string)
+			if ok && strings.TrimSpace(name) != "" && !seen[strings.ToLower(name)] {
+				seen[strings.ToLower(name)] = true
+				result = append(result, strings.TrimSpace(name))
+			}
+		}
+	}
+	add(object["[+] User Enrollable Principals"])
+	if permissions, ok := object["Permissions"].(map[string]any); ok {
+		if enrollment, ok := permissions["Enrollment Permissions"].(map[string]any); ok {
+			add(enrollment["Enrollment Rights"])
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func hasLowPrivilegeEnrollment(principals []string) bool {
+	for _, principal := range principals {
+		name := strings.ToLower(strings.TrimSpace(principal))
+		name = name[strings.LastIndex(name, "\\")+1:]
+		switch name {
+		case "authenticated users", "domain users", "everyone":
+			return true
+		}
+	}
+	return false
+}
+
+func numericValue(value any) (int64, bool) {
+	switch number := value.(type) {
+	case int:
+		return int64(number), true
+	case int64:
+		return number, true
+	case float64:
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 func certipyObjectIdentity(kind, key string, object map[string]any) (string, string) {

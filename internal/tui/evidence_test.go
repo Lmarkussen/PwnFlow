@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
@@ -36,6 +37,20 @@ func TestKerberosPrincipalMatchingIsDomainAware(t *testing.T) {
 				t.Fatalf("match(%q, %q)=%t, want %t", test.expected, kerberosPrincipalInline(test.line), got, test.want)
 			}
 		})
+	}
+}
+
+func TestKerberosPrincipalMatchingHandlesDollarQualifiedNetExecTGS(t *testing.T) {
+	line := "$krb5tgs$18$hostadenum-gmsa.sccm.lab$SCCM.LAB$*sccm.lab\\adenum-gmsa$*$material"
+	observed := kerberosPrincipalInline(line)
+	if observed != `sccm.lab\adenum-gmsa` {
+		t.Fatalf("unexpected NetExec principal %q", observed)
+	}
+	if !kerberosPrincipalMatches("ADENUM-GMSA$@SCCM.LAB", observed) {
+		t.Fatalf("dollar-qualified principal did not match observed %q", observed)
+	}
+	if kerberosPrincipalMatches("OTHER-GMSA$@SCCM.LAB", observed) {
+		t.Fatal("material crossed to an unrelated principal")
 	}
 }
 
@@ -86,5 +101,34 @@ func TestExtractKerberosInlineRejectsAmbiguousUnqualifiedPrincipal(t *testing.T)
 	metadata := map[string]any{"principal": "svc", "record_line_numbers": []any{float64(1), float64(2)}}
 	if got := extractKerberosInline(lines, metadata, storage.Finding{}); len(got) != 0 {
 		t.Fatalf("ambiguous unqualified principal leaked material: %v", got)
+	}
+}
+
+func TestFindingHasInlineEvidenceDoesNotDuplicateLDAPAttribute(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{
+		SourceTool: "NetExec", FindingType: "ad_user_description_keyword_observed",
+	}}
+	if findingHasInlineEvidence(finding) {
+		t.Fatal("LDAP attribute evidence should use the authoritative detail block")
+	}
+}
+
+func TestStylePXECredentialLineUsesPrefixAndDescriptorColors(t *testing.T) {
+	styled := stylePXECredentialLine("OSDJoinPassword       = synthetic-password")
+	if !strings.Contains(styled, "OSDJoin") || !strings.Contains(styled, "Password") || !strings.Contains(styled, "synthetic-password") {
+		t.Fatalf("styled credential line lost content: %q", styled)
+	}
+	if ansi.StringWidthWc(styled) != len("OSDJoinPassword       = synthetic-password") {
+		t.Fatalf("ANSI styling changed visible width: %d", ansi.StringWidthWc(styled))
+	}
+}
+
+func TestStylePXECredentialLineColorsWholeLabelAndValue(t *testing.T) {
+	styled := stylePXECredentialLine("OSDLocalAdminPassword = synthetic-secret")
+	if !strings.Contains(styled, infoBlueStyle().Render("OSDLocalAdminPassword")) {
+		t.Fatal("credential label was not styled as one blue field name")
+	}
+	if !strings.Contains(styled, warn.Render("synthetic-secret")) {
+		t.Fatal("credential value was not styled as one orange value")
 	}
 }

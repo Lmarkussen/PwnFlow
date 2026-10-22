@@ -2,10 +2,12 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules/gpoanalysis"
 	"github.com/pwnflow/pwnflow/internal/modules/gpoevidence"
 	"github.com/pwnflow/pwnflow/internal/runner"
+	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
 var ErrQuit = errors.New("quit")
@@ -89,6 +92,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// to keep the highlighted module inside the pane.
 		m.scrollModuleList()
 	case tickMsg:
+		var findingsLoad tea.Cmd
+		if m.findingsAsync && m.findingsView && !m.findingsLoaded {
+			findingsLoad = m.beginFindingsLoad()
+		}
 		quit := m.syncBatch()
 		m.refreshFindings()
 		if !m.running && m.batchRecorded && !m.analysisPending && m.batchName == "Default Enumeration" && !m.batchSummaryExported {
@@ -114,6 +121,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.running && m.batchRecorded && !m.analysisPending && !m.adPrivilegedACLExported {
 			m.exportADPrivilegedACL()
 		}
+		m.refreshWatcherList()
 		m.refreshWatcher()
 		m.refreshOutput()
 		// A privileged module waiting for renewed authorization is picked up here,
@@ -125,6 +133,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if quit != nil {
 			return m, quit
 		}
+		if findingsLoad != nil {
+			return m, tea.Batch(tickCmd(), findingsLoad)
+		}
 		// Module Information is recomputed away from rendering, and only when it is
 		// stale, so arrow navigation never waits on a probe.
 		if time.Since(m.detailsRefreshed) >= detailsRefreshInterval {
@@ -134,6 +145,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+	case findingsLoadedMsg:
+		if msg.generation != m.findingsLoadGeneration {
+			return m, nil
+		}
+		m.findingsLoading = false
+		if msg.err != nil {
+			m.status = "findings unavailable: " + msg.err.Error()
+			return m, nil
+		}
+		m.setFindingRows(msg.rows)
+		m.findingsAnalysisStatus = msg.status
+		m.findingsLoaded = true
+		m.refreshFindings()
+		return m, nil
 	case findingsCompleteMsg:
 		m.analysisPending = false
 		m.batchSummaryShown = true
@@ -152,7 +177,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.exportADPrivilegedAccess()
 		}
 		m.exportADPrivilegedACL()
-		return m, nil
+		// The completion message is delivered by the asynchronous findings
+		// worker, not by the periodic tick. Keep the refresh loop alive so a
+		// later batch in the same TUI session gets live Watcher updates too.
+		return m, tickCmd()
 	case batchRecordedMsg:
 		if msg.batch != m.batch {
 			return m, nil
@@ -175,9 +203,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.analysisPending && !m.batchSummaryShown {
 			m.status = "enumeration complete; findings analysis pending"
 			m.batchSummaryShown = true
-			return m, m.waitForFindings()
+			return m, tea.Batch(tickCmd(), m.waitForFindings())
 		}
-		return m, nil
+		// Recording completion arrives asynchronously after syncBatch returned
+		// its command. Re-arm the tick here as well; otherwise this message can
+		// be the last event delivered by the model after the first batch.
+		return m, tickCmd()
 	case findingsReanalysisMsg:
 		m.findingsLoaded = false
 		if msg.err != nil {
@@ -187,7 +218,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case inlineEvidenceLoadedMsg:
-		if m.findingDetail && len(m.findingRows) > 0 && (msg.findingID == 0 || m.findingRows[m.findingCursor].ID == msg.findingID) {
+		activeID := int64(0)
+		if m.findingDetail && len(m.findingRows) > 0 {
+			activeID = m.activeFindingForDetail(m.findingRows[m.findingCursor]).ID
+		}
+		if m.findingDetail && len(m.findingRows) > 0 && (msg.findingID == 0 || activeID == msg.findingID) {
 			m.inlineEvidence = msg.evidence
 			m.inlineEvidenceTop = 0
 			m.inlineEvidenceLoading = false
@@ -231,11 +266,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if m.easterEgg {
-		if key == "q" || key == "Q" {
-			m.easterEgg = false
+	if key == "ctrl+x" {
+		return m, m.abortAll()
+	}
+	if key == "ctrl+a" {
+		if !m.canStartAutomaticEnumeration() {
+			return m, nil
 		}
-		return m, nil
+		return m, m.executeAll()
 	}
 	if m.quitConfirm {
 		switch key {
@@ -342,14 +380,16 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.declineWatcherAbort()
 		}
 	}
+	if m.elevationPrompt && key == "ctrl+c" {
+		m.cancelPlan()
+		m.elevationModules = nil
+		m.pendingIndices = nil
+		m.pendingName = ""
+		return m, nil
+	}
 	if m.watcher && (key == "q" || key == "Q") {
 		return m, m.requestQuit()
 	}
-	if isEasterEggKey(msg) && !m.running && !m.watcher && !m.findingsView && !m.inputPrompt && !m.approvalPrompt && !m.elevationPrompt && !m.quitConfirm {
-		m.easterEgg = true
-		return m, nil
-	}
-
 	// Handle process-wide controls before any focus-specific handler. The
 	// latter intentionally return early for navigation and watcher keys.
 	switch key {
@@ -410,10 +450,6 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.findingsLoaded = false
 		m.refreshFindings()
 		return m, nil
-	case "ctrl+a":
-		if !m.running {
-			return m, m.executeAll()
-		}
 	}
 
 	if m.watcher {
@@ -572,7 +608,13 @@ func (m *model) requestQuit() tea.Cmd {
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if m.findingsOnly() && key == "ctrl+w" {
+		return m, nil
+	}
 	if key == "ctrl+w" {
+		if m.findingsOnly() {
+			return m, nil
+		}
 		m.findingsView = false
 		m.findingsFromWatcher = false
 		m.openWatcher()
@@ -659,8 +701,71 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.findingCategoryView && m.findingSubcategoryView {
+		if m.findingCategory == "critical" {
+			switch key {
+			case "esc":
+				if m.criticalNavigationLevel == 2 {
+					m.criticalNavigationLevel = 1
+					m.criticalFamily = ""
+					m.findingSubcategories = criticalStateSubcategories(m.criticalProjection)
+					m.findingCursor = min(max(0, m.criticalStateCursor), max(0, len(m.findingSubcategories)-1))
+					return m, nil
+				}
+				m.criticalNavigationLevel = 0
+				m.criticalState = ""
+				m.findingCategory = ""
+				m.findingSubcategoryView = false
+				m.findingSubcategories = nil
+				m.restoreFindingCategorySelection()
+				m.findingTop = m.findingCategoryTop
+				return m, nil
+			case "up", "k":
+				m.findingCursor--
+			case "down", "j":
+				m.findingCursor++
+			case "home":
+				m.findingCursor = 0
+			case "end":
+				m.findingCursor = len(m.findingSubcategories) - 1
+			case "pgup":
+				m.findingCursor -= 5
+			case "pgdown":
+				m.findingCursor += 5
+			case "enter":
+				if m.findingCursor >= 0 && m.findingCursor < len(m.findingSubcategories) {
+					selected := m.findingSubcategories[m.findingCursor]
+					if m.criticalNavigationLevel == 1 {
+						m.criticalStateCursor = m.findingCursor
+						m.criticalNavigationLevel = 2
+						m.criticalState = findingengine.CriticalState(selected.Key)
+						m.findingSubcategories = criticalFamilySubcategories(m.criticalProjection, m.criticalState)
+						m.findingCursor, m.findingTop = 0, 0
+						return m, nil
+					}
+					m.criticalFamilyCursor = m.findingCursor
+					m.criticalFamily = selected.Key
+					m.findingSubcategory = string(m.criticalState) + "\x00" + selected.Key
+					m.findingCategoryView = false
+					m.findingSubcategoryView = false
+					m.findingCursor, m.findingTop = 0, 0
+					m.refreshFindings()
+					m.restoreFindingRowSelection()
+					return m, m.beginFindingInlineEvidence()
+				}
+			}
+			if m.findingCursor < 0 {
+				m.findingCursor = 0
+			}
+			if m.findingCursor >= len(m.findingSubcategories) {
+				m.findingCursor = max(0, len(m.findingSubcategories)-1)
+			}
+			return m, nil
+		}
 		switch key {
 		case "ctrl+w":
+			if m.findingsOnly() {
+				return m, nil
+			}
 			m.findingsView = false
 			m.watcher = m.findingsFromWatcher || m.batch != nil
 			if m.watcher {
@@ -721,6 +826,9 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	if m.findingCategoryView {
 		switch key {
 		case "ctrl+w":
+			if m.findingsOnly() {
+				return m, nil
+			}
 			m.findingsView = false
 			m.watcher = m.findingsFromWatcher || m.batch != nil
 			if m.watcher {
@@ -733,6 +841,9 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				m.restoreFindingCategorySelection()
 				m.findingTop = m.findingCategoryTop
 				m.refreshFindings()
+				return m, nil
+			}
+			if m.findingsOnly() {
 				return m, nil
 			}
 			m.findingsView = false
@@ -762,6 +873,26 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 				m.findingCategory = selected.Key
 				m.findingTieringView = false
 				m.findingTieringParent = false
+				if selected.Key == "critical" || selected.Key == "other" {
+					if selected.Key == "critical" {
+						m.criticalNavigationLevel = 1
+						m.criticalState = ""
+						m.criticalFamily = ""
+						m.findingSubcategories = criticalStateSubcategories(m.criticalProjection)
+						m.findingSubcategoryView = true
+						m.findingCategoryView = true
+						m.findingCursor, m.findingTop = 0, 0
+						return m, nil
+					}
+					m.findingSubcategory = ""
+					m.findingSubcategories = nil
+					m.findingCategoryView = false
+					m.findingSubcategoryView = false
+					m.findingCursor, m.findingTop = 0, 0
+					m.refreshFindings()
+					m.restoreFindingRowSelection()
+					return m, m.beginFindingInlineEvidence()
+				}
 				m.findingSubcategories = buildFindingSubcategories(m.findingCategory, m.findingAllRows)
 				m.findingSubcategoryView = true
 				m.findingCursor = 0
@@ -788,7 +919,20 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "e":
 			if len(m.findingRows) > 0 {
-				m.openFindingEvidence(m.findingRows[m.findingCursor])
+				m.openFindingEvidence(m.activeFindingForDetail(m.findingRows[m.findingCursor]))
+			}
+			return m, nil
+		case "[", "]":
+			if len(m.criticalSourceFindings) > 1 {
+				if key == "[" {
+					m.criticalSourceIndex--
+				} else {
+					m.criticalSourceIndex++
+				}
+				m.criticalSourceIndex = min(max(0, m.criticalSourceIndex), len(m.criticalSourceFindings)-1)
+				m.inlineEvidence = inlineEvidence{}
+				m.inlineEvidenceTop = 0
+				return m, m.beginFindingInlineEvidence()
 			}
 			return m, nil
 		case "esc", "enter":
@@ -805,6 +949,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "pgup":
 			if m.findingCursor > 0 {
 				m.findingCursor--
+				m.criticalSourceFindings = nil
+				m.criticalSourceIndex = 0
 				m.findingDetailTop = 0
 				m.inlineEvidenceTop = 0
 				m.keepFindingVisible()
@@ -813,6 +959,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			if m.findingCursor+1 < len(m.findingRows) {
 				m.findingCursor++
+				m.criticalSourceFindings = nil
+				m.criticalSourceIndex = 0
 				m.findingDetailTop = 0
 				m.inlineEvidenceTop = 0
 				m.keepFindingVisible()
@@ -827,6 +975,9 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "ctrl+w":
+		if m.findingsOnly() {
+			return m, nil
+		}
 		m.findingsView = false
 		m.watcher = m.findingsFromWatcher || m.batch != nil
 		if m.watcher {
@@ -835,6 +986,16 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		m.findingsFromWatcher = false
 	case "esc":
 		if m.findingCategory != "" {
+			if m.findingCategory == "critical" && m.criticalNavigationLevel == 2 {
+				m.rememberFindingRowSelection()
+				m.findingCategoryView = true
+				m.findingSubcategoryView = true
+				m.findingSubcategories = criticalFamilySubcategories(m.criticalProjection, m.criticalState)
+				m.findingSubcategory = ""
+				m.criticalFamily = ""
+				m.findingCursor = min(max(0, m.criticalFamilyCursor), max(0, len(m.findingSubcategories)-1))
+				return m, nil
+			}
 			if m.findingSubcategory != "" {
 				m.rememberFindingRowSelection()
 				if m.findingTieringParent {
@@ -866,6 +1027,9 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 			m.refreshFindings()
 			return m, nil
 		}
+		if m.findingsOnly() {
+			return m, nil
+		}
 		m.findingsView = false
 		if m.findingsFromWatcher {
 			m.watcher = true
@@ -887,6 +1051,8 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.findingRows) > 0 {
 			m.findingDetail = true
+			m.criticalSourceFindings = nil
+			m.criticalSourceIndex = 0
 			m.findingDetailTop = 0
 			return m, m.beginFindingInlineEvidence()
 		}
@@ -911,11 +1077,58 @@ func (m *model) beginFindingInlineEvidence() tea.Cmd {
 	if len(m.findingRows) == 0 {
 		return nil
 	}
-	command := m.findingInlineEvidence(m.findingRows[m.findingCursor])
+	command := m.findingInlineEvidence(m.activeFindingForDetail(m.findingRows[m.findingCursor]))
 	if command != nil {
 		m.inlineEvidenceLoading = true
 	}
 	return command
+}
+
+func (m *model) activeFindingForDetail(projected storage.Finding) storage.Finding {
+	if findingengine.CriticalStateOf(projected) == findingengine.CriticalNotCritical {
+		m.criticalSourceFindings = nil
+		m.criticalSourceIndex = 0
+		return projected
+	}
+	if len(m.criticalSourceFindings) == 0 {
+		m.criticalSourceFindings = m.resolveCriticalSourceFindings(projected)
+		m.criticalSourceIndex = 0
+	}
+	if len(m.criticalSourceFindings) == 0 || m.criticalSourceIndex >= len(m.criticalSourceFindings) {
+		return projected
+	}
+	return m.criticalSourceFindings[m.criticalSourceIndex]
+}
+
+func (m *model) resolveCriticalSourceFindings(projected storage.Finding) []storage.Finding {
+	metadata := findingMetadata(projected)
+	rawIDs, _ := metadata["supporting_finding_ids"].([]any)
+	if len(rawIDs) == 0 {
+		return nil
+	}
+	allowed := make(map[int64]bool, len(rawIDs))
+	for _, raw := range rawIDs {
+		switch value := raw.(type) {
+		case float64:
+			allowed[int64(value)] = true
+		case json.Number:
+			if parsed, err := value.Int64(); err == nil {
+				allowed[parsed] = true
+			}
+		}
+	}
+	result := make([]storage.Finding, 0, len(allowed))
+	for _, source := range m.findingAllRows {
+		if !allowed[source.ID] {
+			continue
+		}
+		if projected.AssessmentID > 0 && source.AssessmentID != projected.AssessmentID {
+			continue
+		}
+		result = append(result, source)
+	}
+	sort.SliceStable(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func (m *model) reanalyzePXEThief() tea.Cmd {
@@ -953,6 +1166,31 @@ func (m *model) cancelBatch() {
 	}
 }
 
+func (m *model) abortAll() tea.Cmd {
+	// Invalidate every pending plan before cancelling the active batch. Any late
+	// prompt or authorization result therefore belongs to the aborted run and is
+	// ignored rather than starting it again.
+	m.planGeneration++
+	m.inputPrompt = false
+	m.inputQueue = nil
+	m.approvalPrompt = false
+	m.approvalIndices = nil
+	m.elevationPrompt = false
+	m.elevationModules = nil
+	m.pendingIndices = nil
+	m.pendingName = ""
+	m.pending = plan{}
+	m.watcherAbortConfirm = false
+	m.watcherAbortIndex, m.watcherAbortName = 0, ""
+	if m.batch == nil || m.batchComplete() {
+		m.status = "no active batch to abort"
+		return nil
+	}
+	m.cancelBatch()
+	m.status = "cancelling all executions"
+	return nil
+}
+
 func (m *model) batchComplete() bool {
 	if m.batch == nil {
 		return !m.running
@@ -974,6 +1212,9 @@ func (m *model) closeWatcher() {
 }
 
 func (m *model) openWatcher() {
+	if m.findingsOnly() {
+		return
+	}
 	m.focusBeforeWatcher = m.focus
 	m.watcher = true
 	m.watcherFocus = focusModules
@@ -982,9 +1223,24 @@ func (m *model) openWatcher() {
 	m.refreshWatcher()
 }
 
+func (m *model) openWatcherForAutomaticBatch(name string) {
+	if name == "Default Enumeration" && m.running {
+		// A prior Watcher session may have selected a fixed row manually. A new
+		// automatic batch must resume following its active module instead of
+		// inheriting that stale presentation preference.
+		m.watcherAuto = true
+		m.watcherListCursor = 0
+		m.openWatcher()
+	}
+}
+
 // execute runs the highlighted module, and only that module. A module that needs
 // a value from the operator is asked before anything starts.
 func (m *model) execute(index int) tea.Cmd {
+	if m.findingsOnly() {
+		m.status = "FINDINGS ONLY: tool execution is disabled"
+		return nil
+	}
 	if index < 0 || index >= len(m.modules) {
 		return nil
 	}
@@ -1006,6 +1262,10 @@ func (m *model) execute(index int) tea.Cmd {
 // and a module the operator selected is an explicit decision, so no further
 // approval is asked for.
 func (m *model) executeSelected() tea.Cmd {
+	if m.findingsOnly() {
+		m.status = "FINDINGS ONLY: tool execution is disabled"
+		return nil
+	}
 	if len(m.selectedModuleIDs()) == 0 {
 		m.status = "no modules selected; press Space to select a module"
 		return nil
@@ -1050,12 +1310,34 @@ func (m *model) moveWatcherSelection(delta int) {
 // the plan needs are collected first, and sensitive modules are approved before
 // anything runs.
 func (m *model) executeAll() tea.Cmd {
+	if !m.canStartAutomaticEnumeration() {
+		if m.findingsOnly() {
+			m.status = "FINDINGS ONLY: tool execution is disabled"
+		}
+		return nil
+	}
 	return m.startPlan(m.globalPlan())
+}
+
+func (m *model) canStartAutomaticEnumeration() bool {
+	return m.mode != ModeFindingsOnly &&
+		(m.focus == focusNavigation || m.focus == focusModules) &&
+		!m.findingsView &&
+		!m.watcher &&
+		!m.running &&
+		!m.inputPrompt &&
+		!m.approvalPrompt &&
+		!m.elevationPrompt &&
+		!m.quitConfirm
 }
 
 // executeInput opens the prompt for the highlighted module's required values
 // without running it, so an operator can configure a module now and run it later.
 func (m *model) executeInput(index int) tea.Cmd {
+	if m.findingsOnly() {
+		m.status = "FINDINGS ONLY: tool execution is disabled"
+		return nil
+	}
 	if index < 0 || index >= len(m.modules) {
 		return nil
 	}
@@ -1075,10 +1357,15 @@ func (m *model) executeInput(index int) tea.Cmd {
 // cannot run without privileges is never started silently and never elevates itself:
 // the operator answers once for the run, and only that module is affected either way.
 func (m *model) startBatch(indices []int, name string) tea.Cmd {
+	if m.findingsOnly() {
+		m.status = "FINDINGS ONLY: tool execution is disabled"
+		return nil
+	}
 	m.batchElevation = map[string]bool{}
 	needed, reason := m.elevationNeeded(indices)
 	if len(needed) > 0 {
 		m.pendingIndices, m.pendingName, m.elevationModules = indices, name, needed
+		m.elevationGeneration = m.planGeneration
 		m.elevationPrompt = true
 		m.status = fmt.Sprintf("%s includes tools requiring local sudo privileges (%s): %s. Authenticate with sudo before starting? [y/N]",
 			name, strings.Join(needed, ", "), reason)
@@ -1116,6 +1403,9 @@ func (m *model) elevationNeeded(indices []int) ([]string, string) {
 // authentication marks the approved modules for this run only; a refused or cancelled
 // one skips exactly those modules.
 func (m *model) finishElevation(err error) tea.Cmd {
+	if (!m.elevationPrompt && !m.renewing && len(m.pendingIndices) == 0 && len(m.elevationModules) == 0) || m.elevationGeneration != m.planGeneration {
+		return nil
+	}
 	if m.renewing {
 		// A renewal happens while the batch is paused before a privileged module:
 		// there is nothing to start, only an answer to give.
@@ -1135,7 +1425,9 @@ func (m *model) finishElevation(err error) tea.Cmd {
 	}
 	indices, name := m.pendingIndices, m.pendingName
 	m.pendingIndices, m.pendingName, m.elevationModules = nil, "", nil
-	return m.runBatch(indices, name)
+	command := m.runBatch(indices, name)
+	m.openWatcherForAutomaticBatch(name)
+	return command
 }
 
 // declineElevation reports the decision and runs the rest of the batch, so an
@@ -1164,6 +1456,7 @@ func (m *model) declineElevation(message string) tea.Cmd {
 	}
 	// The status is set after the batch starts, because starting it reports "running".
 	command := m.runBatch(remaining, name)
+	m.openWatcherForAutomaticBatch(name)
 	m.status = message + "; running the remaining selected module(s)"
 	return command
 }
@@ -1179,6 +1472,10 @@ func contains(values []string, wanted string) bool {
 
 // runBatch starts the batch itself, with the operator's approval already established.
 func (m *model) runBatch(indices []int, name string) tea.Cmd {
+	if m.findingsOnly() {
+		m.status = "FINDINGS ONLY: tool execution is disabled"
+		return nil
+	}
 	items := make([]runner.BatchItem, 0, len(indices))
 	for _, index := range indices {
 		if index < 0 || index >= len(m.allModules) {
@@ -1213,6 +1510,7 @@ func (m *model) runBatch(indices []int, name string) tea.Cmd {
 	m.outputFollow = true
 	runtime := m.moduleRuntime()
 	runtime.Password = m.cfg.Password
+	runtime.AutomaticBatch = name == "Default Enumeration"
 	r := runner.Runner{Secrets: []string{m.cfg.Password}, BufferLimit: 512 * 1024}
 	m.batch.Start(m.ctx, items, runtime, m.cfg.ResultsRoot(), r)
 	return nil
@@ -1314,9 +1612,12 @@ func (m *model) recordBatchCommand(states []runner.BatchState, finished time.Tim
 					_ = gpoevidence.WriteSummary(resultsRoot, domain, executionID)
 					_ = gpoanalysis.WriteArtifacts(resultsRoot, domain, executionID, state.Result.Finished)
 				}
-				if findings != nil {
+				if findings != nil && state.Result.OutputPath != "" && state.Status != "skipped" {
 					module := state.Module
 					artifact := findingengine.DiscoverArtifactAt(module.Tool(), state.Result.OutputPath, state.Result.Finished)
+					if artifact == "" {
+						artifact = state.Result.OutputPath
+					}
 					if err := findings.Submit(findingengine.Job{AssessmentID: targetID, ExecutionID: executionID, SourceTool: module.Tool(), ArtifactPath: artifact, ObservedAt: state.Result.Finished}); err != nil && firstErr == nil {
 						firstErr = err
 					}
