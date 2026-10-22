@@ -2,8 +2,6 @@
   <img src="assets/pwnflow.png" width="400" alt="PwnFlow logo">
 </p>
 
-<h1 align="center">PwnFlow</h1>
-
 <p align="center"><strong>Active Directory Enumeration &amp; Security Evidence — From Discovery to Findings.</strong></p>
 
 ## What is PwnFlow?
@@ -47,7 +45,7 @@ The installer checks and installs supported external tools. Use its documented `
 ./bin/pwnflow --dc-ip <DOMAIN_CONTROLLER> --domain <DOMAIN> --username <USER>
 
 # Browse an existing assessment without network access or execution.
-./bin/pwnflow --findings --domain <DOMAIN> --dc-ip <DOMAIN_CONTROLLER>
+pwnflow --findings --domain local.lab
 ```
 
 Use `--module-options MODULE.KEY=VALUE` for supported module inputs. Avoid `--password` on shared systems because external tools may expose command-line arguments to local process inspection.
