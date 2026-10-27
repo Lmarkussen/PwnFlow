@@ -440,7 +440,10 @@ client; PwnFlow does not change the tmux prefix or install tmux keybindings.
 
 ### Specialist dependency repair
 
-Run `./install.sh` without flags to verify or install every supported dependency.
+Run `./install.sh` without flags to verify or install every supported dependency. Arch Linux and Kali Linux are supported; the installer reads `/etc/os-release`, uses pacman on Arch and APT on Kali, and stops on other distributions. The default run also checks Go against `go.mod` and Make for the documented build. Missing Go and Make are installed from the distro repository; an older existing Go is left in place and must be updated by its owner.
+
+Cargo/Rust and native build packages are required when RustHound-CE needs building; on Arch they are also installed if NetExec must be built from its upstream source. Python 3 with `venv`, pipx, and Git are checked and installed only when a selected tool needs them. Python tools use pipx or per-checkout virtual environments, avoiding system-wide pip installs. Package installs use sudo only for package-manager operations and require confirmation. Re-running the installer reuses working tools and reports failures with a nonzero exit status. On Arch, package resolution uses the current sync database; if it is stale, run `sudo pacman -Syu` and rerun the installer.
+
 The specialist Python tools use isolated pipx environments; the installer also
 checks `~/.local/bin` so PwnFlow can resolve them from a normal noninteractive
 launch. A failed specialist does not prevent later specialist attempts; the

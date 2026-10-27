@@ -21,7 +21,7 @@ Original assessment artifacts remain available for review, while Findings provid
 
 ## Installation
 
-Kali Linux is the supported installation target. Go 1.22 or newer is required for development builds.
+The installer supports **Arch Linux** and **Kali Linux**. It detects the distribution from `/etc/os-release`, uses pacman on Arch and APT on Kali, and stops on unsupported distributions. The default run checks or installs the supported external tools, then the documented build command compiles PwnFlow.
 
 ```bash
 git clone git@github.com:Lmarkussen/PwnFlow.git
@@ -30,7 +30,16 @@ cd PwnFlow
 make build
 ```
 
-The installer checks and installs supported external tools. Use its documented `--with-*` selectors when a targeted installation is required.
+The default installer run checks Go against the minimum version in `go.mod` and installs Go and Make when missing. It installs Cargo/Rust and native build dependencies only when RustHound-CE needs building or when Arch needs to build NetExec from its upstream source. Git must be available to clone PwnFlow; the installer also checks and installs Git, Python 3 with `venv`, or pipx when a selected external tool needs them. Python packages go into isolated pipx environments or each checkout's `.venv`; the installer does not run system-wide `sudo pip install`.
+
+System package installation uses sudo for only the package operation and asks before applying transactions. APT refreshes its package lists. On Arch, the installer uses the current pacman sync database and does not perform a partial upgrade; if packages cannot be resolved, run `sudo pacman -Syu` and rerun the installer. If an existing Go is older than the requirement, update the toolchain yourself and rerun; it will not overwrite a user-managed Go installation. A Kali system may need `sudo apt update` if APT cannot find packages.
+
+Use documented `--with-*` selectors for a targeted external-tool installation. Running `./install.sh` again is safe: compatible tools and prerequisites are reused, failed/missing tools are reported, and the final exit status is nonzero if a selected installation failed. After installation, verify the build and executable with:
+
+```bash
+make build
+./bin/pwnflow --help
+```
 
 ## Usage
 

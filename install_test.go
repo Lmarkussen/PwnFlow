@@ -73,6 +73,13 @@ func runInstallerSplit(t *testing.T, bin string, args ...string) (string, string
 	command := exec.Command("bash", append([]string{"install.sh"}, args...)...)
 	command.Dir = filepath.Dir("install.sh")
 	env := os.Environ()
+	if os.Getenv("PWNFlow_OS_RELEASE") == "" {
+		osRelease := filepath.Join(bin, "test-os-release")
+		if err := os.WriteFile(osRelease, []byte("ID=kali\nID_LIKE=debian\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		env = append(env, "PWNFlow_OS_RELEASE="+osRelease)
+	}
 	pathSet := false
 	for index, value := range env {
 		if strings.HasPrefix(value, "PATH=") {
@@ -90,6 +97,12 @@ func runInstallerSplit(t *testing.T, bin string, args ...string) (string, string
 	command.Stderr = &stderr
 	err := command.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+func writeBuildToolMocks(t *testing.T, bin string) {
+	t.Helper()
+	writeExecutable(t, bin, "go", `if [ "$1" = "version" ]; then echo 'go version go1.24.1 linux/amd64'; exit 0; fi; exit 0`)
+	writeExecutable(t, bin, "make", `if [ "$1" = "--version" ]; then echo 'GNU Make 4.4'; exit 0; fi; exit 0`)
 }
 
 func writeExecutable(t *testing.T, directory, name, body string) {
@@ -110,6 +123,7 @@ func writeAvailableSpaceMock(t *testing.T, bin string, availableKB int) {
 // helper the installer uses before and around the Cargo call.
 func writeCargoPrerequisiteMocks(t *testing.T, bin string) {
 	t.Helper()
+	writeExecutable(t, bin, "rustc", `echo 'rustc 1.95.0'; exit 0`)
 	for _, name := range []string{"cc", "clang", "pkg-config", "gcc"} {
 		writeExecutable(t, bin, name, `exit 0`)
 	}
@@ -252,6 +266,7 @@ func installNetworkToolLayouts(t *testing.T, bin, toolsRoot string) {
 
 func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
+	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
@@ -307,6 +322,155 @@ func TestInstallerSkipsExistingNetExecWithoutAPT(t *testing.T) {
 	}
 }
 
+func TestInstallerDetectsArchAndUsesPacman(t *testing.T) {
+	bin := t.TempDir()
+	osRelease := filepath.Join(t.TempDir(), "arch-os-release")
+	if err := os.WriteFile(osRelease, []byte("ID=arch\nID_LIKE=arch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PWNFlow_OS_RELEASE", osRelease)
+	t.Setenv("PWNFlow_ASSUME_YES", "1")
+	writeExecutable(t, bin, "pacman", `case "$1" in
+-Sp) echo 'masscan 1.3.2';;
+--sync) printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo "masscan 1.3.2"; exit 0; fi; exit 1' > "$MOCK_BIN/masscan"; /bin/chmod 700 "$MOCK_BIN/masscan";;
+-Q) echo 'masscan 1.3.2';;
+esac`)
+	t.Setenv("MOCK_BIN", bin)
+	writeFailingPackageManagerMocks(t, bin)
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; exec "$@"`)
+	output, err := runInstaller(t, bin, "--with-masscan")
+	if err != nil {
+		t.Fatalf("Arch pacman install failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"Detected distribution: arch", "Pacman preview for: masscan", "Masscan: Installed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInstallerReauthenticatesExpiredSudoForLaterPacmanTransaction(t *testing.T) {
+	bin := t.TempDir()
+	home := t.TempDir()
+	cargoHome := t.TempDir()
+	state := filepath.Join(t.TempDir(), "sudo-checks")
+	osRelease := filepath.Join(t.TempDir(), "arch-os-release")
+	if err := os.WriteFile(osRelease, []byte("ID=arch\nID_LIKE=arch\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PWNFlow_OS_RELEASE", osRelease)
+	t.Setenv("PWNFlow_ASSUME_YES", "1")
+	t.Setenv("HOME", home)
+	t.Setenv("CARGO_HOME", cargoHome)
+	t.Setenv("TMPDIR", "")
+	t.Setenv("SUDO_STATE", state)
+	writeCargoPrerequisiteMocks(t, bin)
+	writeAvailableSpaceMock(t, bin, ampleFreeSpaceKB)
+	writeExecutable(t, bin, "cargo", `case "$1" in
+--version) echo 'cargo 1.95.0';;
+install) /bin/mkdir -p "$CARGO_HOME/bin"; printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--help" ]; then exit 0; fi' > "$CARGO_HOME/bin/rusthound-ce"; /bin/chmod 700 "$CARGO_HOME/bin/rusthound-ce";;
+esac`)
+	writeExecutable(t, bin, "pacman", `case "$1" in
+-Q) case "$2" in cyrus-sasl) [ -f "$SUDO_STATE.cyrus" ] && echo 'cyrus-sasl 2.1.28-4' || exit 1;; masscan) [ -f "$SUDO_STATE.masscan" ] && echo 'masscan 1.3.2-2' || exit 1;; *) echo "$2 1.0-1";; esac;;
+-Sp) echo 'package preview';;
+--sync) case "$*" in *masscan*) /bin/touch "$SUDO_STATE.masscan"; printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo "masscan 1.3.2"; exit 0; fi; exit 1' > "$MOCK_BIN/masscan"; /bin/chmod 700 "$MOCK_BIN/masscan";; *) /bin/touch "$SUDO_STATE.cyrus";; esac;;
+esac`)
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; if [ "$1" = "-v" ]; then count=0; [ -f "$SUDO_STATE" ] && read -r count < "$SUDO_STATE"; count=$((count + 1)); printf '%s\n' "$count" > "$SUDO_STATE"; case "$count" in 1|4) exit 0;; *) exit 1;; esac; fi; fi; if [ "$1" = "-v" ]; then exit 0; fi; exec "$@"`)
+	t.Setenv("MOCK_BIN", bin)
+	output, err := runInstaller(t, bin, "--with-rusthound-ce", "--with-masscan")
+	if err != nil {
+		t.Fatalf("installer did not recover from expired sudo credentials: %v\n%s", err, output)
+	}
+	for _, want := range []string{"sudo privilege expired during dependency installation; authenticate again.", "Masscan installed:", "Masscan: Installed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInstallerRejectsUnsupportedDistribution(t *testing.T) {
+	bin := t.TempDir()
+	osRelease := filepath.Join(t.TempDir(), "ubuntu-os-release")
+	if err := os.WriteFile(osRelease, []byte("ID=ubuntu\nID_LIKE=debian\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PWNFlow_OS_RELEASE", osRelease)
+	writeFailingPackageManagerMocks(t, bin)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err == nil || !strings.Contains(output, "Unsupported distribution (ID=ubuntu, ID_LIKE=debian)") {
+		t.Fatalf("unsupported OS was not rejected clearly: err=%v\n%s", err, output)
+	}
+	if strings.Contains(output, "apt-should-not-run") || strings.Contains(output, "sudo-should-not-run") {
+		t.Fatalf("package manager was invoked on an unsupported OS:\n%s", output)
+	}
+}
+
+func TestInstallerInstallsMissingGoAndMakeThenVerifiesThem(t *testing.T) {
+	bin := t.TempDir()
+	installSCCMToolLayouts(t, bin)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeCertipyADCSMock(t, bin, "certipy-ad")
+	writeExecutable(t, bin, "masscan", `if [ "$1" = "--version" ]; then echo 'masscan 1.3.2'; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
+	writeFailingPackageManagerMocks(t, bin)
+	t.Setenv("PWNFlow_ASSUME_YES", "1")
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
+	writeExecutable(t, bin, "apt-get", `case " $* " in *" -s install "*) exit 0;; *" install -y "*) printf '%s\n' '#!/bin/sh' 'if [ "$1" = "version" ]; then echo "go version go1.24.1 linux/amd64"; exit 0; fi; exit 0' > "$MOCK_BIN/go"; printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo "GNU Make 4.4"; exit 0; fi; exit 0' > "$MOCK_BIN/make"; /bin/chmod 700 "$MOCK_BIN/go" "$MOCK_BIN/make";; esac; exit 0`)
+	t.Setenv("MOCK_BIN", bin)
+	output, err := runInstaller(t, bin)
+	if err != nil {
+		t.Fatalf("mock prerequisite installation failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"Go: missing; installation required.", "Make: missing or unusable; installation required.", "APT simulation for: golang-go make", "Build prerequisites verified: Go 1.24, GNU Make 4.4."} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInstallerRejectsOldGoWithoutReplacingIt(t *testing.T) {
+	bin := t.TempDir()
+	installSCCMToolLayouts(t, bin)
+	writeExecutable(t, bin, "go", `if [ "$1" = "version" ]; then echo 'go version go1.21.13 linux/amd64'; exit 0; fi`)
+	writeExecutable(t, bin, "make", `if [ "$1" = "--version" ]; then echo 'GNU Make 4.4'; exit 0; fi`)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeCertipyADCSMock(t, bin, "certipy-ad")
+	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
+	writeFailingPackageManagerMocks(t, bin)
+	output, err := runInstaller(t, bin)
+	if err == nil || !strings.Contains(output, "Go 1.21 is installed but PwnFlow requires Go 1.22 or newer") {
+		t.Fatalf("old Go was not rejected: err=%v\n%s", err, output)
+	}
+	if strings.Contains(output, "apt-should-not-run") {
+		t.Fatalf("installer attempted to replace the existing Go toolchain:\n%s", output)
+	}
+}
+
+func TestInstallerInstallsMissingPipxWithoutSystemPip(t *testing.T) {
+	bin := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MOCK_BIN", bin)
+	t.Setenv("PWNFlow_ASSUME_YES", "1")
+	writeExecutable(t, bin, "python3", `if [ "$1" = "--version" ]; then echo 'Python 3.13.1'; exit 0; fi; if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then exit 0; fi; exit 1`)
+	writeFailingPackageManagerMocks(t, bin)
+	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
+	writeExecutable(t, bin, "pipx-template", `if [ "$1" = "--version" ]; then echo 1.7.1; exit 0; fi; if [ "$1" = "install" ]; then /bin/mkdir -p "$HOME/.local/bin"; /bin/cp "$MOCK_BIN/mssqlrelay-template" "$HOME/.local/bin/mssqlrelay"; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "mssqlrelay-template", `if [ "$1" = "--help" ]; then echo Microsoft MSSQL Relay; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "apt-get", `case " $* " in *" -s install "*) exit 0;; *" install -y pipx "*) /bin/cp "$MOCK_BIN/pipx-template" "$MOCK_BIN/pipx";; esac; exit 0`)
+	output, err := runInstaller(t, bin, "--with-mssqlrelay")
+	if err != nil {
+		t.Fatalf("mock pipx bootstrap failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"Python 3: already available", "pipx: missing or unusable", "APT simulation for: pipx", "mssqlrelay: Installed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 // BloodHound CE is the separate graph application for importing and viewing
 // collected data. The installer must not install it, and the retired flags must
 // fail loudly instead of silently doing nothing.
@@ -334,6 +498,7 @@ func TestInstallerRefusesRetiredBloodHoundFlagsWithoutInstalling(t *testing.T) {
 
 func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	bin := t.TempDir()
+	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
@@ -423,6 +588,7 @@ func TestInstallerDetectsRustHoundInCargoBinWithoutRunningCargo(t *testing.T) {
 --version) echo 'cargo 1.95.0';;
 install) : > "$CARGO_RAN_MARKER";;
 esac`)
+	writeExecutable(t, bin, "rustc", `echo 'rustc 1.95.0'; exit 0`)
 	if err := os.MkdirAll(filepath.Join(cargoHome, "bin"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -453,10 +619,17 @@ func TestInstallerHelpDocumentsStandaloneDefaultAndFlags(t *testing.T) {
 			t.Errorf("help missing %s", want)
 		}
 	}
-	for _, unwanted := range []string{"--with-bloodhound", "pipx"} {
+	for _, unwanted := range []string{"--with-bloodhound", "--with-sphunter", "SPHunter", "pipx"} {
 		if strings.Contains(output, unwanted) {
 			t.Errorf("help still advertises %s: %s", unwanted, output)
 		}
+	}
+}
+
+func TestInstallerRejectsRemovedSPHunterSelector(t *testing.T) {
+	output, err := runInstaller(t, t.TempDir(), "--with-sphunter")
+	if err == nil || !strings.Contains(output, "Unknown option: --with-sphunter") {
+		t.Fatalf("removed SPHunter selector was not rejected: err=%v\n%s", err, output)
 	}
 }
 
@@ -541,6 +714,7 @@ func TestInstallerReportsInsufficientCargoBuildSpaceWithoutRunningCargo(t *testi
 --version) echo 'cargo 1.95.0';;
 install) : > "$CARGO_RAN_MARKER";;
 esac`)
+	writeExecutable(t, bin, "rustc", `echo 'rustc 1.95.0'; exit 0`)
 	for _, name := range []string{"cc", "clang", "pkg-config", "gcc"} {
 		writeExecutable(t, bin, name, `exit 0`)
 	}
@@ -668,6 +842,7 @@ func TestInstallerRustHoundAddsOnlyMissingDocumentedPrerequisites(t *testing.T) 
 --version) echo 'cargo 1.95.0';;
 install) /bin/mkdir -p "$CARGO_HOME/bin"; printf '%s\n' '#!/bin/sh' 'exit 0' > "$CARGO_HOME/bin/rusthound-ce"; /bin/chmod 700 "$CARGO_HOME/bin/rusthound-ce";;
 esac`)
+	writeExecutable(t, bin, "rustc", `echo 'rustc 1.95.0'; exit 0`)
 	for _, name := range []string{"cc", "clang", "pkg-config", "gcc"} {
 		writeExecutable(t, bin, name, `exit 0`)
 	}
@@ -1130,7 +1305,8 @@ func TestInstallerContinuesSpecialistAttemptsAfterMSSQLRelayFailure(t *testing.T
 	bin := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	logPath := filepath.Join(t.TempDir(), "pipx.log")
-	writeExecutable(t, bin, "pipx", fmt.Sprintf("echo \\\"$*\\\" >> %q; exit 42", logPath))
+	writeExecutable(t, bin, "python3", `if [ "$1" = "--version" ]; then echo 'Python 3.13.1'; exit 0; fi; if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "pipx", fmt.Sprintf(`if [ "$1" = "--version" ]; then echo '1.7.1'; exit 0; fi; echo "$*" >> %q; exit 42`, logPath))
 	output, _, err := runInstallerSplit(t, bin, "--with-mssqlrelay", "--with-mssqlpwner", "--with-gpoparser", "--with-ghostspn")
 	if err == nil {
 		t.Fatalf("installer unexpectedly succeeded after injected failure:\n%s", output)

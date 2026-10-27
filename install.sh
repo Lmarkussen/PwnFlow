@@ -14,8 +14,8 @@ install_mssqlpwner=0
 install_gpoparser=0
 install_ghostspn=0
 install_masscan=0
-install_sphunter=0
 install_failures=0
+install_all_requested=0
 netexec_status="Skipped"
 rusthound_ce_status="Skipped"
 certipy_status="Skipped"
@@ -29,9 +29,12 @@ mssqlpwner_status="Skipped"
 gpoparser_status="Skipped"
 ghostspn_status="Skipped"
 masscan_status="Skipped"
-sphunter_status="Skipped"
 cargo_status="Skipped"
 sudo_authenticated=0
+installer_os_release="${PWNFlow_OS_RELEASE:-/etc/os-release}"
+installer_distribution=""
+installer_id=""
+installer_id_like=""
 for argument in "$@"; do
   case "$argument" in
     --with-netexec) install_netexec_requested=1 ;;
@@ -47,7 +50,6 @@ for argument in "$@"; do
     --with-gpoparser) install_gpoparser=1 ;;
     --with-ghostspn) install_ghostspn=1 ;;
     --with-masscan) install_masscan=1 ;;
-    --with-sphunter) install_sphunter=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
       echo "BloodHound CE is the separate graph application and is installed with its official application procedure." >&2
@@ -55,23 +57,54 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan] [--with-sphunter]"
+      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan]"
       echo ""
-      echo "Installs the supported Kali dependencies: NetExec, RustHound-CE, and"
+      echo "Installs supported dependencies on Arch Linux or Kali Linux: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
       echo "tooling SCCMhunter and PXEThief, and the network assessment tools"
-      echo "NetworkHound, RelayKing, Masscan and SPHunter. NetworkHound, RelayKing and SPHunter are source checkouts with their own virtual"
+      echo "NetworkHound, RelayKing, and Masscan. NetworkHound and RelayKing are source checkouts with their own virtual"
       echo "environments. No shell activation is required."
-      echo "Kali Linux is the only supported installation target."
+      echo "Supported targets: Arch Linux (pacman) and Kali Linux (APT)."
       exit 0
       ;;
     *) echo "Unknown option: $argument" >&2; exit 2 ;;
   esac
 done
 
+detect_distribution() {
+  if [[ ! -r "$installer_os_release" ]]; then
+    echo "Cannot read ${installer_os_release}; distribution detection requires /etc/os-release." >&2
+    return 1
+  fi
+  while IFS='=' read -r key value; do
+    value="${value%\"}"; value="${value#\"}"
+    value="${value%\'}"; value="${value#\'}"
+    case "$key" in
+      ID) installer_id="${value,,}" ;;
+      ID_LIKE) installer_id_like="${value,,}" ;;
+    esac
+  done < "$installer_os_release"
+  case "$installer_id" in
+    kali) installer_distribution="kali" ;;
+    arch|omarchy) installer_distribution="arch" ;;
+    *)
+      echo "Unsupported distribution (ID=${installer_id:-unknown}, ID_LIKE=${installer_id_like:-none}). Supported targets are Arch Linux and Kali Linux." >&2
+      return 1
+      ;;
+  esac
+  echo "Detected distribution: ${installer_distribution} (ID=${installer_id}${installer_id_like:+, ID_LIKE=${installer_id_like}})"
+}
+
+if [[ $# -gt 0 && " $* " == *" --help "* ]]; then
+  : # Help remains usable without requiring a supported host.
+else
+  detect_distribution || exit 1
+fi
+
 # The standalone default checks and installs every supported dependency.
 # Explicit flags remain available for selective tool-group installation.
 if [[ $# -eq 0 ]]; then
+  install_all_requested=1
   install_netexec_requested=1
   install_rusthound_ce=1
   install_certipy=1
@@ -95,12 +128,11 @@ ensure_sudo_authenticated() {
     if sudo -n -v >/dev/null 2>&1; then
       return 0
     fi
-    echo "sudo privilege expired during dependency installation; authenticate again in this terminal." >&2
+    echo "sudo privilege expired during dependency installation; authenticate again." >&2
     sudo_authenticated=0
-    return 1
   fi
   if ! command -v sudo >/dev/null 2>&1; then
-    echo "APT installation requires sudo, but sudo is unavailable." >&2
+    echo "System package installation requires sudo, but sudo is unavailable." >&2
     return 1
   fi
   if sudo -n -v >/dev/null 2>&1; then
@@ -142,12 +174,91 @@ run_apt() {
 run_apt_install() {
   local packages=("$@")
   echo "APT simulation for: ${packages[*]}"
-  run_apt -s install "${packages[@]}"
+  run_apt -s install "${packages[@]}" || { echo "APT could not resolve the requested packages: ${packages[*]}" >&2; return 1; }
   if ! confirm_install "Apply this APT transaction?"; then
     echo "APT transaction cancelled." >&2
     return 1
   fi
   run_apt install -y "${packages[@]}"
+}
+
+arch_package_for() {
+  case "$1" in
+    build-essential) echo base-devel ;;
+    pkg-config) echo pkgconf ;;
+    libclang-dev) echo clang ;;
+    libgssapi-krb5-2|libkrb5-dev) echo krb5 ;;
+    libsasl2-modules-gssapi-mit) echo cyrus-sasl ;;
+    python3) echo python ;;
+    python3-venv) echo python ;;
+    python3-pip) echo python-pip ;;
+    python3-pipx|pipx) echo python-pipx ;;
+    golang-go) echo go ;;
+    cargo) echo rust ;;
+    *) echo "$1" ;;
+  esac
+}
+
+map_packages() {
+  local package
+  for package in "$@"; do
+    if [[ "$installer_distribution" == arch ]]; then
+      arch_package_for "$package"
+    else
+      printf '%s\n' "$package"
+    fi
+  done
+}
+
+package_manager_available() {
+  if [[ "$installer_distribution" == arch ]]; then command -v pacman >/dev/null 2>&1
+  else command -v apt-get >/dev/null 2>&1
+  fi
+}
+
+run_system_update() {
+  if [[ "$installer_distribution" == kali ]]; then
+    run_apt update
+  else
+    echo "Using the current pacman sync database; no partial system upgrade will be run."
+    echo "If package resolution fails, run 'sudo pacman -Syu' and rerun this installer."
+  fi
+}
+
+run_system_install() {
+  local packages=() package
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    case " ${packages[*]} " in *" ${package} "*) ;; *) packages+=("$package") ;; esac
+  done < <(map_packages "$@")
+  ((${#packages[@]})) || return 0
+  if [[ "$installer_distribution" == kali ]]; then
+    run_apt_install "${packages[@]}"
+    return
+  fi
+  echo "Pacman preview for: ${packages[*]}"
+  pacman -Sp --needed --print-format '%n %v' "${packages[@]}" || { echo "Pacman could not resolve required packages: ${packages[*]}" >&2; return 1; }
+  if ! confirm_install "Apply this pacman transaction?"; then
+    echo "Pacman transaction cancelled." >&2
+    return 1
+  fi
+  if [[ ${EUID} -eq 0 ]]; then
+    pacman --sync --needed --noconfirm "${packages[@]}" || { echo "Pacman failed to install: ${packages[*]}" >&2; return 1; }
+  else
+    ensure_sudo_authenticated || return 1
+    if ! sudo -n pacman --sync --needed --noconfirm "${packages[@]}"; then
+      if ! sudo -n -v >/dev/null 2>&1; then
+        echo "sudo privilege expired before pacman could apply the transaction; authenticate again." >&2
+        sudo_authenticated=0
+        ensure_sudo_authenticated || return 1
+        sudo -n pacman --sync --needed --noconfirm "${packages[@]}" || { echo "Pacman failed to install: ${packages[*]}" >&2; return 1; }
+      else
+        echo "Pacman failed to install: ${packages[*]}" >&2
+        return 1
+      fi
+    fi
+  fi
+  echo "Pacman installed required packages: ${packages[*]}"
 }
 
 prepend_path_once() {
@@ -262,12 +373,98 @@ cargo_build_directory() {
 }
 
 package_installed() {
-  command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
+  if [[ "$installer_distribution" == arch ]]; then
+    command -v pacman >/dev/null 2>&1 && pacman -Q "$(arch_package_for "$1")" >/dev/null 2>&1
+  else
+    command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
+  fi
+}
+
+version_at_least() {
+  local actual="$1" required="$2" actual_major actual_minor required_major required_minor
+  actual_major="${actual%%.*}"; actual_minor="${actual#*.}"; actual_minor="${actual_minor%%.*}"
+  required_major="${required%%.*}"; required_minor="${required#*.}"; required_minor="${required_minor%%.*}"
+  [[ "$actual_major" =~ ^[0-9]+$ && "$actual_minor" =~ ^[0-9]+$ && "$required_major" =~ ^[0-9]+$ && "$required_minor" =~ ^[0-9]+$ ]] || return 1
+  (( actual_major > required_major || (actual_major == required_major && actual_minor >= required_minor) ))
+}
+
+ensure_project_build_tools() {
+  local required_go actual_go="" go_output make_output make_line missing=() key value
+  echo "Checking Go (required by go.mod) and Make (required by the documented build)."
+  while read -r key value _; do [[ "$key" == go ]] && { required_go="$value"; break; }; done < go.mod
+  [[ -n "$required_go" ]] || required_go="1.22"
+  if command -v go >/dev/null 2>&1; then
+    go_output="$(go version 2>/dev/null)"; go_output="${go_output#* go}"
+    actual_go="${go_output%% *}"; actual_go="${actual_go%.*}"
+    if ! version_at_least "$actual_go" "$required_go"; then
+      echo "Go ${actual_go:-unknown} is installed but PwnFlow requires Go ${required_go} or newer. Update your managed Go toolchain, then rerun; the installer will not replace it." >&2
+      return 1
+    fi
+    echo "Go: already available ($(go version))."
+  else
+    echo "Go: missing; installation required."
+    missing+=(golang-go)
+  fi
+  if command -v make >/dev/null 2>&1 && make_output="$(make --version 2>/dev/null)" && [[ -n "$make_output" ]]; then
+    IFS= read -r make_line <<< "$make_output"
+    echo "Make: already available (${make_line})."
+  else
+    echo "Make: missing or unusable; installation required."
+    missing+=(make)
+  fi
+  if ((${#missing[@]})); then
+    package_manager_available || { echo "Cannot install ${missing[*]}: selected package manager is unavailable." >&2; return 1; }
+    run_system_update || { echo "Package database update failed; could not install ${missing[*]}." >&2; return 1; }
+    run_system_install "${missing[@]}" || { echo "Package installation failed for ${missing[*]}; install them manually and rerun." >&2; return 1; }
+  fi
+  command -v go >/dev/null && command -v make >/dev/null || { echo "Go or Make is still unavailable after installation." >&2; return 1; }
+  go_output="$(go version 2>/dev/null)"; go_output="${go_output#* go}"
+  actual_go="${go_output%% *}"; actual_go="${actual_go%.*}"
+  version_at_least "$actual_go" "$required_go" || { echo "Installed Go ${actual_go:-unknown} is below required ${required_go}. Update Go manually." >&2; return 1; }
+  make_output="$(make --version 2>/dev/null)" || { echo "Make remains unusable after installation." >&2; return 1; }
+  [[ -n "$make_output" ]] || { echo "Make remains unusable after installation." >&2; return 1; }
+  IFS= read -r make_line <<< "$make_output"
+  echo "Build prerequisites verified: Go ${actual_go}, ${make_line}."
+}
+
+ensure_pipx() {
+  echo "Checking pipx and Python 3."
+  ensure_python_venv || return 1
+  if ! command -v pipx >/dev/null 2>&1 || ! pipx --version >/dev/null 2>&1; then
+    echo "pipx: missing or unusable; installing it from the distribution repository."
+    package_manager_available || { echo "Cannot install pipx: package manager unavailable." >&2; return 1; }
+    run_system_update && run_system_install pipx || { echo "pipx installation failed; install pipx using ${installer_distribution}'s package manager." >&2; return 1; }
+  else
+    echo "pipx: already available ($(pipx --version))."
+  fi
+  command -v pipx >/dev/null 2>&1 && pipx --version >/dev/null 2>&1 || { echo "pipx did not become available on PATH after installation." >&2; return 1; }
+}
+
+ensure_git() {
+  if command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1; then
+    echo "Git: already available ($(git --version))."
+    return 0
+  fi
+  echo "Git: missing; installation required."
+  package_manager_available || { echo "Cannot install git: selected package manager is unavailable." >&2; return 1; }
+  run_system_update && run_system_install git || { echo "Git installation failed; install git manually and rerun." >&2; return 1; }
+  command -v git >/dev/null 2>&1 && git --version >/dev/null 2>&1 || { echo "Git remains unavailable after installation." >&2; return 1; }
+}
+
+ensure_python_venv() {
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -m venv --help >/dev/null 2>&1; then
+    echo "Python 3 with venv support is missing; installation required."
+    package_manager_available || { echo "Cannot install Python: package manager unavailable." >&2; return 1; }
+    run_system_update && run_system_install python3 python3-venv || { echo "Python 3 installation failed; install Python 3 with venv support manually." >&2; return 1; }
+  else
+    echo "Python 3: already available ($(python3 --version))."
+  fi
+  command -v python3 >/dev/null 2>&1 && python3 -m venv --help >/dev/null 2>&1 || { echo "Python 3 venv support is still unavailable after installation." >&2; return 1; }
 }
 
 ensure_cargo_dependencies() {
   local missing=()
-  if ! command -v cargo >/dev/null 2>&1 || ! cargo --version >/dev/null 2>&1; then
+  if ! command -v cargo >/dev/null 2>&1 || ! cargo --version >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1 || ! rustc --version >/dev/null 2>&1; then
     missing+=(cargo)
   fi
   command -v cc >/dev/null 2>&1 || missing+=(build-essential)
@@ -281,22 +478,22 @@ ensure_cargo_dependencies() {
   if [[ ${#missing[@]} -eq 0 ]]; then
     cargo_status="Already installed"
     refresh_cargo_path
-    echo "Cargo available: $(cargo --version 2>/dev/null || true)"
+    echo "Rust toolchain available: $(rustc --version 2>/dev/null); $(cargo --version 2>/dev/null)"
     return 0
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "RustHound-CE requires Cargo and build dependencies: ${missing[*]}; APT is unavailable." >&2
+  if ! package_manager_available; then
+    echo "RustHound-CE requires Cargo and build dependencies: ${missing[*]}, but the selected package manager is unavailable." >&2
     return 1
   fi
-  run_apt update
-  run_apt_install "${missing[@]}"
-  if ! command -v cargo >/dev/null 2>&1 || ! cargo --version >/dev/null 2>&1; then
-    echo "APT completed but did not provide a functional Cargo executable." >&2
+  run_system_update || { echo "Package database update failed." >&2; return 1; }
+  run_system_install "${missing[@]}" || { echo "Could not install RustHound-CE prerequisites: ${missing[*]}" >&2; return 1; }
+  if ! command -v cargo >/dev/null 2>&1 || ! cargo --version >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1 || ! rustc --version >/dev/null 2>&1; then
+    echo "Package installation completed but did not provide a functional Rust/Cargo toolchain." >&2
     return 1
   fi
   cargo_status="Installed"
   refresh_cargo_path
-  echo "Cargo available: $(cargo --version 2>/dev/null || true)"
+  echo "Rust toolchain available: $(rustc --version 2>/dev/null); $(cargo --version 2>/dev/null)"
 }
 
 netexec_functional() {
@@ -314,13 +511,30 @@ install_netexec() {
     fi
     return 0
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "No supported package manager found. Install NetExec (nxc) using Kali's package manager." >&2
+  if [[ "$installer_distribution" == arch ]]; then
+    ensure_pipx || return 1
+    command -v git >/dev/null 2>&1 || { run_system_update && run_system_install git || return 1; }
+    local arch_build_packages=()
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then arch_build_packages+=(rust); fi
+    if ! command -v cc >/dev/null 2>&1 || ! command -v gcc >/dev/null 2>&1; then arch_build_packages+=(base-devel); fi
+    if ((${#arch_build_packages[@]})); then
+      echo "NetExec build prerequisites missing: ${arch_build_packages[*]}"
+      run_system_install "${arch_build_packages[@]}" || { echo "Could not install the Rust/C build prerequisites needed for NetExec." >&2; return 1; }
+    fi
+    echo "Installing NetExec with pipx in an isolated environment."
+    pipx install git+https://github.com/Pennyw0rth/NetExec || return 1
+    netexec_functional || { echo "NetExec installation did not provide a working nxc --help capability" >&2; return 1; }
+    netexec_status="Installed"
+    echo "NetExec installed and functional: $(command -v nxc)"
+    return 0
+  fi
+  if ! package_manager_available; then
+    echo "APT is unavailable; install NetExec from Kali's APT repository." >&2
     return 1
   fi
   echo "Installing missing NetExec from the Kali APT repository."
-  run_apt update
-  run_apt_install netexec
+  run_system_update || { echo "APT update failed; NetExec was not installed." >&2; return 1; }
+  run_system_install netexec || { echo "NetExec package installation failed." >&2; return 1; }
   netexec_functional || { echo "NetExec installation did not provide a working nxc --help capability" >&2; return 1; }
   echo "NetExec installed: $(nxc --help 2>&1 | head -n 1)"
   netexec_status="Installed"
@@ -335,7 +549,11 @@ masscan_functional() {
 
 masscan_version() {
   local version
-  version="$(dpkg-query -W -f='${Version}' masscan 2>/dev/null || true)"
+  if [[ "$installer_distribution" == arch ]]; then
+    version="$(pacman -Q masscan 2>/dev/null || true)"
+  else
+    version="$(dpkg-query -W -f='${Version}' masscan 2>/dev/null || true)"
+  fi
   if [[ -z "${version}" ]]; then
     version="version unavailable"
   fi
@@ -348,14 +566,14 @@ install_masscan() {
     masscan_status="Already installed"
     return 0
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "No supported package manager found. Install Masscan using Kali's package manager." >&2
+  if ! package_manager_available; then
+    echo "The selected package manager is unavailable; install Masscan manually." >&2
     return 1
   fi
-  echo "Installing missing Masscan from the Kali APT repository."
-  run_apt update
-  run_apt_install masscan
-  masscan_functional || { echo "Masscan installation did not provide a working masscan --version capability" >&2; return 1; }
+  echo "Installing missing Masscan from the ${installer_distribution} repository."
+  run_system_update || { masscan_status="Failed (package database update failed)"; echo "Package database update failed; Masscan was not installed." >&2; return 1; }
+  run_system_install masscan || { masscan_status="Failed (package install or sudo authentication failed)"; echo "Masscan package installation failed. Reauthenticate if sudo expired, then rerun ./install.sh --with-masscan." >&2; return 1; }
+  masscan_functional || { masscan_status="Failed (package installed but executable verification failed)"; echo "Masscan installation did not provide a working masscan --version capability" >&2; return 1; }
   echo "Masscan installed: $(masscan_version)"
   masscan_status="Installed"
 }
@@ -495,27 +713,30 @@ install_certipy() {
     certipy_status="Failed (the installed certipy-ad is not AD CS Certipy)"
     return 1
   fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "No supported package manager found. Install Certipy (AD CS) with Kali's certipy-ad package." >&2
-    certipy_status="Failed (APT is unavailable)"
-    return 1
-  fi
-  echo "Installing missing Certipy (AD CS) from the Kali APT repository."
-  if ! run_apt update; then
-    certipy_status="Failed (APT update failed)"
-    return 1
-  fi
-  if ! run_apt_install certipy-ad; then
-    certipy_status="Failed (APT transaction not applied)"
-    return 1
+  if [[ "$installer_distribution" == arch ]]; then
+    ensure_pipx || return 1
+    command -v git >/dev/null 2>&1 || { run_system_update && run_system_install git || return 1; }
+    echo "Installing Certipy (AD CS) with pipx in an isolated environment."
+    if ! pipx install certipy-ad; then certipy_status="Failed (pipx install failed)"; return 1; fi
+  else
+    if ! package_manager_available; then
+      echo "APT is unavailable; install Certipy (AD CS) manually." >&2
+      certipy_status="Failed (APT unavailable)"
+      return 1
+    fi
+    echo "Installing missing Certipy (AD CS) from the Kali APT repository."
+    if ! run_system_update || ! run_system_install certipy-ad; then
+      certipy_status="Failed (APT transaction failed)"
+      return 1
+    fi
   fi
   if ! executable="$(certipy_candidate)"; then
-    echo "APT completed but no functional AD CS Certipy executable was found on PATH (expected certipy-ad)." >&2
-    certipy_status="Failed (APT completed without a functional certipy-ad)"
+    echo "Installation completed but no functional AD CS Certipy executable was found on PATH." >&2
+    certipy_status="Failed (installation did not provide functional Certipy)"
     return 1
   fi
   if ! certipy_functional "$executable"; then
-    echo "APT installed ${executable}, but it does not document the find arguments PwnFlow uses." >&2
+    echo "The package manager installed ${executable}, but it does not document the find arguments PwnFlow uses." >&2
     certipy_status="Failed (${executable} does not support the required find arguments)"
     return 1
   fi
@@ -541,7 +762,6 @@ pxethief_root() { printf '%s/PXEThief\n' "$(pwnflow_tools_root)"; }
 networkhound_root() { printf '%s/NetworkHound\n' "$(pwnflow_tools_root)"; }
 relayking_root() { printf '%s/RelayKing\n' "$(pwnflow_tools_root)"; }
 sccmsecrets_root() { printf '%s/SCCMSecrets\n' "$(pwnflow_tools_root)"; }
-sphunter_root() { printf '%s/SPHunter\n' "$(pwnflow_tools_root)"; }
 
 install_pipx_source() {
   local package="$1" url="$2" executable="$3" status_name="$4" expected="$5" current help
@@ -551,11 +771,11 @@ install_pipx_source() {
     printf -v "${status_name}" '%s' "Already installed"
     return 0
   fi
-  if ! command -v pipx >/dev/null 2>&1; then
-    echo "pipx is required for ${package}; install pipx and re-run." >&2
+  if ! ensure_pipx; then
     printf -v "${status_name}" '%s' "Failed (pipx unavailable)"
     return 1
   fi
+  prepend_path_once "${HOME}/.local/bin"
   echo "Installing ${package} in an isolated pipx environment."
   if ! pipx install "${url}"; then
     printf -v "${status_name}" '%s' "Failed (pipx install failed)"
@@ -599,9 +819,9 @@ install_sccmsecrets() {
     echo "SCCMSecrets checkout already present at ${root} (live workflows remain disabled)."
     return 0
   fi
-  command -v git >/dev/null 2>&1 || { sccmsecrets_status="Failed (git unavailable)"; return 1; }
+  ensure_git || { sccmsecrets_status="Failed (git unavailable)"; return 1; }
   mkdir -p "$(dirname "${root}")"
-  git clone --branch master https://github.com/synacktiv/SCCMSecrets.git "${root}"
+  git clone --branch master https://github.com/synacktiv/SCCMSecrets.git "${root}" || { sccmsecrets_status="Failed (git clone failed)"; return 1; }
   ensure_checkout_environment "${root}"
   "${root}/.venv/bin/python3" "${root}/SCCMSecrets.py" --help >/dev/null
   sccmsecrets_status="Installed"
@@ -629,10 +849,7 @@ checkout_functional() {
 ensure_checkout_environment() {
   local root="$1" diagnostics
   if [[ ! -x "${root}/.venv/bin/python3" ]]; then
-    if ! command -v python3 >/dev/null 2>&1; then
-      echo "python3 is unavailable; install it before installing ${root}." >&2
-      return 1
-    fi
+    if ! ensure_python_venv; then return 1; fi
     echo "Creating the virtual environment in ${root}/.venv"
     if ! python3 -m venv "${root}/.venv"; then
       echo "python3 -m venv failed for ${root}." >&2
@@ -649,39 +866,6 @@ ensure_checkout_environment() {
     return 1
   fi
   return 0
-}
-
-install_sphunter() {
-  local root interpreter script_dir
-  root="$(sphunter_root)"
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -d "${root}" && ! -d "${root}/.git" ]]; then
-    echo "${root} exists but is not an SPHunter checkout; move it aside and re-run." >&2
-    sphunter_status="Failed (${root} is not a git checkout)"
-    return 1
-  fi
-  if [[ ! -d "${root}/.git" ]]; then
-    command -v git >/dev/null 2>&1 || { sphunter_status="Failed (git unavailable)"; return 1; }
-    mkdir -p "$(dirname "${root}")"
-    echo "Cloning SPHunter into ${root}."
-    git clone https://github.com/Lmarkussen/sphunter.git "${root}" || { sphunter_status="Failed (git clone failed)"; return 1; }
-  fi
-  if ! git -C "${root}" checkout --detach 3696bc2edba1975d2e15b355e3a673cf259540bf; then
-    echo "The SPHunter checkout does not contain the validated revision." >&2
-    sphunter_status="Failed (required revision unavailable)"
-    return 1
-  fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    sphunter_status="Failed (python3 unavailable)"
-    return 1
-  fi
-  [[ -x "${root}/.venv/bin/python3" ]] || python3 -m venv "${root}/.venv"
-  "${root}/.venv/bin/pip3" install -e "${root}" || { sphunter_status="Failed (Python environment could not be prepared)"; return 1; }
-  cp "${script_dir}/internal/modules/pwntools/sphunter_entry.py" "${root}/sphunter_entry.py"
-  interpreter="${root}/.venv/bin/python3"
-  "${interpreter}" "${root}/sphunter_entry.py" --help >/dev/null || { sphunter_status="Failed (SPHunter capability probe failed)"; return 1; }
-  sphunter_status="Installed"
-  echo "SPHunter installed at ${root} (${interpreter} ${root}/sphunter_entry.py)"
 }
 
 # sccmhunter_workflow_supported requires the checkout to document the find options
@@ -728,7 +912,7 @@ install_sccmhunter() {
     fi
     echo "Reusing the existing SCCMhunter checkout at ${root}."
   else
-    if ! command -v git >/dev/null 2>&1; then
+    if ! ensure_git; then
       echo "git is unavailable; SCCMhunter is installed from its repository." >&2
       sccmhunter_status="Failed (git is unavailable)"
       return 1
@@ -784,7 +968,7 @@ install_pxethief() {
   if [[ -f "${root}/.pwnflow-pr11" ]]; then
     echo "The PXEThief checkout at ${root} is incomplete or no longer at its recorded revision; re-fetching pull/11."
   fi
-  if ! command -v git >/dev/null 2>&1; then
+  if ! ensure_git; then
     echo "git is unavailable; PXEThief is installed from its repository." >&2
     pxethief_status="Failed (git is unavailable)"
     return 1
@@ -884,7 +1068,7 @@ install_networkhound() {
     networkhound_status="Already installed"
     return 0
   fi
-  if ! command -v git >/dev/null 2>&1; then
+  if ! ensure_git; then
     echo "git is unavailable; NetworkHound is installed from its repository." >&2
     networkhound_status="Failed (git is unavailable)"
     return 1
@@ -934,7 +1118,7 @@ install_relayking() {
     relayking_status="Already installed"
     return 0
   fi
-  if ! command -v git >/dev/null 2>&1; then
+  if ! ensure_git; then
     echo "git is unavailable; RelayKing is installed from its repository." >&2
     relayking_status="Failed (git is unavailable)"
     return 1
@@ -988,7 +1172,6 @@ print_summary() {
   echo "  gpoParser: ${gpoparser_status}"
   echo "  ghostSPN: ${ghostspn_status}"
   echo "  Masscan: ${masscan_status}"
-  echo "  SPHunter: ${sphunter_status}"
 }
 
 run_install_attempt() {
@@ -1002,6 +1185,7 @@ run_install_attempt() {
   fi
 }
 
+if [[ ${install_all_requested} -eq 1 ]] && ! ensure_project_build_tools; then install_failures=1; fi
 if [[ ${install_netexec_requested} -eq 1 ]]; then run_install_attempt install_netexec netexec_status; fi
 if [[ ${install_rusthound_ce} -eq 1 ]]; then run_install_attempt install_rusthound_ce rusthound_ce_status; fi
 if [[ ${install_certipy} -eq 1 ]]; then run_install_attempt install_certipy certipy_status; fi
@@ -1015,7 +1199,6 @@ if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_sour
 if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
 if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git@f5df2cd072d9c3ba81b01590e433b21449d91394 ghostspn ghostspn_status ghost; fi
 if [[ ${install_masscan} -eq 1 ]]; then run_install_attempt install_masscan masscan_status; fi
-if [[ ${install_sphunter} -eq 1 ]]; then run_install_attempt install_sphunter sphunter_status; fi
 print_summary
 if [[ ${install_failures} -ne 0 ]]; then
   exit 1
