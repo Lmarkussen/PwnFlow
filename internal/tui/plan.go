@@ -55,7 +55,7 @@ type inputRequest struct {
 // must never silently add a network operation to A.
 var defaultEnumerationModuleIDs = []string{
 	"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
-	"smb-server-info", "smb-sessions", "logged-on-users", "smb-ntlm-reflection", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
+	"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
 	"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates",
 	"rusthound-ce", "sccmhunter", "pxethief",
 	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit",
@@ -69,6 +69,7 @@ var defaultEnumerationModuleIDs = []string{
 	"ftp-anonymous-access",
 	"smb-spider-plus",
 	"smb-password-policy",
+	"bloodyad-writable",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing

@@ -25,7 +25,7 @@ var advertisedModules = map[modules.Protocol][]string{
 	modules.ProtocolSMB: {
 		"add-computer", "aws-credentials", "backup_operator", "bitlocker", "change-password",
 		"coerce_plus", "dpapi_hash", "drop-library-ms", "drop-sc", "empire_exec", "enum_av",
-		"enum_ca", "enum_dns", "enum_interfaces", "eventlog_creds", "get_netconnections",
+		"enum_ca", "enum_cve", "enum_dns", "enum_interfaces", "eventlog_creds", "get_netconnections",
 		"gpp_autologin", "gpp_password", "gpp_privileges", "handlekatz", "hash_spider",
 		"hyperv-host", "iis", "impersonate", "install_elevated", "ioxidresolver",
 		"keepass_discover", "keepass_trigger", "lockscreendoors", "lsassy", "masky",

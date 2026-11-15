@@ -153,7 +153,7 @@ func TestNonNetExecFamiliesUseDirectModuleNavigation(t *testing.T) {
 		modules.ToolFamilyNetwork:         6,
 		modules.ToolFamilySCCM:            3,
 		modules.ToolFamilyADCS:            3,
-		modules.ToolFamilyActiveDirectory: 4,
+		modules.ToolFamilyActiveDirectory: 5,
 	}
 	for family, count := range want {
 		familyIndex := -1

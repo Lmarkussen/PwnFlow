@@ -9,9 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/modules"
+	"github.com/pwnflow/pwnflow/internal/process"
+	"github.com/pwnflow/pwnflow/internal/security"
 )
 
 type Definition struct {
@@ -32,6 +35,7 @@ const outputRoot = "Enumeration/Specialized"
 
 func Modules() []Module {
 	return []Module{
+		{definition: Definition{IDValue: "bloodyad-writable", NameValue: "BloodyAD Writable Object Detail", ToolValue: "BloodyAD", SlugValue: "bloodyad-writable", Family: modules.ToolFamilyActiveDirectory, CategoryValue: modules.CategoryPermissionsAuditing, ProtocolValue: modules.ProtocolLDAP, Dependency: dependencies.BloodyAD, Enabled: true, DescriptionValue: "Reads effective writable permissions with get writable --detail. Preserves object DNs, types and writable attributes; permissions alone do not prove exploitation.", Args: bloodyADArgs}},
 		{definition: Definition{IDValue: "mssqlrelay-check", NameValue: "MSSQL Encryption Assessment", ToolValue: "mssqlrelay", SlugValue: "mssqlrelay-check", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategorySecurityAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSQLRelay, Enabled: true, Options: []string{"MSSQL_TARGET"}, DescriptionValue: "Runs mssqlrelay check against the explicitly configured MSSQL target. This reads encryption and login configuration; relay, coercion and command execution are not invoked.", Args: mssqlRelayArgs}},
 		{definition: Definition{IDValue: "mssqlpwner-enumerate", NameValue: "MSSQL Linked-Server and Impersonation Enumeration", ToolValue: "MSSqlPwner", SlugValue: "mssqlpwner-enumerate", Family: modules.ToolFamilyNetwork, CategoryValue: modules.CategoryPermissionsAuditing, ProtocolValue: modules.ProtocolMSSQL, Dependency: dependencies.MSSqlPwner, Enabled: true, Options: []string{"MSSQL_TARGET"}, Approval: "enumerates linked-server and impersonation relationships through the explicitly selected MSSQL connection", DescriptionValue: "Runs MSSqlPwner enumerate only against the explicitly configured MSSQL target. It collects server, linked-server and impersonation relationship evidence; command execution, relay and write-capable modules are not registered.", Args: mssqlPwnerArgs}},
 		{definition: Definition{IDValue: "gpoparser-local", NameValue: "GPO Offline Analysis", ToolValue: "gpoParser", SlugValue: "gpoparser-local", Family: modules.ToolFamilyActiveDirectory, CategoryValue: modules.CategoryConfigurationAuditing, ProtocolValue: modules.ProtocolNA, Dependency: dependencies.GPOParser, Enabled: true, Options: []string{"SYSVOL", "LDAP_EXPORT"}, DescriptionValue: "Analyzes explicitly supplied SYSVOL and directory-export paths with gpoParser local. It does not contact the network or enrich an external graph database.", Args: gpoLocalArgs}},
@@ -120,6 +124,21 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 	program, base := status.FoundExecutable, []string(nil)
 	if status.Interpreter != "" && status.Script != "" {
 		program, base = status.Interpreter, []string{status.Script}
+	}
+	if m.ID() == "bloodyad-writable" {
+		runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		command := process.Command(runCtx, program, append(base, bloodyADArgs(runtime, "")...)...)
+		clean := security.NewCredentialSink(sink, runtime.Password)
+		command.Stdout, command.Stderr = clean, clean
+		runErr := process.Wait(runCtx, command)
+		if err := clean.Flush(); err != nil {
+			return err
+		}
+		if err := runErr; err != nil {
+			return fmt.Errorf("BloodyAD writable enumeration failed: %w", err)
+		}
+		return nil
 	}
 	outputPath := filepath.Join(runtime.ResultsRoot, m.OutputFile())
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
@@ -273,3 +292,7 @@ var _ modules.ExecutionPolicy = Module{}
 var _ modules.DependencyKeyProvider = Module{}
 var _ modules.OptionDeclarer = Module{}
 var _ modules.ApprovalRequester = Module{}
+
+func bloodyADArgs(runtime *modules.Runtime, _ string) []string {
+	return []string{"-H", runtime.Target, "-d", runtime.Domain, "-u", runtime.Username, "-p", runtime.Password, "get", "writable", "--detail"}
+}

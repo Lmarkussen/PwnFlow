@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -203,6 +205,7 @@ func TestUnknownFailureIsNotAccepted(t *testing.T) {
 // success for an unperformed bind.
 func TestRunRequiresTheDependencyAndNeverFakesSuccess(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PWNFLOW_NETEXEC", filepath.Join(t.TempDir(), "missing-nxc"))
 	result, err := Run(context.Background(), config.Config{Target: "198.51.100.10", Domain: "corp.example", Username: "user", Password: "secret"}, ldaptransport.Options{})
 	if err == nil {
 		t.Fatalf("Run reported success without its dependency: %#v", result)
@@ -212,5 +215,23 @@ func TestRunRequiresTheDependencyAndNeverFakesSuccess(t *testing.T) {
 	}
 	if result.Transport != "" || result.Endpoint != "" {
 		t.Fatalf("Run reported a session it never established: %#v", result)
+	}
+}
+
+func TestStartupUsesManagedNetExecWithoutPATH(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PWNFLOW_TOOLS_DIR", root)
+	t.Setenv("PWNFLOW_NETEXEC", "")
+	t.Setenv("PATH", t.TempDir())
+	dir := filepath.Join(root, "NetExec", "current", "bin")
+	os.MkdirAll(dir, 0700)
+	if err := os.WriteFile(filepath.Join(dir, "nxc"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Run(ctx, config.Config{Target: "127.0.0.1", Domain: "example.test", Username: "lab", Password: "synthetic"}, ldaptransport.Options{})
+	if err == nil || strings.Contains(err.Error(), "required dependency") {
+		t.Fatalf("managed dependency not accepted before bind: %v", err)
 	}
 }

@@ -28,7 +28,7 @@ make install PREFIX="$HOME/.local"
 make uninstall PREFIX="$HOME/.local"
 ```
 
-`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `install.sh` in the repository root is the only dependency installer. It runs independently in a normal Kali terminal; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs **every** supported dependency: NetExec, RustHound-CE (including Cargo/build prerequisites when needed), Certipy for AD CS enumeration, the SCCM tooling SCCMhunter and PXEThief, and the network assessment tools NetworkHound and RelayKing. Existing functional tools are skipped, whichever name they are exposed under. `--with-netexec`, `--with-rusthound-ce`, `--with-certipy`, `--with-sccmhunter`, `--with-pxethief`, `--with-networkhound` and `--with-relayking` remain available as selective conveniences. Kali Linux is the only supported installation target.
+`make build VERSION=0.1.1` overrides the embedded version. `make clean` removes only `bin/`; it never removes assessment results or SQLite databases. `install.sh` in the repository root is the only dependency installer. It runs independently in a normal terminal on a supported distribution; PwnFlow never installs packages, invokes sudo, or shows an installer screen at runtime. The default invocation checks and installs **every** supported dependency: NetExec, RustHound-CE (including Cargo/build prerequisites when needed), Certipy for AD CS enumeration, the SCCM tooling SCCMhunter and PXEThief, and the network assessment tools NetworkHound and RelayKing. Existing functional tools are skipped, whichever name they are exposed under. `--with-netexec`, `--with-rusthound-ce`, `--with-certipy`, `--with-sccmhunter`, `--with-pxethief`, `--with-networkhound` and `--with-relayking` remain available as selective conveniences. Supported installation targets are Kali Linux, Arch Linux, Omarchy and CachyOS.
 
 The standalone installer uses native sudo authentication only when a privileged operation is needed, scoped noninteractive APT/dpkg settings, and Cargo for RustHound-CE. It never installs, starts, or configures a service, and it leaves an existing BloodHound CE application untouched. Re-run `./install.sh` when adding tools; dependency detection is read-only inside PwnFlow and missing required dependencies show this command: `./install.sh`.
 
@@ -440,7 +440,7 @@ client; PwnFlow does not change the tmux prefix or install tmux keybindings.
 
 ### Specialist dependency repair
 
-Run `./install.sh` without flags to verify or install every supported dependency. Arch Linux and Kali Linux are supported; the installer reads `/etc/os-release`, uses pacman on Arch and APT on Kali, and stops on other distributions. The default run also checks Go against `go.mod` and Make for the documented build. Missing Go and Make are installed from the distro repository; an older existing Go is left in place and must be updated by its owner.
+Run `./install.sh` without flags to verify or install every supported dependency. Kali Linux, Arch Linux, Omarchy and CachyOS are supported. The installer reads `/etc/os-release`, reuses the same pacman path for Arch Linux, Omarchy and CachyOS, and uses APT on Kali. `ID=cachyos` is accepted with or without `ID_LIKE=arch`; unknown distribution IDs remain unsupported even when `ID_LIKE` includes `arch`. The default run also checks Go against `go.mod` and Make for the documented build. Missing Go and Make are installed from the distro repository; an older existing Go is left in place and must be updated by its owner.
 
 Cargo/Rust and native build packages are required when RustHound-CE needs building; on Arch they are also installed if NetExec must be built from its upstream source. Python 3 with `venv`, pipx, and Git are checked and installed only when a selected tool needs them. Python tools use pipx or per-checkout virtual environments, avoiding system-wide pip installs. Package installs use sudo only for package-manager operations and require confirmation. Re-running the installer reuses working tools and reports failures with a nonzero exit status. On Arch, package resolution uses the current sync database; if it is stale, run `sudo pacman -Syu` and rerun the installer.
 
@@ -489,3 +489,83 @@ This clears findings, evidence links, and queued analysis jobs for that
 assessment only. It does not require a password or LDAP connection, and it
 does not delete executions, configuration, schema metadata, or raw evidence.
 Create and verify an external database backup before using it.
+
+
+### NetExec upstream updates
+
+The default installer and `./install.sh --with-netexec` always check the primary
+development branch of [official NetExec](https://github.com/Pennyw0rth/NetExec)
+using `git ls-remote --symref ... HEAD`. The installer reports the branch,
+latest SHA and requested SHA. This tracks development HEAD, not the latest
+stable release tag. Distribution release labels can match upstream while
+containing different module sets; they are not revision identity.
+
+Installation uses a PwnFlow-managed Python virtual environment, equivalent in
+isolation to pipx. Existing Git and Python/venv prerequisite handling is reused;
+Arch, Omarchy and CachyOS retain their existing compiler/Rust prerequisite path.
+There is no system-wide pip install and no replacement of APT/pacman files.
+Other tools' installation methods are unchanged.
+
+A candidate is installed from the official Git URL at the exact resolved commit
+in `NetExec/versions/<SHA>.<unique-id>` under the configured tools root. Python
+package `direct_url.json` must identify the official repository, Git VCS and
+exact commit. The candidate executable is invoked by its own full path for
+`--help`, `--version`, and `smb -L`; the listing must succeed and contain an
+active `enum_cve`, not a `[REMOVED]` entry. A version string alone is insufficient.
+
+Upstream currently intentionally exits with status 1 after printing its valid
+version banner. The installer reports this compatibility note and accepts only
+that known informational form, plus successful startup/module discovery and
+verified Git provenance. Empty/error output and other failed version exits
+remain failures. The installer does not claim that upstream returned zero.
+
+Only a verified candidate is activated by atomically switching
+`NetExec/current`. Existing generations remain available for diagnosis/rollback;
+failed candidate directories are removed. A verified current revision is reused
+without reinstalling. An existing official pipx environment at the desired
+commit can be adopted through the same managed selection without creating a
+duplicate environment. A failed update leaves the previous selection intact,
+returns a nonzero installer status and records a visible update warning. A
+failed first installation does not activate a half-built executable or silently
+select an older PATH version. Upstream unreachability fails the latest check;
+it never causes an installed tool to be labeled current without comparison.
+
+Runtime selection, shared by dependency checks, capability probes, manual runs,
+automatic batches and Spider Plus, is:
+
+1. `PWNFLOW_NETEXEC`, if configured as an absolute executable path.
+2. The managed `NetExec/current/bin/nxc` under `PWNFLOW_TOOLS_DIR`,
+   `$XDG_DATA_HOME/pwnflow/tools`, or `~/.local/share/pwnflow/tools`.
+3. Existing executable discovery only when no explicit or managed selection exists.
+
+A broken explicit override, broken managed link, or failed first managed update
+blocks fallback. A retained verified installation after a failed update reports
+the warning in dependency details. Module Information displays the probed
+executable, and the installer prints the selected path and exact revision.
+Capability caches are refreshed when the selected environment changes.
+
+Use an absolute tools root if customizing it. The installer and application must
+run as the same user with the same `PWNFLOW_TOOLS_DIR`/`XDG_DATA_HOME` settings.
+An explicitly configured executable is preserved; if it cannot verify at the
+requested official revision, the installer fails and asks you to update that
+override or unset it. It never silently activates another executable behind the
+override. Normal terminal `nxc` may still resolve to `/usr/bin/nxc`; invoke the
+printed selected path directly when comparing results with PwnFlow.
+
+For a pinned source deployment:
+
+```bash
+PWNFLOW_NETEXEC_REVISION="<full-official-40-character-commit-sha>" ./install.sh --with-netexec
+```
+
+Omitting the variable returns to latest upstream tracking. The source SHA is
+pinned; dependency resolution still follows upstream's dependency constraints,
+so this is not a claim of a fully locked transitive Python environment.
+
+For missing modules, compare the printed revision and executable with the
+output of `<selected-executable> smb -L`, then rerun the installer. Keep startup,
+version, module-listing and metadata failures distinct. If an old NetExec
+workspace database prevents discovery, the listing failure is reported rather
+than interpreted as proof that a module does not exist. Do not delete assessment
+or workspace data merely to make verification pass. A network connection is
+required to establish latest upstream status, even for a repeated or pinned run.

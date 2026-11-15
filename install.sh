@@ -13,6 +13,8 @@ install_mssqlrelay=0
 install_mssqlpwner=0
 install_gpoparser=0
 install_ghostspn=0
+install_bloodyad=0
+bloodyad_status="Skipped"
 install_masscan=0
 install_failures=0
 install_all_requested=0
@@ -49,6 +51,7 @@ for argument in "$@"; do
     --with-mssqlpwner) install_mssqlpwner=1 ;;
     --with-gpoparser) install_gpoparser=1 ;;
     --with-ghostspn) install_ghostspn=1 ;;
+    --with-bloodyad) install_bloodyad=1 ;;
     --with-masscan) install_masscan=1 ;;
     --with-bloodhound|--with-bloodhound-ce|--with-bloodhound-python)
       echo "This installer no longer installs BloodHound CE or BloodHound CE Python; ${argument} is retired." >&2
@@ -57,14 +60,14 @@ for argument in "$@"; do
       exit 2
       ;;
     --help|-h)
-      echo "Usage: $0 [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan]"
+      echo "Usage: $0 [--with-bloodyad] [--with-netexec] [--with-rusthound-ce] [--with-certipy] [--with-sccmhunter] [--with-pxethief] [--with-networkhound] [--with-relayking] [--with-sccmsecrets] [--with-mssqlrelay] [--with-mssqlpwner] [--with-gpoparser] [--with-ghostspn] [--with-masscan]"
       echo ""
-      echo "Installs supported dependencies on Arch Linux or Kali Linux: NetExec, RustHound-CE, and"
+      echo "Installs supported dependencies on Arch Linux, Omarchy, CachyOS or Kali Linux: NetExec, RustHound-CE, and"
       echo "Certipy (AD CS enumeration, from the certipy-ad package), plus the SCCM"
       echo "tooling SCCMhunter and PXEThief, and the network assessment tools"
       echo "NetworkHound, RelayKing, and Masscan. NetworkHound and RelayKing are source checkouts with their own virtual"
       echo "environments. No shell activation is required."
-      echo "Supported targets: Arch Linux (pacman) and Kali Linux (APT)."
+      echo "Supported targets: Arch Linux, Omarchy and CachyOS (pacman), and Kali Linux (APT)."
       exit 0
       ;;
     *) echo "Unknown option: $argument" >&2; exit 2 ;;
@@ -86,9 +89,9 @@ detect_distribution() {
   done < "$installer_os_release"
   case "$installer_id" in
     kali) installer_distribution="kali" ;;
-    arch|omarchy) installer_distribution="arch" ;;
+    arch|omarchy|cachyos) installer_distribution="arch" ;;
     *)
-      echo "Unsupported distribution (ID=${installer_id:-unknown}, ID_LIKE=${installer_id_like:-none}). Supported targets are Arch Linux and Kali Linux." >&2
+      echo "Unsupported distribution (ID=${installer_id:-unknown}, ID_LIKE=${installer_id_like:-none}). Supported targets are Arch Linux, Omarchy, CachyOS and Kali Linux." >&2
       return 1
       ;;
   esac
@@ -117,6 +120,7 @@ if [[ $# -eq 0 ]]; then
   install_mssqlpwner=1
   install_gpoparser=1
   install_ghostspn=1
+  install_bloodyad=1
   install_masscan=1
 fi
 
@@ -496,48 +500,160 @@ ensure_cargo_dependencies() {
   echo "Rust toolchain available: $(rustc --version 2>/dev/null); $(cargo --version 2>/dev/null)"
 }
 
-netexec_functional() {
-  command -v nxc >/dev/null 2>&1 && nxc --help >/dev/null 2>&1
+# A release label is not a source revision. Always resolve official HEAD, even
+# when an operator pins the installation to a specific full Git commit.
+netexec_upstream="https://github.com/Pennyw0rth/NetExec"
+netexec_selected=""
+netexec_revision() {
+  local executable="$1" resolved interpreter
+  resolved="$(readlink -f -- "${executable}")" || return 1
+  interpreter="${resolved%/*}/python"
+  [[ -x "${interpreter}" ]] || return 1
+  "${interpreter}" -c '
+import importlib.metadata, json
+m=json.loads(importlib.metadata.distribution("netexec").read_text("direct_url.json") or "{}")
+assert m.get("url", "").rstrip("/").removesuffix(".git") == "https://github.com/Pennyw0rth/NetExec"
+v=m.get("vcs_info", {})
+assert v.get("vcs") == "git"
+print(v["commit_id"])
+' 2>/dev/null
+}
+
+verify_enum_cve() {
+  local executable="$1" revision="$2" listing version line found=0 version_status=0
+  if ! "${executable}" --help >/dev/null 2>&1; then
+    echo "NetExec startup verification failed: revision=${revision}, executable=${executable}" >&2
+    return 1
+  fi
+  version="$("${executable}" --version 2>&1)" || version_status=$?
+  # Official main currently prints its version and deliberately calls exit(1).
+  # Accept only this known informational result, never arbitrary failed output.
+  if [[ ${version_status} -eq 1 && "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+-[[:space:]] ]]; then
+    echo "NetExec compatibility note: --version printed its banner but returned upstream's documented exit 1 (${executable})."
+  elif [[ ${version_status} -ne 0 || -z "${version}" ]]; then
+    echo "NetExec version verification failed: exit=${version_status}, revision=${revision}, executable=${executable}" >&2
+    return 1
+  fi
+  if ! listing="$("${executable}" smb -L 2>&1)"; then
+    echo "NetExec SMB discovery failed: revision=${revision}, executable=${executable}" >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ^[[:space:]]*\[\*\][[:space:]]+enum_cve[[:space:]] && "${line}" != *'[REMOVED]'* ]]; then found=1; fi
+  done <<< "${listing}"
+  if [[ ${found} -ne 1 ]]; then
+    echo "NetExec enum_cve unavailable: revision=${revision}, executable=${executable}" >&2
+    return 1
+  fi
+  echo "NetExec verified: executable=${executable}, revision=${revision}, version=${version}; enum_cve available"
+}
+
+activate_netexec() {
+  local environment="$1" root="$2" temporary
+  [[ -x "${environment}/bin/nxc" ]] || { echo "Invalid NetExec environment: ${environment}" >&2; return 1; }
+  temporary="${root}/.current-$$"
+  ln -s -- "${environment}" "${temporary}" || return 1
+  if ! mv -Tf -- "${temporary}" "${root}/current"; then rm -f -- "${temporary}"; return 1; fi
+  rm -f -- "${root}/last-update-error"
+  netexec_selected="${root}/current/bin/nxc"
+  echo "PwnFlow selected NetExec: ${netexec_selected}"
 }
 
 install_netexec() {
-  if command -v nxc >/dev/null 2>&1; then
-    if netexec_functional; then
-      echo "NetExec already installed and functional: $(nxc --version 2>/dev/null || nxc --help 2>&1 | head -n 1)"
-      netexec_status="Already installed"
-    else
-      echo "NetExec is installed but its --help capability check failed; refusing to replace or upgrade it automatically." >&2
-      return 1
-    fi
-    return 0
-  fi
-  if [[ "$installer_distribution" == arch ]]; then
-    ensure_pipx || return 1
-    command -v git >/dev/null 2>&1 || { run_system_update && run_system_install git || return 1; }
-    local arch_build_packages=()
-    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then arch_build_packages+=(rust); fi
-    if ! command -v cc >/dev/null 2>&1 || ! command -v gcc >/dev/null 2>&1; then arch_build_packages+=(base-devel); fi
-    if ((${#arch_build_packages[@]})); then
-      echo "NetExec build prerequisites missing: ${arch_build_packages[*]}"
-      run_system_install "${arch_build_packages[@]}" || { echo "Could not install the Rust/C build prerequisites needed for NetExec." >&2; return 1; }
-    fi
-    echo "Installing NetExec with pipx in an isolated environment."
-    pipx install git+https://github.com/Pennyw0rth/NetExec || return 1
-    netexec_functional || { echo "NetExec installation did not provide a working nxc --help capability" >&2; return 1; }
-    netexec_status="Installed"
-    echo "NetExec installed and functional: $(command -v nxc)"
-    return 0
-  fi
-  if ! package_manager_available; then
-    echo "APT is unavailable; install NetExec from Kali's APT repository." >&2
+  local remote latest="" branch="" first second third desired root current="" installed="unknown" candidate environment
+  ensure_git || return 1
+  if ! remote="$(git -c http.connectTimeout=10 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 ls-remote --symref "${netexec_upstream}" HEAD)"; then
+    echo "Cannot resolve latest official NetExec revision; existing installation was not changed. Upstream check failed." >&2
     return 1
   fi
-  echo "Installing missing NetExec from the Kali APT repository."
-  run_system_update || { echo "APT update failed; NetExec was not installed." >&2; return 1; }
-  run_system_install netexec || { echo "NetExec package installation failed." >&2; return 1; }
-  netexec_functional || { echo "NetExec installation did not provide a working nxc --help capability" >&2; return 1; }
-  echo "NetExec installed: $(nxc --help 2>&1 | head -n 1)"
-  netexec_status="Installed"
+  while read -r first second third; do
+    if [[ "${first}" == ref: && "${third}" == HEAD ]]; then branch="${second#refs/heads/}"; fi
+    if [[ "${first}" =~ ^[0-9a-f]{40}$ && "${second}" == HEAD ]]; then latest="${first}"; fi
+  done <<< "${remote}"
+  [[ -n "${latest}" && -n "${branch}" ]] || { echo "Official NetExec HEAD discovery returned no branch/revision." >&2; return 1; }
+  desired="${PWNFLOW_NETEXEC_REVISION:-${latest}}"
+  [[ "${desired}" =~ ^[0-9a-f]{40}$ ]] || { echo "PWNFLOW_NETEXEC_REVISION must be a full 40-character Git SHA." >&2; return 1; }
+  echo "Official NetExec upstream: branch=${branch}, latest=${latest}, requested=${desired}"
+  root="$(readlink -m -- "$(pwnflow_tools_root)/NetExec")" || return 1
+  if [[ -n "${PWNFLOW_NETEXEC:-}" ]]; then
+    [[ "${PWNFLOW_NETEXEC}" == /* && -x "${PWNFLOW_NETEXEC}" ]] || { echo "PWNFLOW_NETEXEC must name an existing absolute executable path." >&2; return 1; }
+    current="${PWNFLOW_NETEXEC}"
+  elif [[ -e "${root}/current" || -L "${root}/current" ]]; then
+    current="${root}/current/bin/nxc"
+  else
+    current="$(resolve_user_executable nxc)"
+  fi
+  if [[ -n "${current}" ]]; then
+    installed="$(netexec_revision "${current}")" || installed="unknown"
+    echo "Existing NetExec: executable=${current}, official Git revision=${installed}, version=$("${current}" --version 2>/dev/null || true)"
+  fi
+  # PATH can put a distro executable ahead of an already-current pipx install.
+  # Reuse only an alternative with proven official provenance at the exact SHA.
+  if [[ -z "${PWNFLOW_NETEXEC:-}" && "${installed}" != "${desired}" ]]; then
+    local alternative alternative_revision pipx_bin=""
+    local alternatives=("${HOME}/.local/bin/nxc")
+    if [[ -n "${PIPX_BIN_DIR:-}" ]]; then alternatives+=("${PIPX_BIN_DIR}/nxc"); fi
+    if command -v pipx >/dev/null 2>&1; then
+      pipx_bin="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null)" || pipx_bin=""
+      if [[ -n "${pipx_bin}" ]]; then alternatives+=("${pipx_bin}/nxc"); fi
+    fi
+    for alternative in "${alternatives[@]}"; do
+      [[ "${alternative}" == /* && -x "${alternative}" && "${alternative}" != "${current}" ]] || continue
+      alternative_revision="$(netexec_revision "${alternative}")" || continue
+      if [[ "${alternative_revision}" == "${desired}" ]] && verify_enum_cve "${alternative}" "${alternative_revision}"; then
+        echo "Found current official NetExec outside active PATH: ${alternative}"
+        current="${alternative}"
+        installed="${alternative_revision}"
+        break
+      fi
+    done
+  fi
+  if [[ "${installed}" == "${desired}" ]] && verify_enum_cve "${current}" "${installed}"; then
+    if [[ -n "${PWNFLOW_NETEXEC:-}" ]]; then
+      netexec_selected="${current}"
+      echo "PwnFlow selected explicit NetExec: ${current}"
+    else
+      environment="$(readlink -f -- "${current}")" || return 1
+      mkdir -p "${root}" || return 1
+      activate_netexec "${environment%/bin/nxc}" "${root}" || return 1
+    fi
+    netexec_status="Already current (${desired})"
+    return 0
+  fi
+  if [[ -n "${PWNFLOW_NETEXEC:-}" ]]; then
+    echo "Explicit PWNFLOW_NETEXEC=${current} does not verify at requested revision ${desired}; update it or unset the override. No alternate executable activated." >&2
+    return 1
+  fi
+  ensure_python_venv || return 1
+  if [[ "${installer_distribution}" == arch ]]; then
+    local build_packages=()
+    if ! command -v cargo >/dev/null 2>&1 || ! command -v rustc >/dev/null 2>&1; then build_packages+=(rust); fi
+    if ! command -v cc >/dev/null 2>&1 || ! command -v gcc >/dev/null 2>&1; then build_packages+=(base-devel); fi
+    if ((${#build_packages[@]})); then run_system_install "${build_packages[@]}" || return 1; fi
+  fi
+  mkdir -p "${root}/versions" || return 1
+  candidate="$(mktemp -d "${root}/versions/${desired}.XXXXXX")" || return 1
+  echo "Preparing isolated NetExec environment ${candidate} from ${netexec_upstream}@${desired}"
+  if ! python3 -m venv "${candidate}" || ! "${candidate}/bin/python" -m pip install "git+${netexec_upstream}@${desired}"; then
+    echo "NetExec installation/update failed for revision ${desired}; existing selection preserved." >&2
+    printf '%s\n' "Installation/update failed: ${desired}" > "${root}/last-update-error"
+    rm -rf -- "${candidate}"
+    return 1
+  fi
+  installed="$(netexec_revision "${candidate}/bin/nxc")" || installed="unknown"
+  if [[ "${installed}" != "${desired}" ]] || ! verify_enum_cve "${candidate}/bin/nxc" "${installed}"; then
+    echo "NetExec verification failed: requested=${desired}, installed=${installed}, executable=${candidate}/bin/nxc; no activation." >&2
+    printf '%s\n' "Verification failed: ${desired}" > "${root}/last-update-error"
+    rm -rf -- "${candidate}"
+    return 1
+  fi
+  if ! printf '%s\n' "${desired}" > "${candidate}/.pwnflow-revision" || ! activate_netexec "${candidate}" "${root}"; then
+    echo "NetExec activation failed; existing selection preserved." >&2
+    printf '%s\n' "Activation failed: ${desired}" > "${root}/last-update-error"
+    rm -rf -- "${candidate}"
+    return 1
+  fi
+  netexec_status="Installed upstream (${desired})"
 }
 
 masscan_functional() {
@@ -1155,9 +1271,38 @@ install_relayking() {
   echo "RelayKing installed at ${diagnostics} in ${root}"
 }
 
+bloodyad_functional() {
+  local executable_path help candidate
+  for candidate in bloodyAD bloodyad; do
+    executable_path="$(resolve_user_executable "${candidate}")"
+    [[ -n "${executable_path}" ]] || continue
+    help="$("${executable_path}" get writable --help 2>&1)" || continue
+    [[ "${help}" == *--detail* ]] && return 0
+  done
+  return 1
+}
+
+install_bloodyad() {
+  if bloodyad_functional; then
+    bloodyad_status="Already installed"
+    return 0
+  fi
+  ensure_pipx || { bloodyad_status="Failed (pipx unavailable)"; return 1; }
+  prepend_path_once "${HOME}/.local/bin"
+  pipx install bloodyAD || { bloodyad_status="Failed (pipx install failed)"; return 1; }
+  if ! bloodyad_functional; then
+    echo "BloodyAD does not provide a working get writable --detail capability" >&2
+    bloodyad_status="Failed (capability probe failed)"
+    return 1
+  fi
+  bloodyad_status="Installed"
+}
+
+
 print_summary() {
   echo ""
   echo "Installation summary:"
+  echo "  BloodyAD: ${bloodyad_status}"
   echo "  NetExec: ${netexec_status}"
   echo "  RustHound-CE: ${rusthound_ce_status}"
   echo "  Cargo: ${cargo_status}"
@@ -1198,6 +1343,7 @@ if [[ ${install_mssqlrelay} -eq 1 ]]; then run_install_attempt install_pipx_sour
 if [[ ${install_mssqlpwner} -eq 1 ]]; then run_install_attempt install_pipx_source mssqlpwner_status MSSqlPwner git+https://github.com/ScorpionesLabs/MSSqlPwner.git mssqlpwner mssqlpwner_status mssqlpwner; fi
 if [[ ${install_gpoparser} -eq 1 ]]; then run_install_attempt install_pipx_source gpoparser_status gpoParser git+https://github.com/synacktiv/gpoParser.git gpoParser gpoparser_status GPO; fi
 if [[ ${install_ghostspn} -eq 1 ]]; then run_install_attempt install_pipx_source ghostspn_status ghostSPN git+https://github.com/mverschu/ghostSPN.git@f5df2cd072d9c3ba81b01590e433b21449d91394 ghostspn ghostspn_status ghost; fi
+if [[ ${install_bloodyad} -eq 1 ]]; then run_install_attempt install_bloodyad bloodyad_status; fi
 if [[ ${install_masscan} -eq 1 ]]; then run_install_attempt install_masscan masscan_status; fi
 print_summary
 if [[ ${install_failures} -ne 0 ]]; then

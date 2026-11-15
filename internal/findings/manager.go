@@ -322,6 +322,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		var parserInputs []storage.FindingInput
 		if strings.Contains(lowerPath, "gpp_password") || strings.Contains(lowerPath, "gpp-password") {
 			parserInputs, err = AnalyzeNetExecGPP(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.Contains(lowerPath, "enum_cve") {
+			parserInputs, err = AnalyzeEnumCVE(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
@@ -332,6 +334,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs = append(inputs, parserInputs...)
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		inputs, err = AnalyzeSpecialized(m.ctx, job.ArtifactPath, job.SourceTool, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "bloodyad":
+		inputs, err = AnalyzeBloodyADWritable(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "masscan":
 		inputs, err = AnalyzeMasscan(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "ad writable object assessment", "pwnflow / rusthound analysis":
@@ -506,9 +510,11 @@ func ParserVersionFor(tool string) string {
 	case "netexec", "netexec (nxc)":
 		// NetExec jobs may include specialized artifact parsers selected by
 		// artifact identity; the security parser remains the base version.
-		return netExecSecurityParserVersion
+		return netExecSecurityParserVersion + "+" + enumDetailParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		return specializedParserVersion
+	case "bloodyad":
+		return enumDetailParserVersion
 	case "masscan":
 		return masscanParserVersion
 	case "ad writable object assessment", "pwnflow / rusthound analysis":
@@ -544,7 +550,7 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	if outputPath == "" {
 		return ""
 	}
-	specializedTool := map[string]bool{"ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true, "pwnflow ftp probe": true}
+	specializedTool := map[string]bool{"bloodyad": true, "ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true, "pwnflow ftp probe": true}
 	if specializedTool[strings.ToLower(tool)] {
 		if strings.EqualFold(tool, "AD GPO Evidence") {
 			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {

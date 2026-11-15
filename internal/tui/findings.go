@@ -107,6 +107,10 @@ func findingCategoryKey(finding storage.Finding) string {
 	title := strings.ToLower(finding.Title)
 	source := strings.ToLower(finding.SourceTool)
 	switch {
+	case typ == "bloodyad_writable_permissions":
+		return "acl"
+	case typ == "netexec_cve_check":
+		return "network"
 	case strings.HasPrefix(typ, "ad_writable_object_"):
 		return "acl"
 	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"):

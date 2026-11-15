@@ -15,12 +15,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os/exec"
 	"regexp"
 	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/pwnflow/pwnflow/internal/config"
+	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"github.com/pwnflow/pwnflow/internal/ldaptransport"
 )
 
@@ -132,8 +132,8 @@ func BindIdentity(username, domain string) string {
 // connection was protected. The options carry the operator's verification
 // choices, including the certificate trust decision for an unknown authority.
 func Run(ctx context.Context, cfg config.Config, options ldaptransport.Options) (Result, error) {
-	if _, err := exec.LookPath("nxc"); err != nil {
-		return Result{}, fmt.Errorf("required dependency nxc is unavailable; run ./install.sh")
+	if _, err := dependencies.NetExecExecutable(ctx); err != nil {
+		return Result{}, fmt.Errorf("required dependency nxc is unavailable: %v; run ./install.sh --with-netexec", err)
 	}
 	if !options.InsecureSkipVerify {
 		options.InsecureSkipVerify = cfg.InsecureSkipVerify

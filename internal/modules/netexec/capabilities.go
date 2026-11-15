@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pwnflow/pwnflow/internal/dependencies"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +30,13 @@ var probeTimeout = 20 * time.Second
 // failure, which is exactly the case that has to be reported as unsupported
 // rather than silently listed.
 type protocolCapability struct {
-	help      []byte
-	modules   []byte
-	helpOK    bool
-	modulesOK bool
-	probed    bool
-	at        time.Time
+	executable string
+	help       []byte
+	modules    []byte
+	helpOK     bool
+	modulesOK  bool
+	probed     bool
+	at         time.Time
 }
 
 type capabilitySet struct {
@@ -61,7 +64,12 @@ func (c *capabilitySet) lookup(ctx context.Context, protocol modules.Protocol) (
 	c.mu.RLock()
 	capability, ok := c.protocols[protocol]
 	c.mu.RUnlock()
-	if ok && capability.probed && time.Since(capability.at) < capabilityTTL {
+	executable, err := dependencies.NetExecExecutable(ctx)
+	if err != nil {
+		return protocolCapability{}, false
+	}
+	identity, _ := filepath.EvalSymlinks(executable)
+	if ok && capability.probed && (capability.executable == "" || capability.executable == identity) && time.Since(capability.at) < capabilityTTL {
 		return capability, true
 	}
 	return c.probe(ctx, protocol)
@@ -92,8 +100,13 @@ func (c *capabilitySet) probe(ctx context.Context, protocol modules.Protocol) (p
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	command := protocolCommand(protocol)
-	capability := protocolCapability{probed: true, at: time.Now()}
-	help, helpErr := exec.CommandContext(probeCtx, "nxc", command, "--help").CombinedOutput()
+	executable, err := dependencies.NetExecExecutable(ctx)
+	if err != nil {
+		return protocolCapability{}, false
+	}
+	identity, _ := filepath.EvalSymlinks(executable)
+	capability := protocolCapability{probed: true, at: time.Now(), executable: identity}
+	help, helpErr := exec.CommandContext(probeCtx, executable, command, "--help").CombinedOutput()
 	if len(help) > 0 {
 		capability.help = help
 		capability.helpOK = helpErr == nil
@@ -101,7 +114,7 @@ func (c *capabilitySet) probe(ctx context.Context, protocol modules.Protocol) (p
 	// `-L` fails on a NetExec workspace database whose schema is older than the
 	// installed build. That is a local database problem, not a missing module,
 	// so the listing is only trusted when it succeeded.
-	listing, listingErr := exec.CommandContext(probeCtx, "nxc", command, "-L").CombinedOutput()
+	listing, listingErr := exec.CommandContext(probeCtx, executable, command, "-L").CombinedOutput()
 	if listingErr == nil && len(listing) > 0 {
 		capability.modules = listing
 		capability.modulesOK = true

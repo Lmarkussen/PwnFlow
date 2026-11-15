@@ -205,6 +205,7 @@ exit 0`)
 		}
 	}
 	installNetworkToolLayouts(t, bin, toolsRoot)
+	mockNetExecUpstream(t, bin, true)
 }
 
 // installNetworkToolLayouts adds the NetworkHound and RelayKing checkouts the way
@@ -258,6 +259,7 @@ func installNetworkToolLayouts(t *testing.T, bin, toolsRoot string) {
 		t.Fatal(err)
 	}
 	writeExecutable(t, sccmSecrets, "python3", `echo SCCMSecrets; exit 0`)
+	writeExecutable(t, bin, "bloodyAD", `echo --detail`)
 	for name, banner := range map[string]string{"mssqlrelay": "Microsoft SQL Relaying Tool", "mssqlpwner": "MSSQL Pwner", "gpoParser": "GPO Analysis Tool", "ghostspn": "ghostSPN"} {
 		writeExecutable(t, bin, name, fmt.Sprintf("echo %q; exit 0", banner))
 	}
@@ -268,7 +270,7 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
 	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'ii  9.8.0~rc3-0kali1'`)
@@ -279,12 +281,12 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 		t.Fatalf("default installer check failed: %v\n%s", err, output)
 	}
 	for _, want := range []string{
-		"NetExec already installed and functional",
+		"NetExec verified:",
 		"RustHound-CE already installed and functional",
 		"Certipy already installed and functional",
 		"NetworkHound already installed and functional",
 		"RelayKing already installed and functional",
-		"NetExec: Already installed",
+		"NetExec: Already current",
 		"RustHound-CE: Already installed",
 		"Certipy: Already installed",
 		"NetworkHound: Already installed",
@@ -311,10 +313,11 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 
 func TestInstallerSkipsExistingNetExecWithoutAPT(t *testing.T) {
 	bin := t.TempDir()
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then echo working; exit 0; fi`)
+	mockNetExecUpstream(t, bin, true)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then echo working; exit 0; fi`)
 	writeExecutable(t, bin, "apt-get", `echo apt-should-not-run >&2; exit 99`)
 	output, err := runInstaller(t, bin, "--with-netexec")
-	if err != nil || !strings.Contains(output, "NetExec: Already installed") {
+	if err != nil || !strings.Contains(output, "NetExec: Already current") {
 		t.Fatalf("existing tool was not skipped: err=%v\n%s", err, output)
 	}
 	if strings.Contains(output, "apt-should-not-run") {
@@ -323,29 +326,61 @@ func TestInstallerSkipsExistingNetExecWithoutAPT(t *testing.T) {
 }
 
 func TestInstallerDetectsArchAndUsesPacman(t *testing.T) {
-	bin := t.TempDir()
-	osRelease := filepath.Join(t.TempDir(), "arch-os-release")
-	if err := os.WriteFile(osRelease, []byte("ID=arch\nID_LIKE=arch\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PWNFlow_OS_RELEASE", osRelease)
-	t.Setenv("PWNFlow_ASSUME_YES", "1")
-	writeExecutable(t, bin, "pacman", `case "$1" in
+	for _, tc := range []struct{ name, release, id string }{
+		{"arch", "ID=arch\n", "arch"},
+		{"arch-like", "ID=arch\nID_LIKE=arch\n", "arch"},
+		{"omarchy", "ID=omarchy\n", "omarchy"},
+		{"omarchy-like", "ID=omarchy\nID_LIKE=arch\n", "omarchy"},
+		{"cachyos", "ID=cachyos\n", "cachyos"},
+		{"cachyos-like", "ID=cachyos\nID_LIKE=arch\n", "cachyos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			osRelease := filepath.Join(t.TempDir(), "os-release")
+			if err := os.WriteFile(osRelease, []byte(tc.release), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PWNFlow_OS_RELEASE", osRelease)
+			t.Setenv("PWNFlow_ASSUME_YES", "1")
+			t.Setenv("MOCK_BIN", bin)
+			log := filepath.Join(t.TempDir(), "pacman.log")
+			t.Setenv("MOCK_PACMAN_LOG", log)
+			writeExecutable(t, bin, "pacman", `printf '%s\n' "$*" >> "$MOCK_PACMAN_LOG"
+case "$1" in
 -Sp) echo 'masscan 1.3.2';;
 --sync) printf '%s\n' '#!/bin/sh' 'if [ "$1" = "--version" ]; then echo "masscan 1.3.2"; exit 0; fi; exit 1' > "$MOCK_BIN/masscan"; /bin/chmod 700 "$MOCK_BIN/masscan";;
 -Q) echo 'masscan 1.3.2';;
 esac`)
-	t.Setenv("MOCK_BIN", bin)
-	writeFailingPackageManagerMocks(t, bin)
-	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; exec "$@"`)
-	output, err := runInstaller(t, bin, "--with-masscan")
-	if err != nil {
-		t.Fatalf("Arch pacman install failed: %v\n%s", err, output)
-	}
-	for _, want := range []string{"Detected distribution: arch", "Pacman preview for: masscan", "Masscan: Installed"} {
-		if !strings.Contains(output, want) {
-			t.Errorf("output missing %q:\n%s", want, output)
-		}
+			writeFailingPackageManagerMocks(t, bin)
+			writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; exec "$@"`)
+			output, err := runInstaller(t, bin, "--with-masscan")
+			if err != nil {
+				t.Fatalf("pacman install failed: %v\n%s", err, output)
+			}
+			for _, want := range []string{"Detected distribution: arch (ID=" + tc.id, "Pacman preview for: masscan", "Masscan: Installed"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("output missing %q:\n%s", want, output)
+				}
+			}
+			before, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(before), "--sync --needed --noconfirm masscan") {
+				t.Fatalf("expected pacman transaction: %s", before)
+			}
+			output, err = runInstaller(t, bin, "--with-masscan")
+			if err != nil || !strings.Contains(output, "Masscan: Already installed") {
+				t.Fatalf("existing dependency not reused: %v\n%s", err, output)
+			}
+			after, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before)+"-Q masscan\n" {
+				t.Fatalf("repeat install must only query the existing package: before=%q after=%q", before, after)
+			}
+		})
 	}
 }
 
@@ -389,26 +424,35 @@ esac`)
 }
 
 func TestInstallerRejectsUnsupportedDistribution(t *testing.T) {
-	bin := t.TempDir()
-	osRelease := filepath.Join(t.TempDir(), "ubuntu-os-release")
-	if err := os.WriteFile(osRelease, []byte("ID=ubuntu\nID_LIKE=debian\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PWNFlow_OS_RELEASE", osRelease)
-	writeFailingPackageManagerMocks(t, bin)
-	output, err := runInstaller(t, bin, "--with-netexec")
-	if err == nil || !strings.Contains(output, "Unsupported distribution (ID=ubuntu, ID_LIKE=debian)") {
-		t.Fatalf("unsupported OS was not rejected clearly: err=%v\n%s", err, output)
-	}
-	if strings.Contains(output, "apt-should-not-run") || strings.Contains(output, "sudo-should-not-run") {
-		t.Fatalf("package manager was invoked on an unsupported OS:\n%s", output)
+	for _, tc := range []struct{ name, release string }{
+		{"ubuntu", "ID=ubuntu\nID_LIKE=debian\n"},
+		{"unknown-arch", "ID=unknown\nID_LIKE=arch\n"},
+		{"unknown-multiple-like", "ID=unknown\nID_LIKE=\"arch debian\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			osRelease := filepath.Join(t.TempDir(), "os-release")
+			if err := os.WriteFile(osRelease, []byte(tc.release), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PWNFlow_OS_RELEASE", osRelease)
+			writeFailingPackageManagerMocks(t, bin)
+			writeExecutable(t, bin, "pacman", `echo pacman-should-not-run >&2; exit 99`)
+			output, err := runInstaller(t, bin, "--with-netexec")
+			if err == nil || !strings.Contains(output, "Unsupported distribution (ID=") {
+				t.Fatalf("unsupported OS not rejected: %v\n%s", err, output)
+			}
+			if strings.Contains(output, "should-not-run") {
+				t.Fatalf("dependency operation on unsupported OS:\n%s", output)
+			}
+		})
 	}
 }
 
 func TestInstallerInstallsMissingGoAndMakeThenVerifiesThem(t *testing.T) {
 	bin := t.TempDir()
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "masscan", `if [ "$1" = "--version" ]; then echo 'masscan 1.3.2'; exit 0; fi; exit 1`)
@@ -434,7 +478,7 @@ func TestInstallerRejectsOldGoWithoutReplacingIt(t *testing.T) {
 	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "go", `if [ "$1" = "version" ]; then echo 'go version go1.21.13 linux/amd64'; exit 0; fi`)
 	writeExecutable(t, bin, "make", `if [ "$1" = "--version" ]; then echo 'GNU Make 4.4'; exit 0; fi`)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
@@ -500,7 +544,7 @@ func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	bin := t.TempDir()
 	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "systemctl", `echo systemctl-should-not-run >&2; exit 99`)
@@ -540,14 +584,14 @@ func TestInstallerAPTUsesScopedNoninteractiveEnvironmentAndLockTimeout(t *testin
 	bin := t.TempDir()
 	log := filepath.Join(t.TempDir(), "apt.log")
 	writeExecutable(t, bin, "sudo", `if [ "$1" = "-n" ]; then shift; fi; if [ "$1" = "-v" ]; then exit 0; fi; if [ "$1" = "env" ]; then shift; exec /usr/bin/env "$@"; fi; exec "$@"`)
-	writeExecutable(t, bin, "apt-get", "printf '%s\\n' \"$DEBIAN_FRONTEND|$NEEDRESTART_MODE|$*\" >> \""+log+"\"; case \" $* \" in *install*) printf '%s\\n' '#!/bin/sh' 'if [ \"$1\" = \"--help\" ]; then exit 0; fi' > \""+filepath.Join(bin, "nxc")+"\"; /bin/chmod 700 \""+filepath.Join(bin, "nxc")+"\"; ;; esac; exit 0")
+	writeExecutable(t, bin, "apt-get", "printf '%s\\n' \"$DEBIAN_FRONTEND|$NEEDRESTART_MODE|$*\" >> \""+log+"\"; case \" $* \" in *install*) printf '%s\\n' '#!/bin/sh' 'echo masscan; exit 0' > \""+filepath.Join(bin, "masscan")+"\"; /bin/chmod 700 \""+filepath.Join(bin, "masscan")+"\"; ;; esac; exit 0")
 	writeExecutable(t, bin, "apt-cache", `exit 0`)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PWNFlow_ASSUME_YES", "1")
 	os.Setenv("APT_LOG", log)
 	os.Setenv("FAKE_BIN", bin)
 	defer os.Setenv("PATH", oldPath)
-	output, err := runInstaller(t, bin, "--with-netexec")
+	output, err := runInstaller(t, bin, "--with-masscan")
 	if err != nil {
 		t.Fatalf("mock APT install failed: %v\n%s", err, output)
 	}
@@ -993,7 +1037,8 @@ func TestInstallerCertipyInstallRequiresApproval(t *testing.T) {
 // reported as skipped and is not touched.
 func TestInstallerSkipsCertipyUnlessRequested(t *testing.T) {
 	bin := t.TempDir()
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "--help" ]; then exit 0; fi`)
+	mockNetExecUpstream(t, bin, true)
+	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeFailingPackageManagerMocks(t, bin)
 	output, err := runInstaller(t, bin, "--with-netexec")
 	if err != nil {
@@ -1324,5 +1369,381 @@ func TestInstallerContinuesSpecialistAttemptsAfterMSSQLRelayFailure(t *testing.T
 	logged, readErr := os.ReadFile(logPath)
 	if readErr != nil || !strings.Contains(string(logged), "git+https://github.com/CompassSecurity/mssqlrelay.git") {
 		t.Fatalf("mssqlrelay was not passed a Git source to pipx: %q (%v)", logged, readErr)
+	}
+}
+
+func TestInstallerBloodyADExistingDetailIdempotent(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "bloodyAD", `echo 'get writable --detail'`)
+	writeExecutable(t, bin, "pipx", `echo should-not-install >&2; exit 99`)
+	for i := 0; i < 2; i++ {
+		output, err := runInstaller(t, bin, "--with-bloodyad")
+		if err != nil || !strings.Contains(output, "BloodyAD: Already installed") {
+			t.Fatalf("%v %s", err, output)
+		}
+	}
+}
+func TestInstallerReportsMissingEnumCVE(t *testing.T) {
+	bin := t.TempDir()
+	mockNetExecUpstream(t, bin, false)
+	t.Setenv("MOCK_ENUM_CVE", "missing")
+	writeExecutable(t, bin, "nxc", `echo 'old NetExec'; exit 0`)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err == nil || !strings.Contains(output, "enum_cve unavailable") {
+		t.Fatalf("%v %s", err, output)
+	}
+}
+
+func TestBloodyADDetectionOnSupportedDistributions(t *testing.T) {
+	for _, release := range []string{"ID=kali\nID_LIKE=debian\n", "ID=arch\n", "ID=omarchy\nID_LIKE=arch\n", "ID=cachyos\nID_LIKE=arch\n", "ID=cachyos\n"} {
+		t.Run(strings.Fields(release)[0], func(t *testing.T) {
+			bin := t.TempDir()
+			releasePath := filepath.Join(bin, "os-release")
+			os.WriteFile(releasePath, []byte(release), 0600)
+			t.Setenv("PWNFlow_OS_RELEASE", releasePath)
+			writeExecutable(t, bin, "bloodyAD", `echo 'get writable --detail'`)
+			output, err := runInstaller(t, bin, "--with-bloodyad")
+			if err != nil || !strings.Contains(output, "BloodyAD: Already installed") {
+				t.Fatalf("%v %s", err, output)
+			}
+		})
+	}
+}
+
+func TestInstallerDetectsKaliLowercaseBloodyAD(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "bloodyAD", `exit 1`)
+	writeExecutable(t, bin, "bloodyad", `echo --detail`)
+	writeExecutable(t, bin, "pipx", `echo should-not-install >&2; exit 99`)
+	output, err := runInstaller(t, bin, "--with-bloodyad")
+	if err != nil || !strings.Contains(output, "BloodyAD: Already installed") {
+		t.Fatalf("%v %s", err, output)
+	}
+}
+
+const mockNetExecSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const mockNetExecNewSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+// All upstream/install operations below are stand-ins. The fake Python creates
+// only shell scripts inside t.TempDir; it never invokes pip or downloads code.
+func mockNetExecUpstream(t *testing.T, bin string, current bool) string {
+	t.Helper()
+	root := os.Getenv("PWNFLOW_TOOLS_DIR")
+	if root == "" {
+		root = t.TempDir()
+		t.Setenv("PWNFLOW_TOOLS_DIR", root)
+	}
+	t.Setenv("MOCK_UPSTREAM_SHA", mockNetExecSHA)
+	t.Setenv("MOCK_NETEXEC_LOG", filepath.Join(t.TempDir(), "netexec.log"))
+	t.Setenv("PWNFLOW_NETEXEC", "")
+	t.Setenv("PWNFLOW_NETEXEC_REVISION", "")
+	for _, name := range []string{"mkdir", "mktemp", "readlink", "ln", "mv", "rm"} {
+		writeExecutable(t, bin, name, `exec /usr/bin/`+name+` "$@"`)
+	}
+	writeExecutable(t, bin, "git", `case "$*" in
+ *ls-remote*) printf '%s\n' upstream >> "$MOCK_NETEXEC_LOG"; [ "$MOCK_UPSTREAM_OFFLINE" = 1 ] && exit 1; printf 'ref: refs/heads/main\tHEAD\n%s\tHEAD\n' "$MOCK_UPSTREAM_SHA";;
+ *--version*) echo git-mock;;
+ *"rev-parse HEAD"*) echo 8ca8a7905c3aec98b9b1e610c03688cbd361ddb0;;
+ esac`)
+	for _, name := range []string{"cargo", "rustc", "cc", "gcc"} {
+		writeExecutable(t, bin, name, `exit 0`)
+	}
+	templates := t.TempDir()
+	pythonBody := `environment=${0%/bin/python}
+if [ "$1" = "-c" ]; then /bin/cat "$environment/revision"; exit $?; fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+ printf '%s\n' "$*" >> "$MOCK_NETEXEC_LOG"
+ [ "$MOCK_UPDATE_FAIL" = 1 ] && exit 1
+ printf '%s\n' "${4##*@}" > "$environment/revision"
+ exit 0
+fi
+exit 1`
+	nxcBody := `case "$*" in
+ --help) exit 0;;
+ --version) echo "${MOCK_NETEXEC_VERSION:-1.5.1 - mock-upstream - aaaaaaaa}"; exit "${MOCK_NETEXEC_VERSION_EXIT:-0}";;
+ "smb -L") [ "$MOCK_ENUM_CVE" = missing ] && { echo '[*] enum_av only'; exit 0; }; [ "$MOCK_ENUM_CVE" = removed ] && { echo '[*] enum_cve [REMOVED]'; exit 0; }; [ "$MOCK_ENUM_CVE" = failure ] && exit 1; echo '[*] enum_cve Registry checks'; exit 0;;
+ esac
+exit 1`
+	writeExecutable(t, templates, "python", pythonBody)
+	writeExecutable(t, templates, "nxc", nxcBody)
+	t.Setenv("MOCK_NETEXEC_TEMPLATE", templates)
+	writeExecutable(t, bin, "python3", `case "$*" in
+ --version) echo Python-mock; exit 0;;
+ "-m venv --help") exit 0;;
+ esac
+if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+ /bin/mkdir -p "$3/bin"
+ /bin/cp "$MOCK_NETEXEC_TEMPLATE/python" "$3/bin/python"
+ /bin/cp "$MOCK_NETEXEC_TEMPLATE/nxc" "$3/bin/nxc"
+ exit 0
+fi
+exit 1`)
+	if current {
+		environment := filepath.Join(root, "NetExec", "versions", "existing")
+		if err := os.MkdirAll(filepath.Join(environment, "bin"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		writeExecutable(t, filepath.Join(environment, "bin"), "python", pythonBody)
+		writeExecutable(t, filepath.Join(environment, "bin"), "nxc", nxcBody)
+		if err := os.WriteFile(filepath.Join(environment, "revision"), []byte(mockNetExecSHA), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(environment, filepath.Join(root, "NetExec", "current")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return filepath.Join(root, "NetExec")
+}
+
+func TestNetExecLatestUpstreamPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, release string
+		current       bool
+	}{
+		{"missing-kali", "ID=kali\n", false},
+		{"outdated-kali-apt", "ID=kali\n", false},
+		{"outdated-arch", "ID=arch\n", false},
+		{"outdated-omarchy", "ID=omarchy\nID_LIKE=arch\n", false},
+		{"outdated-cachyos", "ID=cachyos\n", false},
+		{"current-managed", "ID=kali\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			root := mockNetExecUpstream(t, bin, tc.current)
+			release := filepath.Join(t.TempDir(), "os-release")
+			os.WriteFile(release, []byte(tc.release), 0600)
+			t.Setenv("PWNFlow_OS_RELEASE", release)
+			if strings.HasPrefix(tc.name, "outdated") {
+				writeExecutable(t, bin, "nxc", `echo old-distro-version`)
+			}
+			output, err := runInstaller(t, bin, "--with-netexec")
+			if err != nil {
+				t.Fatalf("%v\n%s", err, output)
+			}
+			active, err := os.Readlink(filepath.Join(root, "current"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := os.ReadFile(filepath.Join(active, "revision"))
+			if err != nil || strings.TrimSpace(string(revision)) != mockNetExecSHA {
+				t.Fatalf("%s %v", revision, err)
+			}
+			if !strings.Contains(output, "enum_cve available") || !strings.Contains(output, filepath.Join(root, "current", "bin", "nxc")) {
+				t.Fatal(output)
+			}
+			output, err = runInstaller(t, bin, "--with-netexec")
+			if err != nil || !strings.Contains(output, "Already current") {
+				t.Fatalf("%v\n%s", err, output)
+			}
+			log, _ := os.ReadFile(os.Getenv("MOCK_NETEXEC_LOG"))
+			installs := 1
+			if tc.current {
+				installs = 0
+			}
+			if strings.Count(string(log), "-m pip install") != installs || strings.Count(string(log), "upstream") != 2 {
+				t.Fatalf("not idempotent or upstream not rechecked: %s", log)
+			}
+		})
+	}
+}
+
+func TestNetExecUpgradeRollbackAndFailures(t *testing.T) {
+	for _, failure := range []string{"none", "pip", "missing-module", "removed-module", "listing", "offline"} {
+		t.Run(failure, func(t *testing.T) {
+			bin := t.TempDir()
+			root := mockNetExecUpstream(t, bin, true)
+			original, _ := os.Readlink(filepath.Join(root, "current"))
+			t.Setenv("MOCK_UPSTREAM_SHA", mockNetExecNewSHA)
+			switch failure {
+			case "pip":
+				t.Setenv("MOCK_UPDATE_FAIL", "1")
+			case "missing-module":
+				t.Setenv("MOCK_ENUM_CVE", "missing")
+			case "removed-module":
+				t.Setenv("MOCK_ENUM_CVE", "removed")
+			case "listing":
+				t.Setenv("MOCK_ENUM_CVE", "failure")
+			case "offline":
+				t.Setenv("MOCK_UPSTREAM_OFFLINE", "1")
+			}
+			output, err := runInstaller(t, bin, "--with-netexec")
+			active, _ := os.Readlink(filepath.Join(root, "current"))
+			if failure == "none" {
+				if err != nil || active == original {
+					t.Fatalf("upgrade failed: %v %s", err, output)
+				}
+			} else {
+				if err == nil || active != original || !strings.Contains(output, "NetExec: Failed") {
+					t.Fatalf("failed update activated or misreported: %v %s", err, output)
+				}
+				entries, _ := os.ReadDir(filepath.Join(root, "versions"))
+				if len(entries) != 1 {
+					t.Fatalf("unverified stage retained: %v", entries)
+				}
+			}
+		})
+	}
+}
+
+func TestNetExecExplicitSelectionAndPin(t *testing.T) {
+	bin := t.TempDir()
+	root := mockNetExecUpstream(t, bin, true)
+	explicit := filepath.Join(root, "current", "bin", "nxc")
+	t.Setenv("PWNFLOW_NETEXEC", explicit)
+	t.Setenv("MOCK_UPSTREAM_SHA", mockNetExecNewSHA)
+	t.Setenv("PWNFLOW_NETEXEC_REVISION", mockNetExecSHA)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err != nil || !strings.Contains(output, "selected explicit NetExec") {
+		t.Fatalf("%v %s", err, output)
+	}
+	t.Setenv("PWNFLOW_NETEXEC_REVISION", "")
+	output, err = runInstaller(t, bin, "--with-netexec")
+	if err == nil || !strings.Contains(output, "unset the override") {
+		t.Fatalf("incompatible override silently replaced: %v %s", err, output)
+	}
+}
+
+func TestNetExecOfficialGitProvenance(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python needed for metadata-only provenance fixture")
+	}
+	data, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	start := strings.Index(source, "netexec_revision() {")
+	end := strings.Index(source[start:], "\nverify_enum_cve()") + start
+	function := source[start:end]
+	for _, official := range []bool{true, false} {
+		t.Run(fmt.Sprint(official), func(t *testing.T) {
+			root := t.TempDir()
+			bin := filepath.Join(root, "bin")
+			os.MkdirAll(bin, 0700)
+			writeExecutable(t, bin, "nxc", `exit 0`)
+			writeExecutable(t, bin, "python", fmt.Sprintf("exec %q \"$@\"", python))
+			site := t.TempDir()
+			dist := filepath.Join(site, "netexec-1.0.dist-info")
+			os.MkdirAll(dist, 0700)
+			os.WriteFile(filepath.Join(dist, "METADATA"), []byte("Name: netexec\nVersion: 1.0\n"), 0600)
+			url := "https://github.com/Pennyw0rth/NetExec"
+			if !official {
+				url = "https://example.test/unofficial/NetExec"
+			}
+			metadata := fmt.Sprintf(`{"url":%q,"vcs_info":{"vcs":"git","commit_id":%q}}`, url, mockNetExecSHA)
+			os.WriteFile(filepath.Join(dist, "direct_url.json"), []byte(metadata), 0600)
+			command := exec.Command("bash", "-c", function+"\nnetexec_revision \"$1\"", "_", filepath.Join(bin, "nxc"))
+			command.Env = append(os.Environ(), "PYTHONPATH="+site)
+			output, err := command.CombinedOutput()
+			if official {
+				if err != nil || strings.TrimSpace(string(output)) != mockNetExecSHA {
+					t.Fatalf("%v %s", err, output)
+				}
+			} else if err == nil {
+				t.Fatal("unofficial provenance accepted")
+			}
+		})
+	}
+}
+
+func TestNetExecReusesOfficialPipxEnvironment(t *testing.T) {
+	bin := t.TempDir()
+	root := mockNetExecUpstream(t, bin, true)
+	env, _ := os.Readlink(filepath.Join(root, "current"))
+	os.Remove(filepath.Join(root, "current"))
+	os.Symlink(filepath.Join(env, "bin", "nxc"), filepath.Join(bin, "nxc"))
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err != nil || !strings.Contains(output, "Already current") {
+		t.Fatalf("%v %s", err, output)
+	}
+	active, _ := os.Readlink(filepath.Join(root, "current"))
+	if active != env {
+		t.Fatalf("replaced verified existing environment: %s", active)
+	}
+	data, _ := os.ReadFile(os.Getenv("MOCK_NETEXEC_LOG"))
+	if strings.Contains(string(data), "pip install") {
+		t.Fatalf("reinstalled current pipx environment: %s", data)
+	}
+}
+
+func TestNetExecFailedFirstInstallDoesNotActivate(t *testing.T) {
+	bin := t.TempDir()
+	root := mockNetExecUpstream(t, bin, false)
+	t.Setenv("MOCK_UPDATE_FAIL", "1")
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err == nil || !strings.Contains(output, "NetExec: Failed") {
+		t.Fatalf("%v %s", err, output)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "current")); !os.IsNotExist(err) {
+		t.Fatalf("partial active installation: %v", err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(root, "versions"))
+	if len(entries) != 0 {
+		t.Fatal(entries)
+	}
+}
+
+func TestNetExecActivationFailureRetainsPrevious(t *testing.T) {
+	bin := t.TempDir()
+	root := mockNetExecUpstream(t, bin, true)
+	original, _ := os.Readlink(filepath.Join(root, "current"))
+	t.Setenv("MOCK_UPSTREAM_SHA", mockNetExecNewSHA)
+	writeExecutable(t, bin, "mv", `exit 1`)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	active, _ := os.Readlink(filepath.Join(root, "current"))
+	if err == nil || active != original || !strings.Contains(output, "activation failed") {
+		t.Fatalf("%v %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(root, "last-update-error")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNetExecOfficialVersionExitCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, banner, code string
+		ok                 bool
+	}{
+		{"upstream-info-exit", "1.5.1 - Yippie-Ki-Yay - aaaaaaaa", "1", true},
+		{"failed-banner", "Traceback: import failure", "1", false},
+		{"other-error", "1.5.1 - upstream - aaaaaaaa", "3", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			mockNetExecUpstream(t, bin, false)
+			t.Setenv("MOCK_NETEXEC_VERSION", tc.banner)
+			t.Setenv("MOCK_NETEXEC_VERSION_EXIT", tc.code)
+			output, err := runInstaller(t, bin, "--with-netexec")
+			if (err == nil) != tc.ok {
+				t.Fatalf("%v %s", err, output)
+			}
+			if tc.ok && !strings.Contains(output, "compatibility note") {
+				t.Fatal(output)
+			}
+		})
+	}
+}
+
+func TestNetExecCurrentPipxShadowedByDistribution(t *testing.T) {
+	bin := t.TempDir()
+	root := mockNetExecUpstream(t, bin, true)
+	environment, _ := os.Readlink(filepath.Join(root, "current"))
+	os.Remove(filepath.Join(root, "current"))
+	pipxBin := t.TempDir()
+	t.Setenv("PIPX_BIN_DIR", pipxBin)
+	os.Symlink(filepath.Join(environment, "bin", "nxc"), filepath.Join(pipxBin, "nxc"))
+	writeExecutable(t, bin, "nxc", `echo 'old distribution NetExec'`)
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err != nil || !strings.Contains(output, "outside active PATH") {
+		t.Fatalf("%v %s", err, output)
+	}
+	selected, _ := os.Readlink(filepath.Join(root, "current"))
+	if selected != environment {
+		t.Fatalf("current pipx environment not adopted: %s", selected)
+	}
+	data, _ := os.ReadFile(os.Getenv("MOCK_NETEXEC_LOG"))
+	if strings.Contains(string(data), "pip install") {
+		t.Fatalf("duplicated current environment: %s", data)
 	}
 }

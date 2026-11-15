@@ -86,8 +86,8 @@ func TestOptionalBloodHoundDependenciesAreRegisteredSeparately(t *testing.T) {
 	for _, definition := range definitions {
 		switch definition.ID {
 		case NetExec:
-			if definition.InstallMethod != InstallAPT {
-				t.Fatal("NetExec must preserve its APT installation method")
+			if definition.InstallMethod != InstallVenv {
+				t.Fatal("NetExec must use an isolated upstream environment")
 			}
 		case BloodHoundCE:
 			if definition.InstallMethod != InstallOfficialApplication {
@@ -273,5 +273,34 @@ func TestUnrelatedCertipyIsNotAccepted(t *testing.T) {
 	}
 	if status.State != "broken" || !strings.Contains(status.Detail, "Active Directory Certificate Services") {
 		t.Fatalf("the mismatch was not explained: %#v", status)
+	}
+}
+
+func TestBloodyADRequiresWritableDetailCapability(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	for _, tc := range []struct {
+		help      string
+		available bool
+	}{{"writable", false}, {"writable --detail", true}} {
+		if err := os.WriteFile(filepath.Join(dir, "bloodyAD"), []byte("#!/bin/sh\necho '"+tc.help+"'\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		status := DefaultRegistry().CheckOne(context.Background(), BloodyAD)
+		if status.Available != tc.available {
+			t.Fatalf("%s: %+v", tc.help, status)
+		}
+	}
+}
+
+func TestBloodyADLowercaseExecutableOnKali(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bloodyad"), []byte("#!/bin/sh\necho --detail\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	definition := Definition{ID: BloodyAD, DisplayName: "BloodyAD", Executable: filepath.Join(dir, "absent-bloodyAD"), ExecutableCandidates: []string{filepath.Join(dir, "bloodyad")}, ProbeArgs: []string{"get", "writable", "--help"}, ProbeMustContain: []string{"--detail"}}
+	status := check(context.Background(), definition)
+	if !status.Available || status.FoundExecutable != filepath.Join(dir, "bloodyad") {
+		t.Fatalf("%+v", status)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,6 +39,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/process"
+	"github.com/pwnflow/pwnflow/internal/security"
 )
 
 // Definition describes one NetExec invocation.
@@ -365,6 +367,12 @@ func (m Module) checkCapabilities(ctx context.Context) error {
 	if capability, ok := Capabilities().lookup(ctx, m.Protocol()); !ok || !capability.probed {
 		return fmt.Errorf("cannot inspect NetExec %s capabilities", m.Protocol())
 	}
+	if m.ID() == "smb-enum-cve" {
+		capability, _ := Capabilities().cached(m.Protocol())
+		if !capability.modulesOK {
+			return fmt.Errorf("cannot verify enum_cve availability: nxc smb -L failed")
+		}
+	}
 	if reason := Capabilities().reason(m.Protocol(), m.definition.ModuleName, m.definition.Arguments); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
@@ -404,6 +412,9 @@ func (m Module) CommandPreview(runtime *modules.Runtime) string {
 func (m Module) DetailLines(runtime *modules.Runtime) []string {
 	transport := spec(m.Protocol()).description
 	lines := []string{fmt.Sprintf("Transport: %s (%s)", transport, protocolCommand(m.Protocol()))}
+	if capability, ok := Capabilities().cached(m.Protocol()); ok && capability.executable != "" {
+		lines = append(lines, "Executable: "+capability.executable)
+	}
 	if m.definition.ModuleName != "" {
 		lines = append(lines, fmt.Sprintf("NetExec module: -M %s", m.definition.ModuleName))
 	} else {
@@ -584,11 +595,45 @@ func (m Module) ExecutionArtifactPath(resultsRoot string, started time.Time) str
 
 func (m Module) ExecutionArtifactTree() bool { return m.ID() == "smb-spider-plus" }
 
-func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
+func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) (runErr error) {
+	authentication := security.NewNetExecAuthenticationSink(sink, runtime.Password)
+	sink = authentication
+	executable, err := dependencies.NetExecExecutable(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := authentication.Flush(); runErr == nil {
+			runErr = err
+		}
+	}()
+
 	if m.ID() == "smb-spider-plus" {
 		return m.runSpiderPlus(ctx, runtime, sink)
 	}
-	cmd := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
+	if m.ID() == "smb-enum-cve" {
+		runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		var diagnostics bytes.Buffer
+		clean := security.NewCredentialSink(io.MultiWriter(sink, &diagnostics), runtime.Password)
+		cmd := process.Command(runCtx, executable, m.CommandArgs(runtime)...)
+		cmd.Stdout, cmd.Stderr = clean, clean
+		runErr := process.Wait(runCtx, cmd)
+		if err := clean.Flush(); err != nil {
+			return err
+		}
+		if runErr != nil {
+			return runErr
+		}
+		lower := strings.ToLower(diagnostics.String())
+		for _, marker := range []string{"dcerpc error:", "dcerpc transport error:", "unexpected error:", "could not determine os version", "remoteregistry is probably deactivated"} {
+			if strings.Contains(lower, marker) {
+				return fmt.Errorf("enum_cve could not complete its registry checks; see source evidence")
+			}
+		}
+		return nil
+	}
+	cmd := process.Command(ctx, executable, m.CommandArgs(runtime)...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	started := time.Now()
 	if err := process.Wait(ctx, cmd); err != nil {
@@ -706,7 +751,11 @@ func (m Module) runSpiderTargets(ctx context.Context, runtime *modules.Runtime, 
 }
 
 func (m Module) runSpiderTarget(ctx context.Context, runtime *modules.Runtime, sink modules.OutputSink) error {
-	command := process.Command(ctx, "nxc", m.CommandArgs(runtime)...)
+	executable, err := dependencies.NetExecExecutable(ctx)
+	if err != nil {
+		return err
+	}
+	command := process.Command(ctx, executable, m.CommandArgs(runtime)...)
 	command.Stdout, command.Stderr = sink, sink
 	return process.Wait(ctx, command)
 }

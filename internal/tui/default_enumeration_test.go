@@ -8,12 +8,12 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 45 {
-		t.Fatalf("Default Enumeration has %d entries, want 45", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 46 {
+		t.Fatalf("Default Enumeration has %d entries, want 46", len(defaultEnumerationModuleIDs))
 	}
 	wantPrefix := []string{
 		"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
-		"smb-server-info", "smb-sessions", "logged-on-users", "smb-ntlm-reflection", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
+		"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
 		"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 	}
@@ -139,5 +139,18 @@ func TestDefaultEnumerationDoesNotPromptForSMBSpiderTargetOrApproval(t *testing.
 	}
 	if m.inputPrompt || len(m.inputQueue) != 0 {
 		t.Fatalf("SMB spider opened a target-input prompt: prompt=%v queue=%v status=%q", m.inputPrompt, len(m.inputQueue), m.status)
+	}
+}
+
+func TestEnumerationDetailProfileHasNoDuplicateChecks(t *testing.T) {
+	seen := map[string]bool{}
+	for _, id := range defaultEnumerationModuleIDs {
+		if seen[id] {
+			t.Fatalf("duplicate %s", id)
+		}
+		seen[id] = true
+	}
+	if !seen["smb-enum-cve"] || !seen["bloodyad-writable"] || seen["smb-ntlm-reflection"] {
+		t.Fatal(seen)
 	}
 }

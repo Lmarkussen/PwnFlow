@@ -21,7 +21,11 @@ Original assessment artifacts remain available for review, while Findings provid
 
 ## Installation
 
-The installer supports **Arch Linux** and **Kali Linux**. It detects the distribution from `/etc/os-release`, uses pacman on Arch and APT on Kali, and stops on unsupported distributions. The default run checks or installs the supported external tools, then the documented build command compiles PwnFlow.
+The installer supports **Arch Linux**, **Omarchy**, **CachyOS** and **Kali Linux**. It detects the distribution from `/etc/os-release`, uses the shared pacman path on Arch Linux, Omarchy and CachyOS, and APT on Kali. CachyOS is recognized by `ID=cachyos` whether or not `ID_LIKE=arch` is present. Other distributions are rejected, even if they report `ID_LIKE=arch`. The default run checks or installs the supported external tools, then the documented build command compiles PwnFlow.
+
+NetExec follows the latest official upstream development revision, rather than the distribution package version. Every default installer run or `./install.sh --with-netexec` resolves the official repository's primary branch and exact Git SHA. A new revision is prepared in an isolated Python environment and must pass startup, version and SMB `enum_cve` discovery before atomic activation. A working APT/pacman executable alone is not sufficient. Other tools retain their existing installation policies.
+
+PwnFlow selects `PWNFLOW_NETEXEC` when explicitly set to an absolute executable path; otherwise it prefers `NetExec/current/bin/nxc` under the existing tools root (`PWNFLOW_TOOLS_DIR`, then `$XDG_DATA_HOME/pwnflow/tools`, then `~/.local/share/pwnflow/tools`). This managed selection takes precedence over `/usr/bin/nxc` without changing system package ownership or requiring a PATH restart. Invalid explicit/managed selections fail visibly rather than falling back. To pin source code reproducibly, set `PWNFLOW_NETEXEC_REVISION` to a full official 40-character commit SHA when running the installer; upstream HEAD is still checked. See the [operator guide](docs/operator-guide.md#netexec-upstream-updates) for failure handling and diagnostics.
 
 ```bash
 git clone git@github.com:Lmarkussen/PwnFlow.git

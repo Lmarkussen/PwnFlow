@@ -35,6 +35,7 @@ const (
 )
 
 const (
+	BloodyAD     ID = "bloodyad"
 	NetExec      ID = "netexec"
 	BloodHoundCE ID = "bloodhound-ce"
 	BloodHoundPy ID = "bloodhound-ce-python"
@@ -108,7 +109,8 @@ type Registry struct{ definitions []Definition }
 
 func DefaultRegistry() Registry {
 	return Registry{definitions: []Definition{
-		{ID: NetExec, DisplayName: "NetExec (nxc)", Executable: "nxc", Install: "install.sh", InstallMethod: InstallAPT, Package: "netexec", Required: true, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
+		{ID: BloodyAD, DisplayName: "BloodyAD", Executable: "bloodyAD", ExecutableCandidates: []string{"bloodyad"}, Install: "install.sh --with-bloodyad", InstallHint: "./install.sh --with-bloodyad", InstallMethod: InstallPipx, Package: "bloodyAD", ProbeArgs: []string{"get", "writable", "--help"}, ProbeMustContain: []string{"--detail"}},
+		{ID: NetExec, DisplayName: "NetExec (nxc)", Executable: "nxc", Install: "install.sh --with-netexec", InstallMethod: InstallVenv, Package: "netexec", Required: true, ProbeArgs: []string{"--help"}, VersionArgs: []string{"--version"}},
 		// BloodHound CE is the separate graph application for importing and viewing
 		// collected data; the standalone installer deliberately does not install it,
 		// so these hints never name an installer operation.
@@ -187,7 +189,7 @@ func check(ctx context.Context, definition Definition) Status {
 	status := Status{Definition: definition, State: "missing"}
 	path, _, err := findExecutable(ctx, definition)
 	if err != nil {
-		status.Detail = fmt.Sprintf("binary is not installed; install with %s", installationDescription(definition))
+		status.Detail = fmt.Sprintf("binary is not installed (%s); install with %s", err, installationDescription(definition))
 		return status
 	}
 	// Keep the resolved path, not only the candidate name. Managed user-scoped
@@ -236,6 +238,11 @@ func check(ctx context.Context, definition Definition) Status {
 		status.Version = "version unavailable"
 	}
 	status.Detail = path
+	if definition.ID == NetExec {
+		if warning, err := os.ReadFile(filepath.Join(ToolRoots("NetExec")[0], "last-update-error")); err == nil {
+			status.Detail += "; WARNING: " + strings.TrimSpace(string(warning)) + "; retained previous verified executable"
+		}
+	}
 	return status
 }
 
@@ -397,6 +404,12 @@ func parseDebianPackageStatus(value string) (string, bool) {
 }
 
 func findExecutable(ctx context.Context, definition Definition) (string, string, error) {
+	if definition.ID == NetExec {
+		if path, selected, err := selectedNetExec(); selected {
+			return path, path, err
+		}
+	}
+
 	candidates := append([]string{definition.Executable}, definition.ExecutableCandidates...)
 	seen := make(map[string]bool, len(candidates))
 	for _, candidate := range candidates {
