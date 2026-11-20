@@ -135,6 +135,9 @@ func potentialPaths(row storage.Finding) []CriticalPath {
 	if typ == "smb_signing_not_required" && cpBoolValue(metadata, "signing_required", false) {
 		return []CriticalPath{newProjectedPath(row, CriticalPotential, "ntlm_relay", "", cpFirstString(metadata, "target"), "SMB endpoint", "signing not required", []string{"SMB signing is explicitly reported as not required"}, []string{"coercion, relayability, privileged authentication, and successful relay are not verified"}, "SMB signing absence is a relay prerequisite observation, not proof of a critical relay path.")}
 	}
+	if paths := potentialHygienePaths(row, metadata, typ); paths != nil {
+		return paths
+	}
 	if typ == "unconstrained_delegation_configured" || typ == "constrained_delegation_configured" || typ == "rbcd_observed" {
 		return []CriticalPath{newProjectedPath(row, CriticalPotential, "delegation", cpFirstString(metadata, "principal", "object_name"), cpFirstString(metadata, "target", "object_name"), cpFirstString(metadata, "target_type", "object_type"), cpFirstString(metadata, "delegation_type", "delegation"), []string{"delegation configuration was observed"}, []string{"effective controlled principal and privileged target/service abuse are not verified"}, "Delegation can support an attack path, but the retained evidence does not establish effective abuse.")}
 	}
@@ -313,6 +316,8 @@ func cpCriticalFamily(row storage.Finding) string {
 		return "privileged_access"
 	case typ == "sccm_task_sequence_credentials_exposed":
 		return "credential_disclosure"
+	case typ == "ad_account_password_attribute_readable":
+		return "credential_exposure"
 	case strings.HasPrefix(typ, "adcs_esc_"):
 		return typ
 	case typ == "ad_replication_rights_evidence_overview":
@@ -385,6 +390,78 @@ func cpUniqueEvidence(values []CriticalEvidenceReference) []CriticalEvidenceRefe
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, value)
+		}
+	}
+	return result
+}
+
+// potentialHygienePaths projects the directory-configuration Findings that can
+// lead to privileged access when combined with steps the evidence does not
+// show. Each stays a potential path: the retained evidence proves the
+// configuration, not its abuse.
+func potentialHygienePaths(row storage.Finding, metadata map[string]any, typ string) []CriticalPath {
+	path := func(family, principal, target, targetType, capability, confirmed, unverified, reason string) []CriticalPath {
+		return []CriticalPath{newProjectedPath(row, CriticalPotential, family, principal, target, targetType, capability, []string{confirmed}, []string{unverified}, reason)}
+	}
+	classes, _ := metadata["reader_classes"].(map[string]any)
+	broadReaders := false
+	if count, ok := classes["broad"].(float64); ok && count > 0 {
+		broadReaders = true
+	}
+	switch typ {
+	case "ad_account_laps_password_readers":
+		if !broadReaders {
+			return nil
+		}
+		return path("credential_exposure", "broad principal", cpFirstString(metadata, "domain"), "LAPS-managed computers", "read LAPS passwords",
+			"a broad principal holds ReadLAPSPassword on LAPS-managed computers",
+			"no LAPS password was read; which computers matter for privileged access is not evaluated",
+			"Any account in a broad group can read local administrator passwords of the listed computers.")
+	case "ad_account_gmsa_password_readers":
+		if !broadReaders && !strings.EqualFold(row.Severity, "medium") {
+			return nil
+		}
+		return path("credential_exposure", strings.Join(cpStringSlice(metadata["affected_objects"]), ", "), row.AffectedObject, "gMSA", "read the gMSA password",
+			"the listed principals hold ReadGMSAPassword on the gMSA",
+			"no password was read; the gMSA's own privileges beyond adminCount are not evaluated",
+			"Reading the gMSA password yields its credential; the account is privileged or the reader is a broad group.")
+	case "ad_account_sid_history_present":
+		if !strings.EqualFold(row.Severity, "high") {
+			return nil
+		}
+		return path("sid_history", row.AffectedObject, cpFirstString(metadata, "domain"), "domain", "privileged SID in sIDHistory",
+			"sIDHistory holds a well-known privileged SID of the object's own domain",
+			"token construction and use of the account are not verified",
+			"An account whose sIDHistory carries a privileged SID of its own domain is treated as a member of that group at logon.")
+	case "ad_trust_sid_filtering_relaxed":
+		return path("trust", cpFirstString(metadata, "target_domain", "trust_partner"), cpFirstString(metadata, "domain"), "trust", "SID filtering relaxed",
+			"trust attributes show SID filtering relaxed on an outbound or bidirectional trust",
+			"control of the trusted domain and an actual SID-history attack are not verified",
+			"With SID filtering relaxed, a compromise of the trusted domain can extend into this one.")
+	case "ad_domain_config_dns_zone_broad_write":
+		return path("ntlm_relay", strings.Join(cpStringSlice(metadata["principals"]), ", "), cpFirstString(metadata, "zone"), "DNS zone", "modify DNS zone",
+			"a broad principal holds write rights on the DNS zone object",
+			"record changes, name resolution by victims and any follow-on relay are not verified",
+			"Any domain account can change existing records in this zone and redirect clients.")
+	case "ldap_signing_not_enforced", "ldap_channel_binding_not_enforced":
+		capability := "LDAP signing not enforced"
+		if typ == "ldap_channel_binding_not_enforced" {
+			capability = "LDAPS channel binding not required"
+		}
+		return path("ntlm_relay", "", cpFirstString(metadata, "target", "host"), "domain controller LDAP", capability,
+			"NetExec reported "+strings.ToLower(capability)+" on the domain controller",
+			"NetExec's probe is not policy proof; coercion, relayable privileged authentication and a successful relay are not verified",
+			"Relaying NTLM to LDAP on a domain controller is a known route to privileged directory changes when signing and channel binding are not enforced.")
+	}
+	return nil
+}
+
+func cpStringSlice(value any) []string {
+	items, _ := value.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			result = append(result, text)
 		}
 	}
 	return result

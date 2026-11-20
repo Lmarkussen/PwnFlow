@@ -16,6 +16,8 @@ Original assessment artifacts remain available for review, while Findings provid
 - Terminal Tool Runner with approvals, cancellation, availability checks, and watcher output.
 - Per-assessment evidence collection with access to original artifacts.
 - Source-backed Findings with recovered material and uncertainty preserved.
+- Offline Active Directory hygiene from the RustHound-CE collection: account flags, stale accounts, LAPS coverage and readers, gMSA readers, sIDHistory, Kerberos encryption types, trusts, and Pre-Windows 2000 membership.
+- Read-only directory checks no collector covers: dSHeuristics, unauthenticated LDAP and SMB access, and DNS zone permissions.
 - Confirmed Critical and Potential Critical — Not Verified projections over original Findings.
 - Offline Findings review through `--findings`, without network access or execution.
 

@@ -73,3 +73,14 @@ func TestGroupedAccountFindingListsAffectedObjects(t *testing.T) {
 		}
 	}
 }
+
+func TestCriticalFamiliesForDirectoryHygiene(t *testing.T) {
+	for family, group := range map[string]string{
+		"sid_history": "AD Privileged", "trust": "AD Privileged",
+		"credential_exposure": "Credentials / Secrets", "ntlm_relay": "NTLM Relay / Infrastructure",
+	} {
+		if got := pathGroupName(family); got != group {
+			t.Errorf("%s grouped under %q, want %q", family, got, group)
+		}
+	}
+}

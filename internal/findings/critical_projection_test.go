@@ -77,3 +77,50 @@ func TestProjectCriticalAssessmentIsolationAndMalformedEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProjectCriticalDirectoryHygiene(t *testing.T) {
+	row := func(id int64, source, typ, severity, evidence string) storage.Finding {
+		finding := projectionFinding(id, 4, typ, typ, evidence)
+		finding.SourceTool, finding.Severity, finding.AffectedObject = source, severity, "OBJECT"
+		return finding
+	}
+	rows := []storage.Finding{
+		row(1, "NetExec (nxc)", "ad_account_password_attribute_readable", "high", `{"account":"svc-legacy","attribute":"userPassword","read_by":"corp.example\\auditor","value_recorded":false}`),
+		row(2, "RustHound-CE", "ad_account_laps_password_readers", "high", `{"domain":"CORP.EXAMPLE","reader_classes":{"broad":1}}`),
+		row(3, "RustHound-CE", "ad_account_laps_password_readers", "medium", `{"domain":"OTHER.EXAMPLE","reader_classes":{"delegated":1}}`),
+		row(4, "RustHound-CE", "ad_account_gmsa_password_readers", "low", `{"affected_objects":["APP01$"],"reader_classes":{"delegated":1}}`),
+		row(5, "RustHound-CE", "ad_account_sid_history_present", "high", `{"domain":"CORP.EXAMPLE"}`),
+		row(6, "RustHound-CE", "ad_account_sid_history_present", "medium", `{"domain":"CORP.EXAMPLE"}`),
+		row(7, "RustHound-CE", "ad_trust_sid_filtering_relaxed", "medium", `{"domain":"CORP.EXAMPLE","target_domain":"PARTNER.EXAMPLE"}`),
+		row(8, "AD Directory Settings", "ad_domain_config_dns_zone_broad_write", "high", `{"zone":"corp.example","principals":["Authenticated Users (GenericWrite)"]}`),
+		row(9, "NetExec (nxc)", "ldap_signing_not_enforced", "medium", `{"target":"192.0.2.10","host":"DC01"}`),
+		row(10, "AD Directory Settings", "ad_domain_config_dns_record_creation", "medium", `{"zones":[]}`),
+		row(11, "NetExec (nxc)", "smb_null_session_enumeration", "high", `{"users_enumerated":5}`),
+	}
+	projection := ProjectCritical(rows)
+	if len(projection.Confirmed) != 1 || projection.Confirmed[0].Family != "credential_exposure" {
+		t.Fatalf("want the password-attribute read confirmed, got %#v", projection.Confirmed)
+	}
+	families := map[string]int{}
+	for _, path := range projection.Potential {
+		families[path.Family]++
+		if len(path.UnverifiedPrereqs) == 0 {
+			t.Fatalf("%s lost its unverified prerequisites", path.Family)
+		}
+	}
+	want := map[string]int{"credential_exposure": 1, "sid_history": 1, "trust": 1, "ntlm_relay": 2}
+	for family, count := range want {
+		if families[family] != count {
+			t.Fatalf("family %s has %d potential paths, want %d (all %v)", family, families[family], count, families)
+		}
+	}
+	if len(projection.Potential) != 5 {
+		t.Fatalf("delegated LAPS/gMSA readers, ordinary sIDHistory, default DNS record creation or anonymous enumeration entered the projection: %v", families)
+	}
+
+	// A password-attribute Finding without a recorded reader is not confirmed.
+	missing := row(12, "NetExec (nxc)", "ad_account_password_attribute_readable", "high", `{"account":"svc","attribute":"userPassword"}`)
+	if projection := ProjectCritical([]storage.Finding{missing}); len(projection.Confirmed) != 0 {
+		t.Fatal("password attribute without reader was confirmed")
+	}
+}

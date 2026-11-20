@@ -37,6 +37,29 @@ credential, and protocol evidence remains available rather than being replaced
 by a generic summary. The projection does not write database rows or change
 specialist-category Findings.
 
+Confirmed rules require evidence that the condition was exercised, not only
+configured:
+
+| Rule | Source Finding | Confirms |
+|---|---|---|
+| `CRIT-NETEXEC-PWN3D` | `netexec_privileged_access` | Administrative access on the tested target |
+| `CRIT-PXETHIEF-CREDENTIAL-DISCLOSURE` | `sccm_task_sequence_credentials_exposed` | Recovered task-sequence credential material |
+| `CRIT-LDAP-PASSWORD-ATTRIBUTE-READ` | `ad_account_password_attribute_readable` | A populated userPassword/unixUserPassword value returned to the assessment account; the value is withheld and not tested |
+| `CRIT-ADCS-ESC1`, `CRIT-ADCS-ESC8` | Certipy ESC Findings | Every structured prerequisite of the ESC path verified |
+| `CRIT-AD-DCSYNC` | Replication-rights overview | Complete, verified evidence of GetChanges and GetChangesAll on the domain root for an inappropriate principal |
+| `CRIT-AD-TIER0-CONTROL` | Privileged ACL evidence | Complete evidence of an allowed GenericAll, WriteDacl or WriteOwner by an inappropriate principal over the domain root or a Tier Zero group |
+
+Potential paths keep the condition and list what is not verified. Besides
+unverified ESC, ACL, replication, delegation, relay and SMB-signing evidence,
+they include: LAPS passwords readable by a broad group; a gMSA readable by a
+broad group, or a privileged gMSA readable by a delegated principal; a
+privileged SID of the object's own domain in sIDHistory; relaxed SID filtering
+on a trust; broad write on a DNS zone; and NetExec-reported LDAP signing or
+LDAPS channel binding not enforced. Conditions that hold in almost every domain
+by default, such as any authenticated user adding DNS records, and information
+disclosure without a privilege path, such as anonymous enumeration, stay in
+their categories and are not projected.
+
 The automatic enumeration plan is an explicit, protected list of 43 modules.
 GhostSPN is the additive audit immediately after Kerberoasting. The plan is
 separate from manually selected modules and from offline artifact analysis;

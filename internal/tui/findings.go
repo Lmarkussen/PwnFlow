@@ -480,7 +480,7 @@ func criticalDisplayGroup(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(family, "adcs_"):
 		return "AD CS"
-	case family == "privileged_access", family == "acl_control", family == "dcsync":
+	case family == "privileged_access", family == "acl_control", family == "dcsync", family == "sid_history", family == "trust":
 		return "AD Privileged"
 	case family == "credential_disclosure":
 		return "SCCM / MECM"
@@ -535,7 +535,7 @@ func pathGroupName(family string) string {
 	switch {
 	case strings.HasPrefix(strings.ToLower(family), "adcs_"):
 		return "AD CS"
-	case family == "privileged_access", family == "acl_control", family == "dcsync":
+	case family == "privileged_access", family == "acl_control", family == "dcsync", family == "sid_history", family == "trust":
 		return "AD Privileged"
 	case family == "credential_disclosure":
 		return "SCCM / MECM"

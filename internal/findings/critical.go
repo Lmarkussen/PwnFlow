@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	CriticalRuleESC1     = "CRIT-ADCS-ESC1"
-	CriticalRuleESC8     = "CRIT-ADCS-ESC8"
-	CriticalRuleDCSync   = "CRIT-AD-DCSYNC"
-	CriticalRuleTierZero = "CRIT-AD-TIER0-CONTROL"
-	CriticalRulePwn3d    = "CRIT-NETEXEC-PWN3D"
-	CriticalRulePXE      = "CRIT-PXETHIEF-CREDENTIAL-DISCLOSURE"
+	CriticalRuleESC1              = "CRIT-ADCS-ESC1"
+	CriticalRuleESC8              = "CRIT-ADCS-ESC8"
+	CriticalRuleDCSync            = "CRIT-AD-DCSYNC"
+	CriticalRuleTierZero          = "CRIT-AD-TIER0-CONTROL"
+	CriticalRulePwn3d             = "CRIT-NETEXEC-PWN3D"
+	CriticalRulePXE               = "CRIT-PXETHIEF-CREDENTIAL-DISCLOSURE"
+	CriticalRulePasswordAttribute = "CRIT-LDAP-PASSWORD-ATTRIBUTE-READ"
 )
 
 type CriticalQualification struct {
@@ -44,6 +45,8 @@ func ClassifyCritical(finding storage.Finding) (CriticalQualification, bool) {
 		return classifyNetExecPwn3d(finding, evidence)
 	case "sccm_task_sequence_credentials_exposed":
 		return classifyPXECredentialDisclosure(finding, evidence)
+	case "ad_account_password_attribute_readable":
+		return classifyPasswordAttributeRead(finding, evidence)
 	case "adcs_esc_esc1":
 		return classifyESC1(evidence)
 	case "adcs_esc_esc8":
@@ -134,6 +137,25 @@ func classifyPXECredentialDisclosure(finding storage.Finding, evidence criticalE
 	return CriticalQualification{
 		RuleID: CriticalRulePXE,
 		Reason: fmt.Sprintf("PXEThief evidence confirms recovered credential material for %s; secret values remain protected in the evidence view", identity),
+	}, true
+}
+
+// classifyPasswordAttributeRead confirms credential disclosure when NetExec
+// returned a populated userPassword or unixUserPassword value to the
+// assessment account. The value is not stored and its validity is not tested.
+func classifyPasswordAttributeRead(finding storage.Finding, evidence criticalEvidence) (CriticalQualification, bool) {
+	if !strings.EqualFold(strings.TrimSpace(finding.SourceTool), "NetExec (nxc)") {
+		return CriticalQualification{}, false
+	}
+	account := strings.TrimSpace(stringValue(evidence, "account"))
+	attribute := strings.TrimSpace(stringValue(evidence, "attribute"))
+	reader := strings.TrimSpace(stringValue(evidence, "read_by"))
+	if account == "" || attribute == "" || reader == "" {
+		return CriticalQualification{}, false
+	}
+	return CriticalQualification{
+		RuleID: CriticalRulePasswordAttribute,
+		Reason: fmt.Sprintf("NetExec returned a populated %s value for %s to %s; the value is withheld and whether it is a current password was not tested", attribute, account, reader),
 	}, true
 }
 
