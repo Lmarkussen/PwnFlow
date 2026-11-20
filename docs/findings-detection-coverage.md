@@ -24,6 +24,16 @@ clean.
 | Potential Shadow Credentials | RustHound `AddKeyCredentialLink` ACE | Direct right on an account/object | Supported | Potential control only; no credential was added or used |
 | Replication-right observation | RustHound replication ACEs | Individual `GetChanges*` rights | Supported | Full DCSync is not claimed without complete effective-right context |
 | Delegation configuration | RustHound user/computer properties | Explicit delegation properties | Partial | Configuration is reported conservatively; exploitability is not inferred |
+| Non-expiring passwords | RustHound `users` | Enabled users with `pwdneverexpires`, grouped per domain | Supported | Password strength and real age not assessed |
+| Reversible encryption / DES-only | RustHound `users` | `encryptedtextpwdallowed` / `usedeskeyonly` on enabled users | Supported | Whether a reversibly stored password exists is not verified |
+| sIDHistory | RustHound users/computers/groups | Populated `sidhistory`; same-domain privileged RID raises severity | Supported | Token construction and trust-boundary SID filtering not evaluated |
+| Readable password attributes | RustHound `users` | Populated `userpassword`/`unixpassword`/`unicodepassword`/`sfupassword` | Supported | Attribute names only; the value stays in the restricted artifact |
+| krbtgt password age | RustHound `users` | `pwdlastset` of RID 502, measured at collection time | Supported | Reported from 180 days; medium from 365 |
+| Privileged users without delegation protection | RustHound users + Protected Users group | `admincount`, `sensitive`, direct RID 525 membership | Supported | adminCount may be stale; nested membership not expanded |
+| Stale enabled accounts | RustHound users/computers | `lastlogontimestamp` older than 90 days, or never with `whencreated` older than 90 days | Supported | lastLogonTimestamp replicates lazily |
+| LAPS coverage | RustHound `computers` | Enabled non-DC Windows computers with `haslaps=false` | Supported | An unreadable expiration attribute looks absent |
+| Domain functional level / anonymous LDAP | RustHound `domains` | `functionallevel`; `dsheuristics` character 7 | Supported | Anonymous bind is not attempted |
+| Trust SID filtering / TGT delegation | RustHound `domains` `Trusts` | Raw `TrustAttributes` and `TrustDirection` | Supported | Within-forest trusts excluded; trusted domain not contacted |
 | LDAP signing | NetExec LDAP security output | Explicit proof signing is not required | Not assessed unless explicit evidence exists | LDAPS success and bind errors are insufficient |
 | LDAPS channel binding | A targeted supported artifact | Explicit channel-binding result | Not assessed | TLS success, certificate state and simple bind are insufficient |
 | SMB signing | NetExec SMB security output | Explicit signing-required state | Partial | Enabled is not equivalent to required |

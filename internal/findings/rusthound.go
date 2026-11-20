@@ -84,6 +84,19 @@ type collectedObject struct {
 	Properties map[string]json.RawMessage
 	Artifact   string
 	RefPrefix  string
+	// Top keeps the object's top-level fields for the object kinds whose
+	// security-relevant data lives outside Properties (domain Trusts, group
+	// Members). It is nil for every other kind.
+	Top map[string]json.RawMessage
+}
+
+// rustHoundFile is one JSON export read from a collection. modTime is the
+// file's modification time, which RustHound sets when it writes the export
+// and therefore approximates the collection time.
+type rustHoundFile struct {
+	path    string
+	data    []byte
+	modTime time.Time
 }
 
 type collectedACE struct {
@@ -104,10 +117,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	var exports []struct {
-		path string
-		data []byte
-	}
+	var exports []rustHoundFile
 	info, err := os.Stat(inputPath)
 	if err != nil {
 		return nil, AnalysisReport{}, err
@@ -137,10 +147,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 				return err
 			}
 			total += int64(len(data))
-			exports = append(exports, struct {
-				path string
-				data []byte
-			}{filePath, data})
+			exports = append(exports, rustHoundFile{path: filePath, data: data, modTime: fileInfo.ModTime()})
 			return nil
 		})
 	case strings.EqualFold(filepath.Ext(inputPath), ".zip"):
@@ -152,10 +159,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 		data, readErr := os.ReadFile(inputPath)
 		err = readErr
 		if err == nil {
-			exports = append(exports, struct {
-				path string
-				data []byte
-			}{inputPath, data})
+			exports = append(exports, rustHoundFile{path: inputPath, data: data, modTime: info.ModTime()})
 		}
 	}
 	if err != nil {
@@ -163,6 +167,12 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	}
 
 	report := AnalysisReport{}
+	var collectedAt time.Time
+	for _, item := range exports {
+		if item.modTime.After(collectedAt) {
+			collectedAt = item.modTime
+		}
+	}
 	objects := make(map[string]collectedObject)
 	var aces []collectedACE
 	for _, item := range exports {
@@ -216,6 +226,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 			findings = append(findings, delegationFindings(object, assessmentID, executionID, now)...)
 		}
 	}
+	findings = append(findings, hygieneFindings(objects, assessmentID, executionID, now, collectedAt)...)
 	for _, ace := range aces {
 		if err := ctx.Err(); err != nil {
 			return nil, report, err
@@ -307,10 +318,7 @@ func IngestRustHound(ctx context.Context, db *storage.DB, inputPath string, asse
 	return report, nil
 }
 
-func readZIP(filePath string, ctx context.Context) ([]struct {
-	path string
-	data []byte
-}, error) {
+func readZIP(filePath string, ctx context.Context) ([]rustHoundFile, error) {
 	archive, err := zip.OpenReader(filePath)
 	if err != nil {
 		return nil, err
@@ -320,10 +328,7 @@ func readZIP(filePath string, ctx context.Context) ([]struct {
 		return nil, fmt.Errorf("RustHound ZIP has too many entries")
 	}
 	var total uint64
-	result := make([]struct {
-		path string
-		data []byte
-	}, 0)
+	result := make([]rustHoundFile, 0)
 	for _, entry := range archive.File {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -354,10 +359,7 @@ func readZIP(filePath string, ctx context.Context) ([]struct {
 			return nil, fmt.Errorf("ZIP entry %q exceeds parser size limit", entry.Name)
 		}
 		total += uint64(len(data))
-		result = append(result, struct {
-			path string
-			data []byte
-		}{filePath + "!" + clean, data})
+		result = append(result, rustHoundFile{path: filePath + "!" + clean, data: data, modTime: entry.Modified})
 	}
 	return result, nil
 }
@@ -371,6 +373,9 @@ func decodeObject(raw json.RawMessage, objectType string) (collectedObject, []ma
 	object := collectedObject{ID: rawString(fields, "ObjectIdentifier"), Type: objectType, Properties: properties}
 	object.Name = firstString(properties, "name", "samaccountname", "distinguishedname", "dn")
 	object.HighValue = rawBool(properties, "highvalue")
+	if kind := strings.ToLower(objectType); kind == "domains" || kind == "groups" {
+		object.Top = fields
+	}
 	var aces []map[string]json.RawMessage
 	if rawAces, ok := fields["Aces"]; ok && string(rawAces) != "null" {
 		if err := json.Unmarshal(rawAces, &aces); err != nil {

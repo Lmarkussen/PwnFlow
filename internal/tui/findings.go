@@ -67,6 +67,8 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"domain_security_policy", "Domain Security Policy", "Domain-default password and machine-account policy observations"},
 		{"spn", "SPN Hygiene", "Explicitly reported stale or orphaned service principals"},
 		{"account_security", "Account Security", "Evidence-backed account-control and credential-lifecycle conditions"},
+		{"domain_configuration", "Domain Configuration", "Functional level and forest-wide directory settings"},
+		{"trusts", "Domain Trusts", "Observed trust relationships and their SID-filtering and delegation attributes"},
 		{"user_descriptions", "User Descriptions & Notes", "Credential-related values and keyword observations from NetExec user attributes"},
 	},
 	"network": {
@@ -127,7 +129,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_account_"):
 		return "active_directory"
-	case strings.HasPrefix(typ, "ad_domain_policy_"):
+	case strings.HasPrefix(typ, "ad_domain_policy_"), strings.HasPrefix(typ, "ad_domain_config_"), strings.HasPrefix(typ, "ad_trust_"):
 		return "active_directory"
 	case strings.HasPrefix(typ, "ad_acl_"):
 		return "acl"
@@ -165,6 +167,15 @@ func findingCategoryKey(finding storage.Finding) string {
 func findingSubcategoryKey(finding storage.Finding) string {
 	typ := strings.ToLower(finding.FindingType + " " + finding.Title)
 	switch {
+	// Account, domain-configuration and trust types are routed by prefix before
+	// the substring rules below, because their titles carry account and domain
+	// names that may contain words such as "ldap", "smb" or "kerberos".
+	case strings.HasPrefix(typ, "ad_account_"):
+		return "account_security"
+	case strings.HasPrefix(typ, "ad_domain_config_"):
+		return "domain_configuration"
+	case strings.HasPrefix(typ, "ad_trust_"):
+		return "trusts"
 	case strings.HasPrefix(typ, "ad_writable_object_"):
 		return "ad_writable_objects"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
@@ -2380,6 +2391,14 @@ func accountSecurityFindingAttributes(metadata map[string]any, finding storage.F
 		}
 	}
 	fields := [][2]string{{"Account", account}, {"Condition", flag}, {"Enabled", enabled}, {"Observed state", uac}}
+	// Grouped account conditions list their affected objects.
+	if names := metadataStringSlice(metadata, "affected_objects"); len(names) > 0 {
+		list := strings.Join(names, ", ")
+		if omitted := metadataInt(metadata, "objects_omitted"); omitted > 0 {
+			list += fmt.Sprintf(" … and %d more in the original evidence", omitted)
+		}
+		fields = append(fields, [2]string{"Affected", list})
+	}
 	var content strings.Builder
 	content.WriteString(infoBlueStyle().Bold(true).Render("ACCOUNT SECURITY CONDITION") + "\n")
 	content.WriteString(formatAccountSecurityFields(fields, width))
