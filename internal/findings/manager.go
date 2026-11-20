@@ -156,9 +156,21 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.HasSuffix(path, "smb_gpp_password.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case isNetExecLDAPObservationArtifact(path):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	default:
 		return ""
 	}
+}
+
+// isNetExecLDAPObservationArtifact names the LDAP module outputs whose
+// results AnalyzeNetExecLDAP reads.
+func isNetExecLDAPObservationArtifact(path string) bool {
+	switch strings.ToLower(filepath.Base(path)) {
+	case "ldap_dns_nonsecure.txt", "ldap_obsolete.txt", "ldap_get_userpassword.txt", "ldap_get_unixuserpassword.txt":
+		return true
+	}
+	return false
 }
 
 func isNetExecDomainPolicyArtifact(path string) bool {
@@ -311,6 +323,12 @@ func (m *Manager) analyze(queued queuedJob) {
 			inputs, err = nil, securityErr
 			break
 		}
+		ldapInputs, ldapErr := AnalyzeNetExecLDAP(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		if ldapErr != nil {
+			inputs, err = nil, ldapErr
+			break
+		}
+		securityInputs = append(securityInputs, ldapInputs...)
 		var policyInputs []storage.FindingInput
 		if isNetExecDomainPolicyArtifact(job.ArtifactPath) {
 			policyInputs, err = AnalyzeNetExecDomainPolicy(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
@@ -510,7 +528,7 @@ func ParserVersionFor(tool string) string {
 	case "netexec", "netexec (nxc)":
 		// NetExec jobs may include specialized artifact parsers selected by
 		// artifact identity; the security parser remains the base version.
-		return netExecSecurityParserVersion + "+" + enumDetailParserVersion
+		return netExecSecurityParserVersion + "+" + netExecLDAPParserVersion + "+" + enumDetailParserVersion
 	case "ghostspn", "gpoparser", "mssqlrelay", "mssqlpwner", "ad gpo evidence":
 		return specializedParserVersion
 	case "bloodyad":

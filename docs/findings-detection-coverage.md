@@ -32,10 +32,13 @@ clean.
 | Privileged users without delegation protection | RustHound users + Protected Users group | `admincount`, `sensitive`, direct RID 525 membership | Supported | adminCount may be stale; nested membership not expanded |
 | Stale enabled accounts | RustHound users/computers | `lastlogontimestamp` older than 90 days, or never with `whencreated` older than 90 days | Supported | lastLogonTimestamp replicates lazily |
 | LAPS coverage | RustHound `computers` | Enabled non-DC Windows computers with `haslaps=false` | Supported | An unreadable expiration attribute looks absent |
-| Domain functional level / anonymous LDAP | RustHound `domains` | `functionallevel`; `dsheuristics` character 7 | Supported | Anonymous bind is not attempted |
+| Domain functional level / anonymous LDAP | RustHound `domains` | `functionallevel`; `dsheuristics` character 7 | Partial | RustHound-CE reads `dSHeuristics` from the domain object, but the attribute lives on the Directory Service object in the configuration partition, so the anonymous-LDAP condition is rarely observable. Anonymous bind is not attempted |
+| Nonsecure DNS dynamic updates | NetExec `dns-nonsecure` | Zone listed under a "[+] … allowing nonsecure dynamic updates" header | Supported | No record is created or changed |
+| Unsupported operating systems | NetExec `obsolete` | Enabled computers with an unsupported Windows release, grouped per domain | Supported | `operatingSystem` is self-reported and may be stale; hosts are not contacted |
+| Readable password attributes (reader) | NetExec `get-userPassword` / `get-unixUserPassword` | Explicit `User: … <attribute>:` lines; records which assessment account could read the attribute | Supported | The value stays in the original artifact; the header alone is not evidence because the module prints it for referral-only results |
 | Trust SID filtering / TGT delegation | RustHound `domains` `Trusts` | Raw `TrustAttributes` and `TrustDirection` | Supported | Within-forest trusts excluded; trusted domain not contacted |
-| LDAP signing | NetExec LDAP security output | Explicit proof signing is not required | Not assessed unless explicit evidence exists | LDAPS success and bind errors are insufficient |
-| LDAPS channel binding | A targeted supported artifact | Explicit channel-binding result | Not assessed | TLS success, certificate state and simple bind are insufficient |
+| LDAP signing | NetExec LDAP banner `(signing:None)` | NetExec's unsigned-bind probe | Tool-reported, not verified | NetExec prints the same value when its probe fails (for example with NTLM disabled); explicit policy proof is still not assessed |
+| LDAPS channel binding | NetExec LDAP banner `(channel binding:…)` | `Never` (medium) or `When Supported` (low) | Tool-reported, not verified | `Never` is also NetExec's value when its probe fails; `No TLS cert` and `Unknown` produce no Finding |
 | SMB signing | NetExec SMB security output | Explicit signing-required state | Partial | Enabled is not equivalent to required |
 | NTLM relay exposure | RelayKing structured output | Explicit classified relay path | Supported | Does not claim exploitation or make every NTLM endpoint vulnerable |
 | AD CS template weakness | Certipy structured output | Explicit vulnerability classification | Supported | Enabled templates alone are not findings |

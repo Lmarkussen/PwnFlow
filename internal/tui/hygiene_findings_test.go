@@ -19,6 +19,12 @@ func TestHygieneFindingRouting(t *testing.T) {
 		{"ad_account_laps_not_observed", "Computers without observed LAPS (CORP.EXAMPLE)", "active_directory", "account_security"},
 		{"ad_domain_config_anonymous_ldap_operations", "Anonymous LDAP operations enabled (CORP.EXAMPLE)", "active_directory", "domain_configuration"},
 		{"ad_trust_sid_filtering_relaxed", "SID filtering relaxed on trust CORP.EXAMPLE → SPN.EXAMPLE", "active_directory", "trusts"},
+		// NetExec LDAP observations.
+		{"ad_account_obsolete_operating_system", "Enabled computers with unsupported operating systems (corp.example)", "active_directory", "account_security"},
+		{"ad_account_password_attribute_readable", "userPassword readable: svc-ldap", "active_directory", "account_security"},
+		{"ad_domain_config_dns_nonsecure_updates", "DNS zone accepts nonsecure dynamic updates: smb.corp.example", "active_directory", "domain_configuration"},
+		{"ldap_signing_not_enforced", "LDAP signing not enforced: DC01", "network", "ldap"},
+		{"ldap_channel_binding_not_enforced", "LDAPS channel binding not required: DC01", "network", "ldap"},
 		// Existing routing is unchanged.
 		{"ad_account_passwd_notreqd", "Password Not Required Account", "active_directory", "account_security"},
 		{"ad_domain_policy_password_policy_snapshot", "Domain Password Policy Snapshot", "active_directory", "domain_security_policy"},
