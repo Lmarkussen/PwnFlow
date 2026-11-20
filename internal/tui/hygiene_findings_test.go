@@ -25,6 +25,9 @@ func TestHygieneFindingRouting(t *testing.T) {
 		{"ad_domain_config_dns_nonsecure_updates", "DNS zone accepts nonsecure dynamic updates: smb.corp.example", "active_directory", "domain_configuration"},
 		{"ldap_signing_not_enforced", "LDAP signing not enforced: DC01", "network", "ldap"},
 		{"ldap_channel_binding_not_enforced", "LDAPS channel binding not required: DC01", "network", "ldap"},
+		// RustHound password readers.
+		{"ad_account_laps_password_readers", "Principals that can read LAPS passwords (CORP.EXAMPLE)", "active_directory", "account_security"},
+		{"ad_account_gmsa_password_readers", "gMSA password readable by SMB-SERVERS@CORP.EXAMPLE: SVC$@CORP.EXAMPLE", "active_directory", "account_security"},
 		// Existing routing is unchanged.
 		{"ad_account_passwd_notreqd", "Password Not Required Account", "active_directory", "account_security"},
 		{"ad_domain_policy_password_policy_snapshot", "Domain Password Policy Snapshot", "active_directory", "domain_security_policy"},

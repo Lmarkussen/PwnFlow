@@ -108,6 +108,9 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 			if attributes := populatedPasswordAttributes(props); len(attributes) > 0 {
 				result = append(result, passwordAttributeFinding(ctx, object, attributes, enabled, enabledKnown))
 			}
+			if value, known := rawBoolValue(props, "passwordnotreqd"); known && value && enabledKnown && !isKRBTGT(object) {
+				result = append(result, passwordNotRequiredFinding(ctx, object, enabled))
+			}
 			if isKRBTGT(object) {
 				if finding, ok := krbtgtAgeFinding(ctx, object); ok {
 					result = append(result, finding)
@@ -277,6 +280,29 @@ func accountFlagFinding(ctx hygieneContext, object collectedObject, detector, ti
 		Title: titlePrefix + objectLabel(object), Description: description, Severity: severity, Confidence: "observed-directory-property",
 		AffectedObjectID: object.ID, AffectedObject: object.Name, EvidenceJSON: string(evidence), ArtifactPath: object.Artifact,
 		ArtifactRef: object.RefPrefix + "/useraccountcontrol", ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
+	}
+}
+
+// passwordNotRequiredFinding reports PASSWD_NOTREQD with the same Finding type
+// the NetExec password-not-required query uses, so both sources land in the
+// same Account Security view. A disabled account is informational.
+func passwordNotRequiredFinding(ctx hygieneContext, object collectedObject, enabled bool) storage.FindingInput {
+	severity := "medium"
+	if !enabled {
+		severity = "informational"
+	}
+	evidence, _ := json.Marshal(map[string]any{
+		"account": objectLabel(object), "object_id": object.ID, "flag": "PASSWD_NOTREQD", "enabled": enabled, "account_class": "user",
+		"user_account_control": flagObservation(object.Properties, "PASSWD_NOTREQD"), "domain": strings.ToUpper(firstString(object.Properties, "domain")),
+	})
+	return storage.FindingInput{
+		FindingKey: stableSourceKey(ctx.assessmentID, "rusthound-hygiene-passwd-notreqd", object.ID, "PASSWD_NOTREQD"), AssessmentID: ctx.assessmentID,
+		SourceTool: "RustHound-CE", SourceExecution: ctx.executionID, FindingType: "ad_account_passwd_notreqd",
+		Title:       "Password Not Required Account: " + objectLabel(object),
+		Description: "The account has the PASSWD_NOTREQD user-account-control flag, so a password policy does not stop it from having an empty password. This does not prove that the account has a blank password; no authentication was attempted.",
+		Severity:    severity, Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: object.Name,
+		EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/passwordnotreqd",
+		ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
 	}
 }
 

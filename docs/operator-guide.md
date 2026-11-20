@@ -94,19 +94,27 @@ Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the
 ### Default Enumeration
 
 `Ctrl+A` runs the fixed **Default Enumeration** profile, not the whole
-registry. It includes the selected NetExec LDAP checks (password-not-required,
-delegation, DNS, obsolete operating systems, SCCM, authenticated-user info,
-machine account quota, AS-REP and Kerberos material) and the selected SMB checks (server/session and
-logged-on-user observations, NTLM reflection, GPP/AWS/user attributes, LAPS
-and gMSA), all registered Certipy AD CS enumeration, RustHound-CE, SCCMhunter,
-PXEThief, and the eligible Network assessments. Remote-admin, credential
+registry. It includes the selected NetExec LDAP checks (DNS, obsolete operating
+systems, SCCM, authenticated-user info, machine account quota, AS-REP and
+Kerberos material, password attributes) and the selected SMB checks
+(server/session and logged-on-user observations, NTLM reflection, GPP/AWS/user
+attributes), one unfiltered Certipy AD CS discovery, RustHound-CE, SCCMhunter,
+PXEThief, and the eligible Network assessments.
+
+RustHound-CE supplies password-not-required accounts, delegation, and who can
+read LAPS and gMSA passwords, so the NetExec `password-not-required`,
+`delegation`, `laps` and `gmsa` modules are not part of the profile: the
+profile reports who can read a managed password instead of reading it. The
+Certipy `-enabled` and `-vulnerable` views are subsets of the unfiltered find,
+which already carries every ESC classification. All of these remain available
+to run by hand. Remote-admin, credential
 material, local-sudo, missing-input and wider-scope operations remain explicitly
 gated; declined items are recorded and the eligible remainder continues.
 
 Masscan is deliberately excluded from this profile. Run it manually with
 `Enter` after entering and approving its target and port inputs.
 
-The protected profile contains exactly 47 modules. Its order is defined
+The protected profile contains exactly 41 modules. Its order is defined
 explicitly in `internal/tui/plan.go`; GhostSPN (`ghostspn-audit`) immediately
 follows Kerberoasting. This count and ordering are part of the assessment
 workflow contract, not a documentation-only list.

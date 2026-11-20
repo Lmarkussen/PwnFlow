@@ -90,6 +90,7 @@ type ACLMembershipContext struct {
 	TargetID            string             `json:"target_id"`
 	TargetName          string             `json:"target_name,omitempty"`
 	TargetClass         string             `json:"target_class"`
+	TargetDN            string             `json:"target_dn,omitempty"`
 	Permission          string             `json:"permission"`
 	Decision            string             `json:"decision"`
 	Inheritance         string             `json:"inheritance"`
@@ -125,6 +126,7 @@ type ACLInventoryRelationship struct {
 	TargetName          string `json:"target_name,omitempty"`
 	TargetType          string `json:"target_type"`
 	TargetClass         string `json:"target_class"`
+	TargetDN            string `json:"target_dn,omitempty"`
 	Permission          string `json:"permission"`
 	Decision            string `json:"decision"`
 	Inheritance         string `json:"inheritance"`
@@ -402,7 +404,7 @@ func analyzeRustHoundACLInventory(ctx context.Context, inputPath string, assessm
 					classification = "unresolved_identity"
 					addUnresolved(&report, ACLInventoryUnresolved{ID: principalID, Role: "unresolved_principal", TargetID: target.ID, Permission: right, Artifact: file, ArtifactRef: artifactRef})
 				}
-				rel := ACLInventoryRelationship{PrincipalID: principalID, PrincipalName: principalName, PrincipalType: principalType, TargetID: target.ID, TargetName: objectLabel(target.collectedObject), TargetType: target.Type, TargetClass: target.Class, Permission: right, Decision: decision, Inheritance: inheritance, ObjectType: objectType, InheritedObjectType: inheritedObjectType, Classification: classification, Occurrences: 1, Artifact: file, ArtifactRef: artifactRef}
+				rel := ACLInventoryRelationship{PrincipalID: principalID, PrincipalName: principalName, PrincipalType: principalType, TargetID: target.ID, TargetName: objectLabel(target.collectedObject), TargetType: target.Type, TargetClass: target.Class, TargetDN: firstString(target.Properties, "distinguishedname"), Permission: right, Decision: decision, Inheritance: inheritance, ObjectType: objectType, InheritedObjectType: inheritedObjectType, Classification: classification, Occurrences: 1, Artifact: file, ArtifactRef: artifactRef}
 				if !appendRelationship(&report, rel) {
 					report.OmittedRelations++
 					report.Status = "partial"
@@ -846,7 +848,7 @@ func enrichACLInventoryMembershipContext(report *ACLInventoryReport, objects map
 			report.MembershipContext = append(report.MembershipContext, ACLMembershipContext{
 				MemberID: candidate.Member.ID, MemberName: objectLabel(candidate.Member), MemberType: candidate.Member.Type,
 				GroupPath: candidate.Groups, ACLPrincipalID: relationship.PrincipalID, ACLPrincipalName: relationship.PrincipalName,
-				TargetID: relationship.TargetID, TargetName: relationship.TargetName, TargetClass: relationship.TargetClass,
+				TargetID: relationship.TargetID, TargetName: relationship.TargetName, TargetClass: relationship.TargetClass, TargetDN: relationship.TargetDN,
 				Permission: relationship.Permission, Decision: relationship.Decision, Inheritance: relationship.Inheritance,
 				Classification: classification, EffectivePermission: "NOT VERIFIED", MembershipArtifacts: candidate.Artifacts,
 				MembershipRefs: candidate.Refs, ACLArtifact: relationship.Artifact, ACLArtifactRef: relationship.ArtifactRef,

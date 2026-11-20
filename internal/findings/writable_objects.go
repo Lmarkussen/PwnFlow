@@ -25,6 +25,7 @@ type WritableObjectRelationship struct {
 	TargetID            string             `json:"target_id"`
 	TargetName          string             `json:"target_name,omitempty"`
 	TargetType          string             `json:"target_type"`
+	TargetDN            string             `json:"target_dn,omitempty"`
 	Permission          string             `json:"permission"`
 	Decision            string             `json:"decision"`
 	Inheritance         string             `json:"inheritance"`
@@ -112,7 +113,7 @@ func AnalyzeRustHoundWritableObjects(ctx context.Context, inputPath, domain, use
 		if !isWritablePermission(context.Permission) {
 			continue
 		}
-		relation := ACLInventoryRelationship{PrincipalID: context.ACLPrincipalID, PrincipalName: context.ACLPrincipalName, TargetID: context.TargetID, TargetName: context.TargetName, TargetType: context.TargetClass, Permission: context.Permission, Decision: context.Decision, Inheritance: context.Inheritance, Classification: context.Classification, Artifact: context.ACLArtifact, ArtifactRef: context.ACLArtifactRef}
+		relation := ACLInventoryRelationship{PrincipalID: context.ACLPrincipalID, PrincipalName: context.ACLPrincipalName, TargetID: context.TargetID, TargetName: context.TargetName, TargetType: context.TargetClass, TargetDN: context.TargetDN, Permission: context.Permission, Decision: context.Decision, Inheritance: context.Inheritance, Classification: context.Classification, Artifact: context.ACLArtifact, ArtifactRef: context.ACLArtifactRef}
 		report.addRelationship(seen, relation, context.GroupPath, denyKeys)
 	}
 	sort.SliceStable(report.Relationships, func(i, j int) bool {
@@ -144,7 +145,7 @@ func (report *WritableObjectReport) addRelationship(seen map[string]bool, relati
 			evaluation = "indeterminate-deny-present"
 		}
 	}
-	report.Relationships = append(report.Relationships, WritableObjectRelationship{PrincipalID: relation.PrincipalID, PrincipalName: relation.PrincipalName, MembershipPath: append([]ACLMembershipHop(nil), path...), TargetID: relation.TargetID, TargetName: relation.TargetName, TargetType: relation.TargetType, Permission: relation.Permission, Decision: relation.Decision, Inheritance: relation.Inheritance, ObjectType: relation.ObjectType, InheritedObjectType: relation.InheritedObjectType, Evaluation: evaluation, Artifact: relation.Artifact, ArtifactRef: relation.ArtifactRef})
+	report.Relationships = append(report.Relationships, WritableObjectRelationship{PrincipalID: relation.PrincipalID, PrincipalName: relation.PrincipalName, MembershipPath: append([]ACLMembershipHop(nil), path...), TargetID: relation.TargetID, TargetName: relation.TargetName, TargetType: relation.TargetType, TargetDN: relation.TargetDN, Permission: relation.Permission, Decision: relation.Decision, Inheritance: relation.Inheritance, ObjectType: relation.ObjectType, InheritedObjectType: relation.InheritedObjectType, Evaluation: evaluation, Artifact: relation.Artifact, ArtifactRef: relation.ArtifactRef})
 	report.IncludedRelationships = len(report.Relationships)
 }
 

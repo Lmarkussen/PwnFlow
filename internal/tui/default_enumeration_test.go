@@ -8,68 +8,42 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 47 {
-		t.Fatalf("Default Enumeration has %d entries, want 47", len(defaultEnumerationModuleIDs))
-	}
-	wantPrefix := []string{
-		"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
-		"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
-		"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
+	// The profile is pinned in full: adding, removing or reordering an entry
+	// must be a deliberate change to this list.
+	want := []string{
+		"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
+		"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
+		"certipy-adcs-discovery", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
+		"sphunter-tenant-discovery", "ad-writable-objects", "ftp-anonymous-access", "smb-spider-plus", "smb-password-policy", "bloodyad-writable", "maq",
 	}
-	profileWithoutGhostSPN := make([]string, 0, len(defaultEnumerationModuleIDs)-1)
-	ghostSPNCount := 0
+	if len(defaultEnumerationModuleIDs) != 41 || len(want) != 41 {
+		t.Fatalf("Default Enumeration has %d entries, want 41", len(defaultEnumerationModuleIDs))
+	}
+	for index, id := range want {
+		if defaultEnumerationModuleIDs[index] != id {
+			t.Fatalf("profile entry %d=%q, want %q", index+1, defaultEnumerationModuleIDs[index], id)
+		}
+	}
+	// GhostSPN immediately follows Kerberoasting.
+	for index, id := range defaultEnumerationModuleIDs {
+		if id == "kerberoasting" && defaultEnumerationModuleIDs[index+1] != "ghostspn-audit" {
+			t.Fatalf("GhostSPN does not follow Kerberoasting: %q", defaultEnumerationModuleIDs[index+1])
+		}
+	}
+	// Covered by RustHound-CE or by the unfiltered Certipy find, or a password
+	// read where Findings report who can read instead.
+	for _, id := range []string{"password-not-required", "delegation", "laps", "gmsa", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates"} {
+		for _, entry := range defaultEnumerationModuleIDs {
+			if entry == id {
+				t.Fatalf("%q is back in Default Enumeration", id)
+			}
+		}
+	}
 	for _, id := range defaultEnumerationModuleIDs {
-		if id == "ghostspn-audit" {
-			ghostSPNCount++
-			continue
-		}
-		profileWithoutGhostSPN = append(profileWithoutGhostSPN, id)
-	}
-	if ghostSPNCount != 1 {
-		t.Fatalf("GhostSPN appears %d times in Default Enumeration, want once", ghostSPNCount)
-	}
-	for index, id := range wantPrefix {
-		if profileWithoutGhostSPN[index] != id {
-			t.Fatalf("original profile entry %d=%q, want %q", index+1, profileWithoutGhostSPN[index], id)
-		}
-	}
-	wantAuth := []string{"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check"}
-	for index, id := range wantAuth {
-		if defaultEnumerationModuleIDs[34+index] != id {
-			t.Fatalf("auth entry %d=%q, want %q", index, defaultEnumerationModuleIDs[34+index], id)
-		}
-	}
-	for _, id := range defaultEnumerationModuleIDs {
-		if id == "mssql-auth-check" || id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" {
+		if id == "mssql-auth-check" || id == "mssqlrelay-check" || id == "mssqlpwner-enumerate" || id == "masscan" || id == "nfs-auth-check" || id == "gpoparser-local" {
 			t.Fatalf("excluded module %q entered Default Enumeration", id)
 		}
-	}
-	for _, id := range defaultEnumerationModuleIDs {
-		if id == "gpoparser-local" {
-			t.Fatal("path-prompting offline gpoParser entered Default Enumeration")
-		}
-	}
-	if defaultEnumerationModuleIDs[33] != "gpoparser-remote" {
-		t.Fatalf("GPO remote analysis is not after the existing Default Enumeration prefix: %q", defaultEnumerationModuleIDs[33])
-	}
-	if defaultEnumerationModuleIDs[40] != "sphunter-tenant-discovery" {
-		t.Fatalf("SPHunter is not the additive entry 41: %q", defaultEnumerationModuleIDs[40])
-	}
-	if defaultEnumerationModuleIDs[41] != "ad-writable-objects" {
-		t.Fatalf("AD writable analysis is not additive entry 42: %q", defaultEnumerationModuleIDs[41])
-	}
-	if defaultEnumerationModuleIDs[42] != "ftp-anonymous-access" {
-		t.Fatalf("FTP anonymous access is not additive entry 43: %q", defaultEnumerationModuleIDs[42])
-	}
-	if defaultEnumerationModuleIDs[43] != "smb-spider-plus" {
-		t.Fatalf("SMB Spider Plus is not additive entry 44: %q", defaultEnumerationModuleIDs[43])
-	}
-	if defaultEnumerationModuleIDs[44] != "smb-password-policy" {
-		t.Fatalf("SMB password policy is not additive entry 45: %q", defaultEnumerationModuleIDs[44])
-	}
-	if defaultEnumerationModuleIDs[46] != "maq" {
-		t.Fatalf("Machine account quota is not additive entry 47: %q", defaultEnumerationModuleIDs[46])
 	}
 }
 

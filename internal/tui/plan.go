@@ -54,9 +54,15 @@ type inputRequest struct {
 // defaultEnumerationModuleIDs is deliberately explicit. Adding a registration
 // must never silently add a network operation to A.
 var defaultEnumerationModuleIDs = []string{
-	"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
-	"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword", "laps", "gmsa",
-	"certipy-adcs-discovery", "certipy-adcs-enabled-templates", "certipy-adcs-vulnerable-templates",
+	// Password-not-required, delegation and LAPS/gMSA readers come from the
+	// RustHound-CE collection below, so the NetExec queries for the same data
+	// and the LAPS/gMSA password reads are not part of the automatic profile;
+	// they remain available to run by hand.
+	"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
+	"smb-server-info", "smb-sessions", "logged-on-users", "smb-enum-cve", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
+	// One unfiltered Certipy find carries every CA, template and ESC
+	// classification the -enabled and -vulnerable views report.
+	"certipy-adcs-discovery",
 	"rusthound-ce", "sccmhunter", "pxethief",
 	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit",
 	"gpoparser-remote",

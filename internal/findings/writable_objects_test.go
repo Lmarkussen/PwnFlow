@@ -33,7 +33,7 @@ func TestAnalyzeRustHoundWritableObjectsResolvesDirectAndNestedEvidence(t *testi
 	})
 	writeExport(t, root+"/users.json", "users", []map[string]any{
 		{"ObjectIdentifier": "S-1-5-21-100-1101", "Properties": map[string]any{"name": "alice", "domain": "EXAMPLE.TEST"}},
-		{"ObjectIdentifier": "S-1-5-21-100-1102", "Properties": map[string]any{"name": "target", "domain": "EXAMPLE.TEST"}, "Aces": []map[string]any{{"PrincipalSID": "S-1-5-21-100-1101", "RightName": "WriteProperty", "IsAllowed": true, "ObjectType": "attribute-guid"}, {"PrincipalSID": "S-1-5-21-100-900", "PrincipalType": "Group", "RightName": "GenericWrite", "IsAllowed": true}}},
+		{"ObjectIdentifier": "S-1-5-21-100-1102", "Properties": map[string]any{"name": "target", "domain": "EXAMPLE.TEST", "distinguishedname": "CN=target,CN=Users,DC=example,DC=test"}, "Aces": []map[string]any{{"PrincipalSID": "S-1-5-21-100-1101", "RightName": "WriteProperty", "IsAllowed": true, "ObjectType": "attribute-guid"}, {"PrincipalSID": "S-1-5-21-100-900", "PrincipalType": "Group", "RightName": "GenericWrite", "IsAllowed": true}}},
 	})
 	writeExport(t, root+"/domains.json", "domains", []map[string]any{{"ObjectIdentifier": "S-1-5-21-100", "Properties": map[string]any{"name": "EXAMPLE.TEST", "domain": "EXAMPLE.TEST"}}})
 
@@ -50,6 +50,10 @@ func TestAnalyzeRustHoundWritableObjectsResolvesDirectAndNestedEvidence(t *testi
 	for _, relationship := range report.Relationships {
 		if relationship.Evaluation != "potentially-applicable" || relationship.Artifact == "" || relationship.ArtifactRef == "" {
 			t.Fatalf("relationship overclaimed or lost provenance: %+v", relationship)
+		}
+		// The DN lets the Findings view line the relationship up with BloodyAD.
+		if relationship.TargetDN != "CN=target,CN=Users,DC=example,DC=test" {
+			t.Fatalf("relationship lost the target DN: %+v", relationship)
 		}
 	}
 	data, _ := json.Marshal(report)

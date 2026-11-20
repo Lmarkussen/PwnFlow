@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -555,7 +556,58 @@ func criticalStateHighest(state findingengine.CriticalState) string {
 }
 
 func (m *model) consolidatePresentationFindings(rows []storage.Finding) []storage.Finding {
-	return m.consolidateACLInventoryFindings(m.consolidateDelegationFindings(m.consolidateCertipyFindings(m.consolidateWritableObjectFindings(m.consolidatePasswordPolicyFindings(m.consolidateGPOFindings(m.consolidateTierFindings(m.consolidateProtectedAccountFindings(m.consolidateKerberosFindings(m.consolidatePXEFindings(rows))))))))))
+	return m.consolidateACLInventoryFindings(m.consolidateDelegationFindings(m.consolidateCertipyFindings(correlateBloodyADWritable(m.consolidateWritableObjectFindings(m.consolidatePasswordPolicyFindings(m.consolidateGPOFindings(m.consolidateTierFindings(m.consolidateProtectedAccountFindings(m.consolidateKerberosFindings(m.consolidatePXEFindings(rows)))))))))))
+}
+
+// correlateBloodyADWritable marks each BloodyAD writable-permission Finding
+// with whether the RustHound writable-object analysis for the same assessment
+// saw a write-capable relationship on the same distinguished name. The two
+// sources stay separate Findings; the note only says where they agree. When no
+// RustHound relationship carries a distinguished name there is nothing to
+// compare against, and the Findings are left unchanged.
+func correlateBloodyADWritable(rows []storage.Finding) []storage.Finding {
+	permissions := map[string][]string{}
+	compared := false
+	for _, finding := range rows {
+		if !strings.EqualFold(finding.FindingType, "ad_writable_object_assessment") {
+			continue
+		}
+		relationships, _ := findingMetadata(finding)["relationships"].([]any)
+		for _, raw := range relationships {
+			relationship, _ := raw.(map[string]any)
+			dn := strings.ToLower(strings.TrimSpace(stringValue(relationship["target_dn"])))
+			if dn == "" {
+				continue
+			}
+			compared = true
+			permission := stringValue(relationship["permission"])
+			if permission != "" && !slices.Contains(permissions[dn], permission) {
+				permissions[dn] = append(permissions[dn], permission)
+			}
+		}
+	}
+	if !compared {
+		return rows
+	}
+	result := make([]storage.Finding, 0, len(rows))
+	for _, finding := range rows {
+		if strings.EqualFold(finding.FindingType, "bloodyad_writable_permissions") {
+			metadata := findingMetadata(finding)
+			dn := strings.ToLower(strings.TrimSpace(fallbackText(metadataString(metadata, "distinguished_name"), finding.AffectedObjectID)))
+			note := "not among the RustHound writable-object relationships"
+			if found := permissions[dn]; len(found) > 0 {
+				sorted := append([]string(nil), found...)
+				sort.Strings(sorted)
+				note = "also observed by RustHound (" + strings.Join(sorted, ", ") + ")"
+			}
+			metadata["rusthound_corroboration"] = note
+			if encoded, err := json.Marshal(metadata); err == nil {
+				finding.EvidenceJSON = string(encoded)
+			}
+		}
+		result = append(result, finding)
+	}
+	return result
 }
 
 func (m *model) consolidateDelegationFindings(rows []storage.Finding) []storage.Finding {
@@ -2306,6 +2358,7 @@ func findingAttributes(finding storage.Finding, width int) string {
 	if uac := metadataString(metadata, "user_account_control"); uac != "" {
 		add("UAC FLAG", metadataString(metadata, "flag")+" ("+uac+")")
 	}
+	add("RUSTHOUND", metadataString(metadata, "rusthound_corroboration"))
 	if len(lines) == 0 {
 		return ""
 	}

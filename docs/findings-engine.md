@@ -37,7 +37,7 @@ credential, and protocol evidence remains available rather than being replaced
 by a generic summary. The projection does not write database rows or change
 specialist-category Findings.
 
-The automatic enumeration plan is an explicit, protected list of 47 modules.
+The automatic enumeration plan is an explicit, protected list of 41 modules.
 GhostSPN is the additive audit immediately after Kerberoasting. The plan is
 separate from manually selected modules and from offline artifact analysis;
 `--reanalyze-latest` analyzes retained supported artifacts and never starts a
