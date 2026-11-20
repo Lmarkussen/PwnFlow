@@ -128,10 +128,10 @@ func TestAdminRequiredIsLabelledAndStillRuns(t *testing.T) {
 // and it is refused by Enter, R, and the category-wide run.
 func TestUnavailableIsLabelledExplainedAndRefused(t *testing.T) {
 	registered := []modules.Module{
-		statusModule{id: "broken", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialDumping, protocol: modules.ProtocolSMB, status: modules.StatusUnavailable, reason: errTestUnavailable.Error()},
+		statusModule{id: "broken", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialExposure, protocol: modules.ProtocolSMB, status: modules.StatusUnavailable, reason: errTestUnavailable.Error()},
 	}
 	m := statusModel(t, registered)
-	m.setCategory(categoryIndex(t, m, modules.CategoryCredentialDumping))
+	m.setCategory(categoryIndex(t, m, modules.CategoryCredentialExposure))
 	if state := m.moduleState(0); state != "UNAVAILABLE" {
 		t.Fatalf("gated row is %q, want UNAVAILABLE", state)
 	}
@@ -190,7 +190,7 @@ func TestNetExecRegistrationsUseTheAgreedLabels(t *testing.T) {
 	if state := m.moduleState(rowOf(t, m, "smb-bitlocker")); state != "ADMIN-REQ" {
 		t.Fatalf("smb-bitlocker is %q, want ADMIN-REQ", state)
 	}
-	m.setCategory(2) // Credential Dumping
+	m.setCategory(2) // Credential Exposure
 	m.setProtocol(1) // SMB
 	if state := m.moduleState(rowOf(t, m, "smb-gpp-password")); state != "" {
 		t.Fatalf("a read-only credential discovery module is %q, want no suffix", state)

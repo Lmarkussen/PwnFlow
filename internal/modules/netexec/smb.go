@@ -102,39 +102,9 @@ func SMBEnumerationModules() []modules.Module {
 			module:      "ioxidresolver", options: []string{"DIFFERENT"},
 		},
 		{
-			id: "smb-ms17-010", name: "Check MS17-010 (EternalBlue)",
-			description: "Checks whether the target is vulnerable to MS17-010 through -M ms17-010. Detection only; the module is marked as lab-only upstream and is never exploited from here.",
-			module:      "ms17-010",
-		},
-		{
-			id: "smb-nopac", name: "Check noPac (CVE-2021-42278/42287)",
-			description: "Checks whether a domain controller is vulnerable to the noPac impersonation chain through -M nopac using a normal domain account.",
-			module:      "nopac",
-		},
-		{
-			id: "smb-ntlm-reflection", name: "Check NTLM Reflection (CVE-2025-33073)",
-			description: "Checks whether the operating system is vulnerable to the NTLM reflection attack through -M ntlm_reflection.",
-			module:      "ntlm_reflection",
-		},
-		{
-			id: "smb-printnightmare", name: "Check PrintNightmare",
-			description: "Checks whether the target is vulnerable to PrintNightmare through -M printnightmare. Detection only.",
-			module:      "printnightmare", options: []string{"PORT"},
-		},
-		{
-			id: "smb-remove-mic", name: "Check CVE-2019-1040 (Drop MIC)",
-			description: "Checks whether the target accepts NTLM authentication messages without the MIC through -M remove-mic.",
-			module:      "remove-mic", options: []string{"PORT"},
-		},
-		{
 			id: "smb-sccm-recon6", name: "Check SCCM Site Role",
 			description: "Checks whether the target is an SCCM distribution point or primary site server through -M sccm-recon6 (RECON-6), which reads the site role from the host's registry representation.",
 			module:      "sccm-recon6",
-		},
-		{
-			id: "smb-smbghost", name: "Check SMBGhost (CVE-2020-0796)",
-			description: "Reports the SMB dialect and compression capability that indicate SMBGhost through -M smbghost.",
-			module:      "smbghost",
 		},
 		{
 			id: "smb-spooler", name: "Check Print Spooler",
@@ -145,11 +115,6 @@ func SMBEnumerationModules() []modules.Module {
 			id: "smb-webdav", name: "Check WebClient Service",
 			description: "Checks whether the WebClient service is running through -M webdav.",
 			module:      "webdav", options: []string{"MSG"},
-		},
-		{
-			id: "smb-zerologon", name: "Check Zerologon (CVE-2020-1472)",
-			description: "Checks whether a domain controller is vulnerable to Zerologon through -M zerologon. Detection only.",
-			module:      "zerologon",
 		},
 		{
 			id: "smb-bitlocker", name: "Enumerate BitLocker Status",
@@ -235,7 +200,7 @@ func SMBEnumerationModules() []modules.Module {
 // Policy Preferences decrypt with a published key, and the share walker only
 // lists metadata.
 func SMBCredentialDumpingModules() []modules.Module {
-	return level(modules.CategoryCredentialDumping, modules.ProtocolSMB, []entry{
+	return level(modules.CategoryCredentialExposure, modules.ProtocolSMB, []entry{
 		{
 			id: "smb-gpp-autologin", name: "GPP Autologin Credentials",
 			description: "Reads registry.xml from SYSVOL through -M gpp_autologin to recover autologon credentials pushed by Group Policy Preferences.",

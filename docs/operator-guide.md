@@ -36,7 +36,7 @@ PwnFlow is a general-purpose framework: the target, domain, and credentials are 
 
 The application root is resolved from the executable location (or the nearest `go.mod` during development), not the current working directory. Results are written to `results/<domain>/Enumeration/NetExec/`, with prior output under `history/`, and metadata in `enumeration.db`.
 
-The browser presents NetExec by protocol and keeps its Credential Auditing and Credential Dumping categories. Network, SCCM, AD CS, and Active Directory present their registered modules directly, without an intermediary category or `N/A` protocol folder. LDAP and SMB remain separate protocol scopes, so their arguments are never mixed.
+The browser presents NetExec by protocol and keeps its Credential Auditing and Credential Exposure categories. Network, SCCM, AD CS, and Active Directory present their registered modules directly, without an intermediary category or `N/A` protocol folder. LDAP and SMB remain separate protocol scopes, so their arguments are never mixed.
 
 Offline RustHound ACL analysis and the structured findings storage API are
 documented in [the artifact schema note](rusthound-artifact-schema.md). Findings
@@ -96,7 +96,7 @@ Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the
 `Ctrl+A` runs the fixed **Default Enumeration** profile, not the whole
 registry. It includes the selected NetExec LDAP checks (password-not-required,
 delegation, DNS, obsolete operating systems, SCCM, authenticated-user info,
-AS-REP and Kerberos material) and the selected SMB checks (server/session and
+machine account quota, AS-REP and Kerberos material) and the selected SMB checks (server/session and
 logged-on-user observations, NTLM reflection, GPP/AWS/user attributes, LAPS
 and gMSA), all registered Certipy AD CS enumeration, RustHound-CE, SCCMhunter,
 PXEThief, and the eligible Network assessments. Remote-admin, credential
@@ -106,7 +106,7 @@ gated; declined items are recorded and the eligible remainder continues.
 Masscan is deliberately excluded from this profile. Run it manually with
 `Enter` after entering and approving its target and port inputs.
 
-The protected profile contains exactly 45 modules. Its order is defined
+The protected profile contains exactly 47 modules. Its order is defined
 explicitly in `internal/tui/plan.go`; GhostSPN (`ghostspn-audit`) immediately
 follows Kerberoasting. This count and ordering are part of the assessment
 workflow contract, not a documentation-only list.
@@ -145,7 +145,7 @@ Each run writes both reports and the relay target list into its own directory (`
 
 When a module needs a value that has no sensible default - the object whose DACL to read, the text to search computers for - pressing `Enter` (or `I`, to configure it without running it) opens an input prompt that explains the field and validates the answer. A value entered this way is used for the rest of the assessment and by any batch that includes the module, including a global run, which collects every value it needs before it starts rather than interrupting itself halfway. `Esc` during a prompt skips that one module and the rest of the plan still runs; `Ctrl+C` abandons the plan. Values live in the running session only, so they cannot reach another assessment, and automation can keep supplying them up front with `--module-options`.
 
-PwnFlow is an enumeration and assessment framework, so the NetExec registry holds reads: directory, host, share, service, and configuration enumeration; the credential checks for each protocol; and the credential material a plain read exposes, which lives in `Credential Dumping` rather than `Enumeration`. AS-REP roasting and Kerberoasting are registered under LDAP in `Credential Auditing`: they use the directory protocol and your credentials, change nothing on the target, and write the crackable material into the assessment tree for you to audit offline - PwnFlow never cracks it, and it never runs them for you. Exploitation, coercion, relay execution, payload delivery, remote command execution, credential dumping that needs code execution, and anything that configures a listener are not registered at all, so an enumeration scope cannot reach them even by accident.
+PwnFlow is an enumeration and assessment framework, so the NetExec registry holds reads: directory, host, share, service, and configuration enumeration; the credential checks for each protocol; and the credential material a plain read exposes, which lives in `Credential Exposure` rather than `Enumeration`. AS-REP roasting and Kerberoasting are registered under LDAP in `Credential Auditing`: they use the directory protocol and your credentials, change nothing on the target, and write the crackable material into the assessment tree for you to audit offline - PwnFlow never cracks it, and it never runs them for you. Exploitation, vulnerability checks, coercion, relay execution, payload delivery, remote command execution, credential dumping that needs code execution, screen capture, and anything that configures a listener are not registered at all, so an enumeration scope cannot reach them even by accident.
 
 Module Information explains a registration before you run it: the transport, the NetExec module or native flag, the options (yours and the defaults), and whether the target has to grant an administrator right.
 

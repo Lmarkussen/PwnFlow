@@ -6,8 +6,9 @@ import "github.com/pwnflow/pwnflow/internal/modules"
 // the shadow-copy listing, which is a native WMI query with no SMB equivalent.
 //
 // The modules WMI shares with SMB - bitlocker, enum_dns, get_netconnections,
-// ioxidresolver, spooler, zerologon, ntds-dump-raw - are registered once, under
-// SMB, so the same check does not appear twice in the menu. The native
+// ioxidresolver, spooler, ntds-dump-raw - are registered once, under SMB, so
+// the same check does not appear twice in the menu. zerologon is a
+// vulnerability check and is registered under neither transport. The native
 // --wmi-query flag takes an operator-supplied WQL statement and the -x/-X flags
 // run code on the target; both are documented rather than registered.
 

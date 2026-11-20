@@ -20,7 +20,7 @@ Implemented and locally validated: P1, P2, P3 (hard pass), accepted TUI navigati
 
 Deployed and offline-verified: the Codex 010 build was deployed to Kali at commit `1fd18742961618bdb99a8ac720904cbfe8d52584` with binary SHA-256 `f65781e1dbf234c7f37c46077aa90c9c0f2f9c1190930006debf1ae9427b9079`; it includes the 009F fix. 009F live operator acceptance remains pending; no new live crawl was run after that fix.
 
-Operator accepted: prior Finder/Watcher/Tool Runner navigation and Findings layout behavior. Pending operator acceptance: Codex 010 Easter egg and the post-009F Spider Plus runtime behavior.
+Operator accepted: prior Finder/Watcher/Tool Runner navigation and Findings layout behavior. Pending operator acceptance: the post-009F Spider Plus runtime behavior.
 
 The comprehensive Findings-quality review remains deferred. No P3 reopening, SPHunter/bloodyAD expansion, or unrelated redesign is authorized by this handoff.
 
@@ -64,7 +64,7 @@ Observed ACL relationships are not asserted as proven effective access. Reports 
 
 Finder root Left is a strict no-op; nested Left navigates to the parent and Esc remains the explicit Finder exit. Ctrl+W, Ctrl+F and Ctrl+A are routed globally from intended Main/Tool Runner states. Watcher and Finder preserve selection/focus state, and active enumeration keeps read-only browsing available.
 
-Codex 010 adds an embedded full-screen Easter egg. The exact source artwork is preserved at `internal/tui/assets/easter_asc.asc` and embedded by `internal/tui/easter.go`; it does not depend on `/home/lars/easter_asc.asc` at runtime. Ctrl+= opens it from idle Main/Tool Runner. Bubble Tea 1.3 has no dedicated `KeyCtrlEqual`, so the handler accepts the named `ctrl+=` representation and the legacy control-byte representation exposed as `tea.KeyCtrlCloseBracket`; plain `=` is not consumed. Lowercase or uppercase Q closes the Easter egg without invoking the global quit path. Active enumeration, prompts, Watcher and Findings are not interrupted.
+The Codex 010 full-screen Easter egg was removed from the source in a later release and is no longer part of the TUI.
 
 ## Validation and deployment rule
 
@@ -72,7 +72,6 @@ For accepted changes: modify narrowly → run `bash -n install.sh`, `make build`
 
 ## Known limitations and next actions
 
-- Codex 010 Easter egg still requires operator visual/keyboard acceptance on the deployed Kali terminal.
 - 009F Spider Plus still requires a fresh operator-controlled live comparison after deployment; no live crawl was started automatically.
 - Kali has no embedded VCS revision because it is a non-Git source-copy build; source manifest parity is authoritative.
 - Historical root-owned evidence is intentionally untouched pending a separately approved remediation plan.

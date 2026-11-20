@@ -54,9 +54,9 @@ to hide it.
 ## Module ownership: one protocol per capability
 
 A `-M` module is registered under exactly one protocol, the transport that fits
-the operator's workflow best. `bitlocker`, `spooler`, `zerologon`,
-`ioxidresolver`, `enum_dns`, and `get_netconnections` are advertised for both SMB
-and WMI; PwnFlow registers the SMB form, so the same check never appears twice.
+the operator's workflow best. `bitlocker`, `spooler`, `ioxidresolver`,
+`enum_dns`, and `get_netconnections` are advertised for both SMB and WMI;
+PwnFlow registers the SMB form, so the same check never appears twice.
 Domain-wide data is read over LDAP, which means the SMB SAMR variants of the same
 queries are not registered either - see the mapping below.
 
@@ -108,7 +108,7 @@ test asserts this for every registration).
 | --get-sid | domain-sid | Enumeration | - |
 | --users | domain-users | Enumeration | - |
 | --pso | fine-grained-password-policy | Enumeration | - |
-| --gmsa | gmsa | Credential Dumping | - |
+| --gmsa | gmsa | Credential Exposure | - |
 | --kerberoasting | kerberoasting | Credential Auditing | - |
 | --password-not-required | password-not-required | Enumeration | - |
 | --pass-pol | password-policy | Enumeration | - |
@@ -122,13 +122,13 @@ test asserts this for every registration).
 | dump-computers | dump-computers | Enumeration | - |  |
 | entra-id | entra-id | Enumeration | - |  |
 | find-computer | find-computer | Enumeration | - | TEXT |
-| get-desc-users | get-desc-users | Credential Dumping | - | FILTER, PASSWORDPOLICY, MINLENGTH |
-| get-info-users | get-info-users | Credential Dumping | - | FILTER |
+| get-desc-users | get-desc-users | Credential Exposure | - | FILTER, PASSWORDPOLICY, MINLENGTH |
+| get-info-users | get-info-users | Credential Exposure | - | FILTER |
 | get-network | get-network | Enumeration | - | ALL, ONLY_HOSTS |
-| get-unixUserPassword | get-unixUserPassword | Credential Dumping | - |  |
-| get-userPassword | get-userPassword | Credential Dumping | - |  |
+| get-unixUserPassword | get-unixUserPassword | Credential Exposure | - |  |
+| get-userPassword | get-userPassword | Credential Exposure | - |  |
 | groupmembership | groupmembership | Enumeration | - | USER |
-| laps | laps | Credential Dumping | - | COMPUTER |
+| laps | laps | Credential Exposure | - | COMPUTER |
 | maq | maq | Enumeration | - |  |
 | obsolete | obsolete | Enumeration | - |  |
 | sccm | sccm | Enumeration | - | BASE_DN, REC_RESOLVE |
@@ -151,37 +151,30 @@ test asserts this for every registration).
 
 | -M module | registration | category | privilege | options |
 |---|---|---|---|---|
-| aws-credentials | smb-aws-credentials | Credential Dumping | - |  |
+| aws-credentials | smb-aws-credentials | Credential Exposure | - |  |
 | bitlocker | smb-bitlocker | Enumeration | ADMIN-REQ |  |
 | enum_av | smb-enum-av | Enumeration | - |  |
 | enum_ca | smb-enum-ca | Enumeration | - |  |
 | enum_dns | smb-enum-dns | Enumeration | ADMIN-REQ |  |
 | enum_interfaces | smb-enum-interfaces | Enumeration | ADMIN-REQ |  |
 | get_netconnections | smb-get-netconnections | Enumeration | ADMIN-REQ |  |
-| gpp_autologin | smb-gpp-autologin | Credential Dumping | - |  |
-| gpp_password | smb-gpp-password | Credential Dumping | - |  |
+| gpp_autologin | smb-gpp-autologin | Credential Exposure | - |  |
+| gpp_password | smb-gpp-password | Credential Exposure | - |  |
 | gpp_privileges | smb-gpp-privileges | Enumeration | - | NO_LDAP |
 | hyperv-host | smb-hyperv-host | Enumeration | ADMIN-REQ |  |
 | install_elevated | smb-install-elevated | Enumeration | ADMIN-REQ |  |
 | ioxidresolver | smb-ioxidresolver | Enumeration | - | DIFFERENT |
 | keepass_discover | smb-keepass-discover | Enumeration | ADMIN-REQ |  |
 | lockscreendoors | smb-lockscreendoors | Enumeration | ADMIN-REQ |  |
-| ms17-010 | smb-ms17-010 | Enumeration | - |  |
-| nopac | smb-nopac | Enumeration | - |  |
-| ntlm_reflection | smb-ntlm-reflection | Enumeration | - |  |
 | ntlmv1 | smb-ntlmv1 | Enumeration | ADMIN-REQ |  |
 | presence | smb-presence | Enumeration | ADMIN-REQ |  |
-| printnightmare | smb-printnightmare | Enumeration | - | PORT |
 | reg-query | smb-reg-query | Enumeration | ADMIN-REQ | PATH, KEY |
-| remove-mic | smb-remove-mic | Enumeration | - | PORT |
 | runasppl | smb-runasppl | Enumeration | ADMIN-REQ |  |
 | sccm-recon6 | smb-sccm-recon6 | Enumeration | - |  |
-| smbghost | smb-smbghost | Enumeration | - |  |
 | spooler | smb-spooler | Enumeration | - | PORT |
 | uac | smb-uac | Enumeration | ADMIN-REQ |  |
 | wcc | smb-wcc | Enumeration | ADMIN-REQ | OUTPUT_FORMAT, OUTPUT, QUIET |
 | webdav | smb-webdav | Enumeration | - | MSG |
-| zerologon | smb-zerologon | Enumeration | - |  |
 
 ### WINRM
 
@@ -228,14 +221,12 @@ test asserts this for every registration).
 | native flag | registration | category | privilege |
 |---|---|---|---|
 |  | rdp-auth-check | Enumeration | - |
-| --nla-screenshot | rdp-screenshot | Enumeration | - |
 
 ### VNC
 
 | native flag | registration | category | privilege |
 |---|---|---|---|
 |  | vnc-auth-check | Enumeration | - |
-| --screenshot | vnc-screenshot | Enumeration | - |
 
 ### NFS
 
@@ -329,6 +320,11 @@ Per protocol:
 | VNC | 2 | 2 |
 | NFS | 2 | 2 |
 
+The Credential Dumping category has since been renamed Credential Exposure; its
+results directory keeps the name `CredentialDumping` so existing assessments stay
+valid. Nine further registrations were removed afterwards: the seven SMB
+vulnerability checks and the RDP and VNC screen captures (see below).
+
 The previous count in this document (175) was under-reported: the script that
 produced it skipped the rows whose native-flag cell is empty, which is every
 credential check.
@@ -346,7 +342,9 @@ test fails if an advertised module is neither registered nor listed as excluded.
 | Domain data read over SMB | `users`, `groups`, `computers`, `pass-pol`, `rid-brute` | The domain dataset is read over LDAP (LDAPS), which returns more attributes and needs no SAMR path. The SMB local-group, session, and logged-on-user queries stay, because a host's local data has no LDAP equivalent |
 | Native duplicate | `interfaces` (native) | `-M enum_interfaces` is the module that superseded the flag, and it is the one registered |
 | Duplicate LDAP user-description query | `user-desc` | `get-desc-users` is retained as the canonical description query because it returns the same attribute and exposes filtering and password-policy options |
-| Duplicate module on a second transport | `aws-credentials` (WinRM, SSH), `bitlocker`, `spooler`, `zerologon`, `ioxidresolver`, `enum_dns`, `get_netconnections` (WMI) | Registered once, under the protocol PwnFlow keeps for that capability |
+| Vulnerability checks | `ms17-010`, `nopac`, `ntlm_reflection`, `printnightmare`, `remove-mic`, `smbghost`, `zerologon` (SMB and WMI) | PwnFlow enumerates configuration and reports what it observes; CVE detection belongs in a vulnerability scanner |
+| Screen capture | `--nla-screenshot` (RDP), `--screenshot` (VNC) | A captured screen is not directory or host configuration |
+| Duplicate module on a second transport | `aws-credentials` (WinRM, SSH), `bitlocker`, `spooler`, `ioxidresolver`, `enum_dns`, `get_netconnections` (WMI) | Registered once, under the protocol PwnFlow keeps for that capability |
 | Configuration, not enumeration | `test_connection` (SMB, MSSQL), `spider_plus` | `test_connection` pings a host the operator names, which is a probe rather than a read of the target; `spider_plus` is oriented at collecting files (download flags, size limits) and its crawl duplicates the operator's dedicated share tooling |
 | Superseded query | `pso` | The `--pso` native query is registered as fine-grained-password-policy |
 | Covered by another family | `certipy-find` | The AD CS family runs `certipy find` with a controlled artifact workflow |
@@ -416,7 +414,7 @@ happens to each registration rather than which scope is on screen:
 | Available, `ADMIN-REQ` | Runs, in registry order, with declared prerequisites honoured |
 | `INPUT-REQ` | PwnFlow asks for the value **before** the batch starts, and stores it for the assessment |
 | `UNAVAILABLE` | Skipped, and named in the plan |
-| Credential Auditing / Credential Dumping | Named and held for the operator's decision: approving runs them with the plan, declining runs the rest |
+| Credential Auditing / Credential Exposure | Named and held for the operator's decision: approving runs them with the plan, declining runs the rest |
 | A module whose own run reaches wider than the assessment's discovery (PXEThief with no stored endpoint, which would broadcast a DHCP discover) | Same decision, with the module's own reason shown |
 | A module needing elevated execution (PXEThief without the raw-socket capability) | The existing amber confirmation and sudo handoff, unchanged |
 
@@ -496,6 +494,9 @@ Result vocabulary:
 
 ### Live results
 
+The SMB vulnerability checks and screen captures that were part of this run
+have since been removed from the registry, and their rows are omitted below.
+
 Every registration below ran through PwnFlow's runner against the authorized
 target with a valid domain account: 77 modules, exit status 0, no failures.
 Artifact sizes are the persisted output size, which is how an empty-but-successful
@@ -542,14 +543,7 @@ result is told apart from a real one.
 | smb-ioxidresolver | completed | exit=0 | 374 | LIVE PASS |
 | smb-spooler | completed | exit=0 | 378 | LIVE PASS |
 | smb-webdav | completed | exit=0 | 289 | LIVE PASS |
-| smb-nopac | completed | exit=0 | 7164 | LIVE PASS |
-| smb-ntlm-reflection | completed | exit=0 | 289 | LIVE PASS |
 | smb-sccm-recon6 | completed | exit=0 | 472 | LIVE PASS |
-| smb-smbghost | completed | exit=0 | 289 | LIVE PASS |
-| smb-remove-mic | completed | exit=0 | 289 | LIVE PASS |
-| smb-printnightmare | completed | exit=0 | 289 | LIVE PASS |
-| smb-zerologon | completed | exit=0 | 397 | LIVE PASS |
-| smb-ms17-010 | completed | exit=0 | 289 | LIVE PASS |
 | smb-bitlocker | completed | exit=0 | 502 | LIVE PASS |
 | smb-enum-interfaces | completed | exit=0 | 568 | LIVE PASS |
 | smb-enum-dns | completed | exit=0 | 3997 | LIVE PASS |
@@ -604,7 +598,7 @@ direct invocation for representative modules, and the results matched:
 | Capability | Evidence |
 |---|---|
 | `asreproast`, `kerberoasting` | The flags are advertised by `nxc ldap --help` on the installed build; the command builder is asserted by unit tests (protocol, LDAPS port, credential, export path inside the assessment tree); the capability gate is asserted to refuse a build without the flag. No ticket or hash was requested |
-| Credential-sensitive modules (`get-info-users`, `get-desc-users`, `laps`, and the rest of Credential Dumping) | Command construction, category placement, artifact path, and option handling are covered by offline tests. Recovering real material needs its own approval, so the live check excludes them by construction - a guard test fails if a sensitive registration is ever added to that list |
+| Credential-sensitive modules (`get-info-users`, `get-desc-users`, `laps`, and the rest of Credential Exposure) | Command construction, category placement, artifact path, and option handling are covered by offline tests. Recovering real material needs its own approval, so the live check excludes them by construction - a guard test fails if a sensitive registration is ever added to that list |
 | MSSQL, SSH, FTP, VNC, NFS | The commands build correctly, pass the capability check, and are reported `LIVE NOT APPLICABLE` when the service is absent (see the table above) |
 
 ### What a `LIVE NOT APPLICABLE` result looks like
@@ -664,5 +658,6 @@ accept:
 | MSSQL | `-q`/`--query`, `--rid-brute` | Operator-supplied statement, or a loud duplicate of the login enumeration |
 | SSH | `-x`, `--put-file`, `--get-file`, `--key-file` | Remote execution, file transfer, key material |
 | FTP | `--get`, `--put` | File transfer |
-| RDP | `--screenshot`, `-x`, `-X` | A full interactive login rather than a read; the NLA login-prompt screenshot is registered instead |
+| RDP | `--screenshot`, `--nla-screenshot`, `-x`, `-X` | Screen capture, or a full interactive login rather than a read |
+| VNC | `--screenshot` | Screen capture |
 | NFS | `--ls`, `--get-file`, `--put-file`, `--share` | Operator-supplied paths |

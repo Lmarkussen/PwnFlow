@@ -30,7 +30,7 @@ func yoloRegistry(log *executionLog) ([]modules.Module, []int64) {
 		{id: "sccmhunter", family: modules.ToolFamilySCCM, category: modules.CategoryEnumeration, protocol: modules.ProtocolNA, log: log},
 		{id: "network-hosts", family: modules.ToolFamilyNetwork, category: modules.Category("Host Discovery"), protocol: modules.ProtocolNA, log: log},
 		{id: "cred-audit", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialAuditing, protocol: modules.ProtocolLDAP, log: log},
-		{id: "cred-dump", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialDumping, protocol: modules.ProtocolSMB, log: log},
+		{id: "cred-dump", family: modules.ToolFamilyNetExec, category: modules.CategoryCredentialExposure, protocol: modules.ProtocolSMB, log: log},
 	}
 	registered := make([]modules.Module, 0, len(definitions))
 	ids := make([]int64, 0, len(definitions))

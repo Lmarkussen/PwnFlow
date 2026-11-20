@@ -8,8 +8,8 @@ import (
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
-	if len(defaultEnumerationModuleIDs) != 46 {
-		t.Fatalf("Default Enumeration has %d entries, want 46", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 47 {
+		t.Fatalf("Default Enumeration has %d entries, want 47", len(defaultEnumerationModuleIDs))
 	}
 	wantPrefix := []string{
 		"password-not-required", "delegation", "dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting",
@@ -67,6 +67,9 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	}
 	if defaultEnumerationModuleIDs[44] != "smb-password-policy" {
 		t.Fatalf("SMB password policy is not additive entry 45: %q", defaultEnumerationModuleIDs[44])
+	}
+	if defaultEnumerationModuleIDs[46] != "maq" {
+		t.Fatalf("Machine account quota is not additive entry 47: %q", defaultEnumerationModuleIDs[46])
 	}
 }
 
@@ -150,7 +153,7 @@ func TestEnumerationDetailProfileHasNoDuplicateChecks(t *testing.T) {
 		}
 		seen[id] = true
 	}
-	if !seen["smb-enum-cve"] || !seen["bloodyad-writable"] || seen["smb-ntlm-reflection"] {
+	if !seen["smb-enum-cve"] || !seen["bloodyad-writable"] || !seen["maq"] || seen["smb-ntlm-reflection"] {
 		t.Fatal(seen)
 	}
 }

@@ -155,7 +155,7 @@ func LDAPEnumerationModules() []modules.Module {
 // read-only against the target, but their output is credential material, so
 // they are not part of an enumeration run.
 func LDAPCredentialDumpingModules() []modules.Module {
-	return level(modules.CategoryCredentialDumping, modules.ProtocolLDAP, []entry{
+	return level(modules.CategoryCredentialExposure, modules.ProtocolLDAP, []entry{
 		{
 			id: "get-info-users", name: "Get AD-User Info",
 			description: "Reads the info field of every user through -M get-info-users; the field frequently holds a password left by an administrator.",

@@ -48,7 +48,7 @@ type Category string
 const (
 	CategoryEnumeration         Category = "Enumeration"
 	CategoryCredentialAuditing  Category = "Credential Auditing"
-	CategoryCredentialDumping   Category = "Credential Dumping"
+	CategoryCredentialExposure  Category = "Credential Exposure"
 	CategoryPrivilegeEscalation Category = "Privilege Escalation"
 	// The remaining taxonomy entries are named here rather than spelled out at
 	// each use: a family offers a fixed set of categories, and a registration
@@ -62,7 +62,7 @@ const (
 )
 
 func Categories() []Category {
-	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping, CategoryPrivilegeEscalation, CategoryConfigurationAuditing, CategoryPermissionsAuditing, CategorySecurityAuditing}
+	return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialExposure, CategoryPrivilegeEscalation, CategoryConfigurationAuditing, CategoryPermissionsAuditing, CategorySecurityAuditing}
 }
 
 type Protocol string
@@ -100,7 +100,7 @@ func CategoriesForFamily(family ToolFamily) []Category {
 		// read the target or export material for offline auditing, so the
 		// navigation offers the two categories those belong to and no
 		// exploitation category with nothing legitimate in it.
-		return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialDumping}
+		return []Category{CategoryEnumeration, CategoryCredentialAuditing, CategoryCredentialExposure}
 	case ToolFamilyADCS:
 		return []Category{CategoryEnumeration, CategoryConfigurationAuditing, CategoryPrivilegeEscalation}
 	case ToolFamilyActiveDirectory:

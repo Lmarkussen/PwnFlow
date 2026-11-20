@@ -146,6 +146,15 @@ var excludedModules = map[string]string{
 	"smb:empire_exec":     "exploitation: payload delivery through Empire",
 	"smb:met_inject":      "exploitation: Meterpreter stager injection",
 	"smb:web_delivery":    "exploitation: Metasploit web-delivery payload",
+	// SMB: vulnerability checks. PwnFlow enumerates configuration and reports
+	// what it observes; CVE detection belongs in a vulnerability scanner.
+	"smb:ms17-010":        "vulnerability-check: CVE detection is out of scope",
+	"smb:nopac":           "vulnerability-check: CVE detection is out of scope",
+	"smb:ntlm_reflection": "vulnerability-check: CVE detection is out of scope",
+	"smb:printnightmare":  "vulnerability-check: CVE detection is out of scope",
+	"smb:remove-mic":      "vulnerability-check: CVE detection is out of scope",
+	"smb:smbghost":        "vulnerability-check: CVE detection is out of scope",
+	"smb:zerologon":       "vulnerability-check: CVE detection is out of scope",
 	// WinRM.
 	"winrm:aws-credentials": "duplicate: registered under SMB",
 	"winrm:ntds-dump-raw":   "credential-dump: directory database files",
@@ -155,7 +164,7 @@ var excludedModules = map[string]string{
 	// WMI: the same checks SMB already offers, plus dumps and exploitation.
 	"wmi:ioxidresolver":      "duplicate: registered under SMB",
 	"wmi:spooler":            "duplicate: registered under SMB",
-	"wmi:zerologon":          "duplicate: registered under SMB",
+	"wmi:zerologon":          "vulnerability-check: CVE detection is out of scope",
 	"wmi:bitlocker":          "duplicate: registered under SMB",
 	"wmi:enum_dns":           "duplicate: registered under SMB",
 	"wmi:get_netconnections": "duplicate: registered under SMB",
@@ -241,6 +250,10 @@ func TestRetiredAndSupersededRegistrationsAreAbsent(t *testing.T) {
 		"handlekatz": true, "wdigest": true, "keepass_trigger": true, "ntdsutil": true,
 		"ntds-dump-raw": true, "mssql_priv": true, "mssql_coerce": true, "exec_on_link": true,
 		"link_xpcmd": true, "link_enable_cmdshell": true, "enable_cmdshell": true,
+		// Vulnerability checks and screen captures.
+		"ms17-010": true, "nopac": true, "ntlm_reflection": true, "printnightmare": true,
+		"remove-mic": true, "smbghost": true, "zerologon": true,
+		"rdp-screenshot": true, "vnc-screenshot": true,
 		// The retired PwnFlow registrations.
 		"bloodhound": true, "organizational-units": true,
 	}
@@ -294,7 +307,7 @@ func TestNoExploitOrListenerRegistrationsRemain(t *testing.T) {
 // NetExec offers the categories its registrations belong to, and no category that
 // exists only to hold exploitation.
 func TestNetExecCategoriesAreEnumerationAndAuditing(t *testing.T) {
-	want := []modules.Category{modules.CategoryEnumeration, modules.CategoryCredentialAuditing, modules.CategoryCredentialDumping}
+	want := []modules.Category{modules.CategoryEnumeration, modules.CategoryCredentialAuditing, modules.CategoryCredentialExposure}
 	got := modules.CategoriesForFamily(modules.ToolFamilyNetExec)
 	if len(got) != len(want) {
 		t.Fatalf("NetExec categories = %v, want %v", got, want)

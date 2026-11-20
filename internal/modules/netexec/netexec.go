@@ -903,7 +903,9 @@ func categoryPath(category modules.Category) string {
 	switch category {
 	case modules.CategoryCredentialAuditing:
 		return "CredentialAuditing"
-	case modules.CategoryCredentialDumping:
+	case modules.CategoryCredentialExposure:
+		// The directory keeps its original name so existing assessments and
+		// the Findings that reference their artifacts stay valid.
 		return "CredentialDumping"
 	case modules.CategoryPrivilegeEscalation:
 		return "PrivilegeEscalation"

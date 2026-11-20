@@ -70,6 +70,9 @@ var defaultEnumerationModuleIDs = []string{
 	"smb-spider-plus",
 	"smb-password-policy",
 	"bloodyad-writable",
+	// Read-only domain policy: the quota of computer accounts a normal user may
+	// create, which the NetExec security analyzer already turns into a Finding.
+	"maq",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing
@@ -183,7 +186,7 @@ func (m *model) approvalReason(module modules.Module, index int) string {
 	switch module.Category() {
 	case modules.CategoryCredentialAuditing:
 		return "exports authentication material for offline auditing"
-	case modules.CategoryCredentialDumping:
+	case modules.CategoryCredentialExposure:
 		return "reads credential material from the target"
 	}
 	if requester, ok := module.(modules.ApprovalRequester); ok {
