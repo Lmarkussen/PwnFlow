@@ -37,7 +37,7 @@ func TestDeriveInformationalFindingsFromHistoricalRustHound(t *testing.T) {
 		{"ObjectIdentifier": domainSID + "-1101", "Properties": map[string]any{"name": "USER@LAB.TEST", "domain": "LAB.TEST", "enabled": false}},
 	})
 	writeInformationalFixture(t, dir, "lab_computers.json", "computers", []map[string]any{
-		{"ObjectIdentifier": domainSID + "-1000", "Properties": map[string]any{"name": "DC01.LAB.TEST", "domain": "LAB.TEST", "isdc": true, "ipaddress": "10.0.0.10"}},
+		{"ObjectIdentifier": domainSID + "-1000", "Properties": map[string]any{"name": "DC01.LAB.TEST", "domain": "LAB.TEST", "isdc": true, "ipaddress": "192.0.2.10"}},
 	})
 
 	rows := []storage.Finding{{FindingInput: storage.FindingInput{

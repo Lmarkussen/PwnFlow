@@ -40,7 +40,7 @@ var privilegedRIDs = map[string]string{
 	"549": "Server Operators", "550": "Print Operators", "551": "Backup Operators",
 }
 
-// Trust attribute bits, [MS-ADTS] 6.1.6.7.9.
+// Trust attribute bits, as defined for trustAttributes in [MS-ADTS].
 const (
 	trustNonTransitive       = 0x00000001
 	trustQuarantinedDomain   = 0x00000004
