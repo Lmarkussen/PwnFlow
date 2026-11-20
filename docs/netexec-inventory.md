@@ -144,6 +144,7 @@ test asserts this for every registration).
 | --tasklist | running-processes | Enumeration | ADMIN-REQ |
 | --disks | smb-disks | Enumeration | - |
 | --local-groups | smb-local-groups | Enumeration | ADMIN-REQ |
+| --users --pass-pol --shares (no credentials) | smb-null-session | Enumeration | - |
 |  | smb-server-info | Enumeration | - |
 | --smb-sessions | smb-sessions | Enumeration | ADMIN-REQ |
 | --shares | smb-shares | Enumeration | - |
@@ -339,7 +340,7 @@ test fails if an advertised module is neither registered nor listed as excluded.
 |---|---|---|
 | Exploitation and state change | `add-computer`, `change-password`, `coerce_plus`, `timeroast`, `drop-sc`, `drop-library-ms`, `scuffy`, `slinky`, `impersonate`, `pi`, `schtask_as`, `rdp` (SMB and WMI), `remote-uac`, `shadowrdp`, `empire_exec`, `met_inject`, `web_delivery`, `enable_cmdshell`, `link_enable_cmdshell`, `link_xpcmd`, `exec_on_link`, `mssql_priv`, `mssql_coerce`, `pre2k`, `raisechild`, `wdigest`, `keepass_trigger` | They create or change objects, run code, deliver payloads, or configure a listener. PwnFlow registers none of them, and the Privilege Escalation category is gone with them |
 | Credential dumping and extraction | `sam`, `lsa`, `ntds`, `dpapi`, `sccm` (native), `lsassy`, `nanodump`, `procdump`, `handlekatz`, `hash_spider`, `dpapi_hash`, `eventlog_creds`, `iis`, `masky`, `mobaxterm`, `mremoteng`, `msol`, `ntdsutil`, `ntds-dump-raw`, `powershell_history`, `putty`, `rdcman`, `reg-winlogon`, `security-questions`, `teams_localdb`, `veeam`, `vnc`, `wam`, `wifi`, `winscp`, `notepad`, `notepad++`, `recent_files`, `recyclebin`, `snipped`, `backup_operator` | Each one reads process memory, the directory database, a credential vault, or per-user secret stores, and several need code execution on the target. They are dumping rather than enumeration |
-| Domain data read over SMB | `users`, `groups`, `computers`, `pass-pol`, `rid-brute` | The domain dataset is read over LDAP (LDAPS), which returns more attributes and needs no SAMR path. The SMB local-group, session, and logged-on-user queries stay, because a host's local data has no LDAP equivalent |
+| Domain data read over SMB | `users`, `groups`, `computers`, `pass-pol`, `rid-brute` | The domain dataset is read over LDAP (LDAPS), which returns more attributes and needs no SAMR path. The SMB local-group, session, and logged-on-user queries stay, because a host's local data has no LDAP equivalent. `smb-null-session` uses `--users --pass-pol --shares` with an empty user name and password for a different question - what an unauthenticated client can read - and never with the assessment credentials |
 | Native duplicate | `interfaces` (native) | `-M enum_interfaces` is the module that superseded the flag, and it is the one registered |
 | Duplicate LDAP user-description query | `user-desc` | `get-desc-users` is retained as the canonical description query because it returns the same attribute and exposes filtering and password-policy options |
 | Vulnerability checks | `ms17-010`, `nopac`, `ntlm_reflection`, `printnightmare`, `remove-mic`, `smbghost`, `zerologon` (SMB and WMI) | PwnFlow enumerates configuration and reports what it observes; CVE detection belongs in a vulnerability scanner |

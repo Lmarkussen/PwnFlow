@@ -28,6 +28,13 @@ func TestHygieneFindingRouting(t *testing.T) {
 		// RustHound password readers.
 		{"ad_account_laps_password_readers", "Principals that can read LAPS passwords (CORP.EXAMPLE)", "active_directory", "account_security"},
 		{"ad_account_gmsa_password_readers", "gMSA password readable by SMB-SERVERS@CORP.EXAMPLE: SVC$@CORP.EXAMPLE", "active_directory", "account_security"},
+		// P4 checks.
+		{"ad_domain_config_pre2000_compatible_access", "Pre-Windows 2000 Compatible Access members (CORP.EXAMPLE)", "active_directory", "domain_configuration"},
+		{"ad_account_kerberos_rc4_only", "Accounts limited to RC4 Kerberos encryption (CORP.EXAMPLE)", "active_directory", "account_security"},
+		{"ad_domain_config_dns_record_creation", "Any authenticated user can add DNS records (CORP.EXAMPLE)", "active_directory", "domain_configuration"},
+		{"ad_domain_config_anonymous_ldap_read", "Unauthenticated LDAP search answered (CORP.EXAMPLE)", "active_directory", "domain_configuration"},
+		{"smb_null_session_enumeration", "Anonymous SMB enumeration: DC01", "network", "smb"},
+		{"smb_v1_enabled", "SMBv1 enabled: DC01", "network", "smb"},
 		// Existing routing is unchanged.
 		{"ad_account_passwd_notreqd", "Password Not Required Account", "active_directory", "account_security"},
 		{"ad_domain_policy_password_policy_snapshot", "Domain Password Policy Snapshot", "active_directory", "domain_security_policy"},

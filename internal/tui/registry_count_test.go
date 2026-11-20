@@ -7,12 +7,14 @@ import (
 
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
+	"github.com/pwnflow/pwnflow/internal/modules/directorysettings"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 	"github.com/pwnflow/pwnflow/internal/modules/networkhound"
 	"github.com/pwnflow/pwnflow/internal/modules/relayking"
 	"github.com/pwnflow/pwnflow/internal/modules/rusthound"
 	"github.com/pwnflow/pwnflow/internal/modules/sccm"
 	"github.com/pwnflow/pwnflow/internal/modules/specialized"
+	"github.com/pwnflow/pwnflow/internal/modules/trustinventory"
 )
 
 // fullRegistry is the registry the interface builds, so a test can ask what a
@@ -25,6 +27,8 @@ func fullRegistry() []modules.Module {
 		}
 	}
 	registry.Register(rusthound.Module{})
+	registry.Register(trustinventory.Module{})
+	registry.Register(directorysettings.Module{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)
 	}

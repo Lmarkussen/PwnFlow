@@ -79,6 +79,11 @@ var defaultEnumerationModuleIDs = []string{
 	// Read-only domain policy: the quota of computer accounts a normal user may
 	// create, which the NetExec security analyzer already turns into a Finding.
 	"maq",
+	// Directory settings the RustHound collection does not carry: dSHeuristics,
+	// an unauthenticated LDAP search, and the DNS zone ACLs.
+	"ad-directory-settings",
+	// What an SMB session with no credentials can enumerate on the target.
+	"smb-null-session",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing

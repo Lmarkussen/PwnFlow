@@ -96,6 +96,9 @@ type Definition struct {
 	AdminReasonValue   string
 	SensitivityValue   modules.Sensitivity
 	ReadOnlyValue      bool
+	// AnonymousValue sends an empty user name and password instead of the
+	// assessment credentials.
+	AnonymousValue bool
 }
 
 type Module struct{ definition Definition }
@@ -525,11 +528,16 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 		}
 	}
 	args := []string{protocol.command, target}
-	if protocol.username {
-		args = append(args, "-u", runtime.Username)
-	}
-	if protocol.password {
-		args = append(args, "-p", runtime.Password)
+	switch {
+	case m.definition.AnonymousValue:
+		args = append(args, "-u", "", "-p", "")
+	default:
+		if protocol.username {
+			args = append(args, "-u", runtime.Username)
+		}
+		if protocol.password {
+			args = append(args, "-p", runtime.Password)
+		}
 	}
 	if protocol.domain && strings.TrimSpace(runtime.Domain) != "" {
 		args = append(args, "-d", runtime.Domain)

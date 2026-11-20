@@ -44,8 +44,11 @@ func TestEveryRegistrationBuildsAStructuredCommand(t *testing.T) {
 		if args[1] != testTarget {
 			t.Fatalf("%s targets %q, want the configured target", entry.ID(), args[1])
 		}
-		for _, argument := range args {
-			if argument == "" {
+		for index, argument := range args {
+			// An anonymous registration deliberately sends an empty user name
+			// and password; nothing else may be empty.
+			anonymousCredential := entry.definition.AnonymousValue && index > 0 && (args[index-1] == "-u" || args[index-1] == "-p")
+			if argument == "" && !anonymousCredential {
 				t.Fatalf("%s built an empty argument: %#v", entry.ID(), args)
 			}
 			if strings.ContainsAny(argument, "$`;&|><\n") {
@@ -400,5 +403,33 @@ func TestMSSQLAuthenticationUsesExplicitTargetOption(t *testing.T) {
 	}
 	if module.Status(&modules.Runtime{Target: "198.51.100.40"}) != modules.StatusInputRequired {
 		t.Fatal("MSSQL auth check did not require an explicit target")
+	}
+}
+
+func TestAnonymousRegistrationNeverSendsAssessmentCredentials(t *testing.T) {
+	for _, module := range RegisteredModules() {
+		entry := module.(Module)
+		if !entry.definition.AnonymousValue {
+			continue
+		}
+		args := entry.CommandArgs(testRuntime())
+		for _, argument := range args {
+			if argument == testRuntime().Username || argument == testRuntime().Password {
+				t.Fatalf("%s passes an assessment credential: %#v", entry.ID(), args)
+			}
+		}
+		if index := slices.Index(args, "-u"); index < 0 || args[index+1] != "" {
+			t.Fatalf("%s does not send an empty user name: %#v", entry.ID(), args)
+		}
+		if index := slices.Index(args, "-p"); index < 0 || args[index+1] != "" {
+			t.Fatalf("%s does not send an empty password: %#v", entry.ID(), args)
+		}
+	}
+	found := false
+	for _, module := range RegisteredModules() {
+		found = found || module.ID() == "smb-null-session"
+	}
+	if !found {
+		t.Fatal("smb-null-session is not registered")
 	}
 }

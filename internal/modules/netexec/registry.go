@@ -45,6 +45,9 @@ type entry struct {
 	dynamicArgs func(*modules.Runtime) []string
 	// sensitive marks a module whose output is credential material.
 	sensitive bool
+	// anonymous replaces the assessment credentials with an empty user name and
+	// password, for checks of what an unauthenticated session can read.
+	anonymous bool
 	// output overrides the derived artifact name. It is set for registrations
 	// that already write into an existing assessment tree, so upgrading PwnFlow
 	// never orphans collected evidence.
@@ -81,7 +84,7 @@ func (e entry) definition() Definition {
 		RuntimeOnlyOptions: e.runtimeOnly,
 		OptionDefaults:     e.optionDefaults, DynamicOptions: e.dynamicOptions, ForcedOptions: e.forcedOptions,
 		DynamicArgs: e.dynamicArgs,
-		OutputValue: output, PrerequisiteValues: prerequisites,
+		OutputValue: output, PrerequisiteValues: prerequisites, AnonymousValue: e.anonymous,
 		RequiredPrivilegeValues: privileges,
 		AdminRequiredValue:      e.admin != "",
 		AdminReasonValue:        e.admin,

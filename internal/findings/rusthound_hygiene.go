@@ -140,6 +140,9 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 			if detail, stale := staleLogon(ctx, props); stale {
 				add("stale_enabled_users", object, detail)
 			}
+			if types, known := encryptionTypes(props); known {
+				addEncryptionTypeConditions(add, object, types, rawBool(props, "hasspn"))
+			}
 		case "computers":
 			if history := rawStringSlice(props, "sidhistory"); len(history) > 0 {
 				result = append(result, sidHistoryFinding(ctx, object, history))
@@ -151,6 +154,9 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 			if detail, stale := staleLogon(ctx, props); stale {
 				add("stale_enabled_computers", object, detail)
 			}
+			if types, known := encryptionTypes(props); known {
+				addEncryptionTypeConditions(add, object, types, false)
+			}
 			isDC, _ := rawBoolValue(props, "isdc")
 			if hasLAPS, known := rawBoolValue(props, "haslaps"); known && !hasLAPS && !isDC && isWindowsOrUnknownOS(props) {
 				add("laps_not_observed", object, map[string]any{"operatingsystem": firstString(props, "operatingsystem")})
@@ -158,6 +164,11 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 		case "groups":
 			if history := rawStringSlice(props, "sidhistory"); len(history) > 0 {
 				result = append(result, sidHistoryFinding(ctx, object, history))
+			}
+			if strings.HasSuffix(strings.ToUpper(object.ID), "S-1-5-32-554") {
+				if finding, ok := preWindows2000Finding(ctx, object, objects); ok {
+					result = append(result, finding)
+				}
 			}
 		case "domains":
 			result = append(result, domainConfigurationFindings(ctx, object)...)
@@ -188,6 +199,24 @@ type groupedDefinition struct {
 }
 
 var groupedDefinitions = map[string]groupedDefinition{
+	"kerberos_des_enabled": {
+		findingType: "ad_account_kerberos_des_enabled", title: "Accounts allowing DES Kerberos encryption", noun: "enabled account(s)",
+		condition:   "DES in msDS-SupportedEncryptionTypes",
+		description: "msDS-SupportedEncryptionTypes on these enabled accounts includes a DES encryption type. DES is broken and disabled by default on supported Windows versions; keeping it enabled invites downgrade. No ticket was requested.",
+		severity:    "medium",
+	},
+	"kerberos_rc4_only": {
+		findingType: "ad_account_kerberos_rc4_only", title: "Accounts limited to RC4 Kerberos encryption", noun: "enabled account(s)",
+		condition:   "RC4 without AES in msDS-SupportedEncryptionTypes",
+		description: "msDS-SupportedEncryptionTypes on these enabled accounts allows RC4 but no AES type, so their Kerberos tickets are RC4-encrypted and an offline guess against a service ticket is fast. No ticket was requested.",
+		severity:    "medium",
+	},
+	"kerberos_spn_without_aes": {
+		findingType: "ad_account_kerberos_spn_without_aes", title: "Service accounts without explicit AES Kerberos encryption", noun: "enabled user(s) with an SPN",
+		condition:   "SPN set and msDS-SupportedEncryptionTypes not defined",
+		description: "These enabled user accounts have a service principal name and no msDS-SupportedEncryptionTypes value. Domain controllers then issue RC4-encrypted service tickets for them unless a domain-wide default says otherwise, which makes Kerberoasting faster. The domain-wide default was not read and no ticket was requested.",
+		severity:    "low",
+	},
 	"pwd_never_expires": {
 		findingType: "ad_account_pwd_never_expires", title: "Enabled users with non-expiring passwords", noun: "enabled user(s)",
 		condition:   "DONT_EXPIRE_PASSWORD",
@@ -613,4 +642,107 @@ func trustAttributeNames(attributes int64) []string {
 		}
 	}
 	return names
+}
+
+// encryptionTypes returns the Kerberos encryption types RustHound exported
+// for an object. RustHound writes an empty list when the attribute is not
+// set and "Not defined" when it is zero; both mean "not defined" here. The
+// second result is false when the property is absent, which older RustHound
+// versions do, so nothing is concluded.
+func encryptionTypes(props map[string]json.RawMessage) ([]string, bool) {
+	for key := range props {
+		if strings.EqualFold(key, "supportedencryptiontypes") {
+			var types []string
+			for _, value := range rawStringSlice(props, key) {
+				if !strings.EqualFold(value, "Not defined") {
+					types = append(types, strings.ToUpper(value))
+				}
+			}
+			return types, true
+		}
+	}
+	return nil, false
+}
+
+func addEncryptionTypeConditions(add func(string, collectedObject, map[string]any), object collectedObject, types []string, hasSPN bool) {
+	if len(types) == 0 {
+		if hasSPN && !isKRBTGT(object) {
+			add("kerberos_spn_without_aes", object, nil)
+		}
+		return
+	}
+	var des, rc4, aes bool
+	for _, value := range types {
+		switch {
+		case strings.HasPrefix(value, "DES"):
+			des = true
+		case strings.HasPrefix(value, "RC4"):
+			rc4 = true
+		case strings.HasPrefix(value, "AES"):
+			aes = true
+		}
+	}
+	detail := map[string]any{"encryption_types": types}
+	if des {
+		add("kerberos_des_enabled", object, detail)
+	}
+	if rc4 && !aes {
+		add("kerberos_rc4_only", object, detail)
+	}
+}
+
+// preWindows2000Finding reports the members of the built-in Pre-Windows 2000
+// Compatible Access group. Its members may read most user and group
+// attributes; Anonymous Logon or Everyone in it extends that to
+// unauthenticated sessions. Authenticated Users is a common default and is
+// reported for context only.
+func preWindows2000Finding(ctx hygieneContext, object collectedObject, objects map[string]collectedObject) (storage.FindingInput, bool) {
+	members := groupMemberIDs(object)
+	if len(members) == 0 {
+		return storage.FindingInput{}, false
+	}
+	sort.Strings(members)
+	names := make([]string, 0, len(members))
+	anonymous, other := false, 0
+	for _, id := range members {
+		core := strings.ToUpper(id)
+		if index := strings.Index(core, "S-1-"); index >= 0 {
+			core = core[index:]
+		}
+		name := objects[id].Name
+		switch core {
+		case "S-1-5-7":
+			anonymous, name = true, fallbackString(name, "Anonymous Logon")
+		case "S-1-1-0":
+			anonymous, name = true, fallbackString(name, "Everyone")
+		case "S-1-5-11":
+			name = fallbackString(name, "Authenticated Users")
+		default:
+			// A domain controller's own account is a common default member.
+			if isDC, _ := rawBoolValue(objects[id].Properties, "isdc"); !isDC {
+				other++
+			}
+			name = fallbackString(name, id)
+		}
+		names = append(names, name)
+	}
+	severity := "informational"
+	description := "The built-in Pre-Windows 2000 Compatible Access group grants its members read access to most user and group attributes. Its current members are listed for context; Authenticated Users is a common default."
+	if anonymous {
+		severity = "high"
+		description = "Anonymous Logon or Everyone is a member of Pre-Windows 2000 Compatible Access. Together with the domain controllers' default anonymous settings, this lets unauthenticated sessions enumerate users, groups and policy. Anonymous access was not attempted by this analysis."
+	} else if other > 0 {
+		severity = "low"
+		description += " Members other than the built-in principals are unusual and should be reviewed."
+	}
+	domain := strings.ToUpper(firstString(object.Properties, "domain"))
+	evidence, _ := json.Marshal(map[string]any{"domain": domain, "group": objectLabel(object), "members": names, "member_ids": members, "anonymous_member": anonymous})
+	return storage.FindingInput{
+		FindingKey: stableSourceKey(ctx.assessmentID, "rusthound-hygiene-pre2000-access", domain, "members"), AssessmentID: ctx.assessmentID,
+		SourceTool: "RustHound-CE", SourceExecution: ctx.executionID, FindingType: "ad_domain_config_pre2000_compatible_access",
+		Title:       fmt.Sprintf("Pre-Windows 2000 Compatible Access members (%s)", domain),
+		Description: description, Severity: severity, Confidence: "observed-group-membership", AffectedObjectID: domain, AffectedObject: domain,
+		EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix,
+		ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
+	}, true
 }

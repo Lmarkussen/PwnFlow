@@ -73,7 +73,7 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 	if err := m.reanalyzeLatestNetExec(ctx, assessmentID); err != nil {
 		return err
 	}
-	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis"} {
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool} {
 		if strings.EqualFold(source, "PwnFlow / RustHound Analysis") {
 			if err := m.reanalyzeWritableObjects(ctx, assessmentID, source); err != nil {
 				return err
@@ -157,6 +157,9 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 	case strings.HasSuffix(path, "smb_gpp_password.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case isNetExecLDAPObservationArtifact(path):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.HasSuffix(path, "smb_server_info.txt"), strings.HasSuffix(path, "smb_null_session.txt"):
+		// The SMB host banner carries the null-session, guest and SMBv1 state.
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	default:
 		return ""
@@ -344,6 +347,8 @@ func (m *Manager) analyze(queued queuedJob) {
 			parserInputs, err = AnalyzeEnumCVE(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.HasSuffix(lowerPath, "smb_null_session.txt") {
+			parserInputs, err = AnalyzeNetExecNullSession(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
 			parserInputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		}
@@ -360,6 +365,13 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeWritableObjectReport(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "pwnflow ftp probe":
 		inputs, err = AnalyzeFTPAnonymous(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case strings.ToLower(DirectorySettingsTool):
+		artifact := directorySettingsArtifact(job.ArtifactPath)
+		if artifact == "" {
+			err = fmt.Errorf("no AD directory settings report beside %s", job.ArtifactPath)
+			break
+		}
+		inputs, err = AnalyzeDirectorySettings(m.ctx, artifact, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	default:
 		_ = m.db.SetAnalysisStatus(context.Background(), queued.key, storage.AnalysisNotSupport, "", "no evidence extractor for source tool")
 		return
@@ -535,6 +547,8 @@ func ParserVersionFor(tool string) string {
 		return enumDetailParserVersion
 	case "masscan":
 		return masscanParserVersion
+	case strings.ToLower(DirectorySettingsTool):
+		return directorySettingsParserVersion
 	case "ad writable object assessment", "pwnflow / rusthound analysis":
 		return writableObjectsParserVersion
 	case "pwnflow ftp probe":
@@ -583,6 +597,9 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 		if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {
 			return outputPath
 		}
+	}
+	if strings.EqualFold(tool, DirectorySettingsTool) {
+		return directorySettingsArtifact(outputPath)
 	}
 	if strings.EqualFold(tool, "pxethief") {
 		if info, err := os.Stat(outputPath); err == nil {

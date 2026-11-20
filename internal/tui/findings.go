@@ -73,7 +73,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"user_descriptions", "User Descriptions & Notes", "Credential-related values and keyword observations from NetExec user attributes"},
 	},
 	"network": {
-		{"smb", "SMB Signing", "SMB signing conditions"},
+		{"smb", "SMB Security", "SMB signing, SMBv1 and anonymous or guest session conditions"},
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
@@ -2359,6 +2359,9 @@ func findingAttributes(finding storage.Finding, width int) string {
 		add("UAC FLAG", metadataString(metadata, "flag")+" ("+uac+")")
 	}
 	add("RUSTHOUND", metadataString(metadata, "rusthound_corroboration"))
+	if names := metadataStringSlice(metadata, "affected_objects"); len(names) > 0 {
+		add("OBJECTS", strings.Join(names, "; "))
+	}
 	if len(lines) == 0 {
 		return ""
 	}

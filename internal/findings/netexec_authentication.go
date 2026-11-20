@@ -62,7 +62,9 @@ func AnalyzeNetExecAuthentication(ctx context.Context, artifactPath string, asse
 			continue
 		}
 		principal := strings.TrimSpace(strings.SplitN(match[5], ":", 2)[0])
-		if principal == "" {
+		// A null session prints "DOMAIN\:" with no account, and status lines
+		// such as "[+] Dumping password info for domain: X" are not logins.
+		if principal == "" || strings.HasSuffix(principal, `\`) || strings.ContainsAny(principal, " \t") {
 			continue
 		}
 		protocol := strings.ToUpper(match[1])

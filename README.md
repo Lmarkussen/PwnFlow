@@ -12,7 +12,7 @@ Original assessment artifacts remain available for review, while Findings provid
 
 ## Features
 
-- Protected 41-module automatic enumeration profile with GhostSPN immediately after Kerberoasting.
+- Protected 43-module automatic enumeration profile with GhostSPN immediately after Kerberoasting.
 - Terminal Tool Runner with approvals, cancellation, availability checks, and watcher output.
 - Per-assessment evidence collection with access to original artifacts.
 - Source-backed Findings with recovered material and uncertainty preserved.

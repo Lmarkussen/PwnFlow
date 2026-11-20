@@ -26,6 +26,11 @@ func SMBEnumerationModules() []modules.Module {
 			output:      "SMB_server_info.txt",
 		},
 		{
+			id: "smb-null-session", name: "SMB Null Session Enumeration",
+			description: "Connects with an empty user name and password - not the assessment credentials - and asks for the domain users, the password policy and the shares, through --users --pass-pol --shares. A domain controller that answers lets unauthenticated clients enumerate the domain; a refusal is the expected, hardened result.",
+			args:        []string{"--users", "--pass-pol", "--shares"}, anonymous: true, output: "SMB_null_session.txt",
+		},
+		{
 			id: "smb-password-policy", name: "SMB Password Policy",
 			description: "Reads the domain password and lockout policy through SMB --pass-pol and preserves the original policy output for offline review.",
 			args:        []string{"--pass-pol"}, output: "SMB_password_policy.txt",

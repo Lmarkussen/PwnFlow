@@ -10,6 +10,7 @@ import (
 	"github.com/pwnflow/pwnflow/internal/config"
 	"github.com/pwnflow/pwnflow/internal/modules"
 	"github.com/pwnflow/pwnflow/internal/modules/certipy"
+	"github.com/pwnflow/pwnflow/internal/modules/directorysettings"
 	"github.com/pwnflow/pwnflow/internal/modules/gpoevidence"
 	"github.com/pwnflow/pwnflow/internal/modules/masscan"
 	"github.com/pwnflow/pwnflow/internal/modules/netexec"
@@ -39,6 +40,7 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	}
 	registry.Register(rusthound.Module{})
 	registry.Register(trustinventory.Module{})
+	registry.Register(directorysettings.Module{})
 	registry.Register(gpoevidence.Module{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)

@@ -209,6 +209,9 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 			if report.Domain == "" {
 				report.Domain = firstString(object.Properties, "domain")
 			}
+			if existing, ok := objects[object.ID]; ok {
+				object = mergeDuplicateObject(existing, object)
+			}
 			objects[object.ID] = object
 			report.Objects++
 			for acePos, ace := range aceValues {
@@ -617,4 +620,34 @@ func rawStringSlice(fields map[string]json.RawMessage, key string) []string {
 		}
 	}
 	return nil
+}
+
+// mergeDuplicateObject keeps the group membership of both copies when an
+// export lists the same object twice. RustHound-CE can emit a built-in group
+// such as Pre-Windows 2000 Compatible Access once with its members and once
+// with an empty member list; keeping only the later copy would lose them.
+func mergeDuplicateObject(existing, incoming collectedObject) collectedObject {
+	members := append(groupMemberIDs(existing), groupMemberIDs(incoming)...)
+	if len(members) == 0 || incoming.Top == nil {
+		if len(groupMemberIDs(existing)) > 0 && len(groupMemberIDs(incoming)) == 0 {
+			return existing
+		}
+		return incoming
+	}
+	seen := map[string]bool{}
+	merged := make([]map[string]string, 0, len(members))
+	for _, id := range members {
+		if !seen[id] {
+			seen[id] = true
+			merged = append(merged, map[string]string{"ObjectIdentifier": id})
+		}
+	}
+	encoded, _ := json.Marshal(merged)
+	top := make(map[string]json.RawMessage, len(incoming.Top))
+	for key, value := range incoming.Top {
+		top[key] = value
+	}
+	top["Members"] = encoded
+	incoming.Top = top
+	return incoming
 }

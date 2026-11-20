@@ -16,12 +16,13 @@ import (
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
 
-const netExecSecurityParserVersion = "netexec-security-v1"
+const netExecSecurityParserVersion = "netexec-security-v2"
 
 var (
 	netExecSMBSigningLine              = regexp.MustCompile(`(?i)^\s*SMB\s+(\S+)\s+(\d+)\s+(\S+).*?\(\s*signing\s*:\s*(true|false)\s*\)`)
 	netExecAccountLine                 = regexp.MustCompile(`(?i)\b(?:samaccountname|sAMAccountName|username|user|account|principal)\s*[:=]\s*([A-Za-z0-9._$\\/@-]+)`) //nolint:lll
 	netExecPasswordNotRequiredUserLine = regexp.MustCompile(`(?i)\bUser:\s*([^\s]+)\s+Status:\s*(enabled|disabled)`)
+	netExecSMBBanner                   = regexp.MustCompile(`(?i)^\s*SMB\s+(\S+)\s+(\d+)\s+(\S+)\s+\[\*\].*\(name:[^)]*\)`)
 	netExecUACLine                     = regexp.MustCompile(`(?i)\b(?:useraccountcontrol|uac)\s*[:=]\s*([^\s,;]+(?:\s*[|,]\s*[A-Za-z_]+)*)`)
 )
 
@@ -100,6 +101,10 @@ func AnalyzeNetExecSecurity(ctx context.Context, artifactPath string, assessment
 				Severity:    "medium", Confidence: "explicit-signing-state", AffectedObjectID: strings.ToLower(match[1]) + ":" + match[2], AffectedObject: match[3],
 				EvidenceJSON: mustMarshalNetExecSecurity(evidence), ArtifactPath: artifactPath, ArtifactRef: fmt.Sprintf("line:%d", lineNumber), ObservedAt: now, Status: "open", ParserVersion: netExecSecurityParserVersion,
 			})
+		}
+
+		if match := netExecSMBBanner.FindStringSubmatch(line); len(match) == 4 {
+			result = appendNetExecSMBBannerFindings(result, seen, line, match[1], match[2], match[3], assessmentID, executionID, artifactPath, fmt.Sprintf("line:%d", lineNumber), now)
 		}
 
 		if match := netExecAccountLine.FindStringSubmatch(line); len(match) == 2 {
@@ -189,4 +194,35 @@ func uacHasFlag(text string, numericValue uint64, numeric bool, name string, bit
 	}
 	upper := strings.ToUpper(text)
 	return strings.Contains(upper, name)
+}
+
+// appendNetExecSMBBannerFindings reads the session and protocol state NetExec
+// prints in every SMB host banner: whether the server accepted a null session
+// (NetExec tries one before authenticating), whether the supplied login was
+// mapped to the guest account, and whether SMBv1 is enabled.
+func appendNetExecSMBBannerFindings(result []storage.FindingInput, seen map[string]bool, line, target, port, host string, assessmentID, executionID int64, artifactPath, ref string, now time.Time) []storage.FindingInput {
+	lower := strings.ToLower(line)
+	identity := strings.ToLower(target) + ":" + port
+	evidence := mustMarshalNetExecSecurity(map[string]any{"protocol": "SMB", "target": target, "port": port, "host": host, "reported_by": "NetExec SMB banner"})
+	add := func(detector, typ, title, description, severity string) {
+		result = appendUniqueNetExecSecurity(result, seen, storage.FindingInput{
+			FindingKey: stableNetExecSecurityKey(assessmentID, detector, identity), AssessmentID: assessmentID,
+			SourceTool: "NetExec (nxc)", SourceExecution: executionID, FindingType: typ, Title: title + ": " + host,
+			Description: description, Severity: severity, Confidence: "tool-reported", AffectedObjectID: identity, AffectedObject: host,
+			EvidenceJSON: evidence, ArtifactPath: artifactPath, ArtifactRef: ref, ObservedAt: now, Status: "open", ParserVersion: netExecSecurityParserVersion,
+		})
+	}
+	if strings.Contains(lower, "(null auth:true)") {
+		add("smb-null-session", "smb_null_session_accepted", "SMB null session accepted",
+			fmt.Sprintf("%s (%s) accepted an SMB session with an empty user name and password. Domain controllers commonly do; what the session can read (users, groups, password policy, shares) depends on the anonymous-access settings and was not tested by this observation.", host, target), "low")
+	}
+	if strings.Contains(lower, "(guest auth:true)") {
+		add("smb-guest-session", "smb_guest_session_mapped", "SMB login mapped to guest",
+			fmt.Sprintf("%s (%s) mapped the supplied login to the guest account instead of rejecting it. Any user name may then reach what the guest account can read.", host, target), "medium")
+	}
+	if strings.Contains(lower, "(smbv1:true)") {
+		add("smb-v1-enabled", "smb_v1_enabled", "SMBv1 enabled",
+			fmt.Sprintf("%s (%s) negotiated SMBv1. The protocol is deprecated, lacks the integrity protections of SMB 2 and 3, and is disabled by default on supported Windows versions.", host, target), "medium")
+	}
+	return result
 }
