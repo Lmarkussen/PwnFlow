@@ -111,6 +111,7 @@ var additionalTechniqueLinks = map[string][]techniqueLink{
 	"ad_account_passwd_notreqd":               {thrSpraying, toolKerbrute, mitreSpraying},
 	"ad_account_stale_enabled_users":          {thrSpraying, toolKerbrute, mitreSpraying},
 	"ad_account_privileged_not_protected":     {thrDelegations, toolRubeus},
+	"constrained_delegation_to_dc":            {thrDelegations, toolImpacket, toolRubeus},
 	"ad_account_privileged_kerberoastable":    {thrKerberoast, toolTargetedRoast, toolRubeus, mitreKerberoast},
 	"ad_account_privileged_pwd_never_expires": {thrSpraying, toolKerbrute, mitreSpraying},
 	"ad_account_privileged_stale":             {thrSpraying, toolKerbrute, mitreSpraying},

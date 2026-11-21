@@ -138,7 +138,7 @@ func potentialPaths(row storage.Finding) []CriticalPath {
 	if paths := potentialHygienePaths(row, metadata, typ); paths != nil {
 		return paths
 	}
-	if typ == "unconstrained_delegation_configured" || typ == "constrained_delegation_configured" || typ == "rbcd_observed" {
+	if (typ == "unconstrained_delegation_configured" && !strings.EqualFold(row.Severity, "informational")) || typ == "constrained_delegation_configured" || typ == "constrained_delegation_to_dc" || typ == "rbcd_observed" {
 		return []CriticalPath{newProjectedPath(row, CriticalPotential, "delegation", cpFirstString(metadata, "principal", "object_name"), cpFirstString(metadata, "target", "object_name"), cpFirstString(metadata, "target_type", "object_type"), cpFirstString(metadata, "delegation_type", "delegation"), []string{"delegation configuration was observed"}, []string{"effective controlled principal and privileged target/service abuse are not verified"}, "Delegation can support an attack path, but the retained evidence does not establish effective abuse.")}
 	}
 	return nil

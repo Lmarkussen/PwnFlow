@@ -232,6 +232,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	findings = append(findings, hygieneFindings(objects, assessmentID, executionID, now, collectedAt)...)
 	findings = append(findings, passwordReaderFindings(objects, aces, assessmentID, executionID, now)...)
 	findings = append(findings, shadowAdminFindings(objects, aces, privilegedMembership(objects), assessmentID, executionID, now)...)
+	findings = append(findings, delegationRiskFindings(objects, assessmentID, executionID, now)...)
 	for _, ace := range aces {
 		if err := ctx.Err(); err != nil {
 			return nil, report, err
@@ -378,7 +379,7 @@ func decodeObject(raw json.RawMessage, objectType string) (collectedObject, []ma
 	object := collectedObject{ID: rawString(fields, "ObjectIdentifier"), Type: objectType, Properties: properties}
 	object.Name = firstString(properties, "name", "samaccountname", "distinguishedname", "dn")
 	object.HighValue = rawBool(properties, "highvalue")
-	if kind := strings.ToLower(objectType); kind == "domains" || kind == "groups" {
+	if kind := strings.ToLower(objectType); kind == "domains" || kind == "groups" || kind == "users" || kind == "computers" {
 		object.Top = fields
 	}
 	var aces []map[string]json.RawMessage
@@ -533,8 +534,8 @@ func delegationFindings(object collectedObject, assessmentID, executionID int64,
 		result = append(result, storage.FindingInput{
 			FindingKey: stableSourceKey(assessmentID, "rusthound-unconstrained-delegation", object.ID, "unconstrained"), AssessmentID: assessmentID,
 			SourceTool: "RustHound-CE", SourceExecution: executionID, FindingType: "unconstrained_delegation_configured",
-			Title: "Unconstrained delegation configured: " + objectLabel(object), Description: "RustHound directly reports unconstrained delegation on this directory object. Review whether the configuration is expected; this observation does not prove credential capture or abuse.",
-			Severity: "medium", Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: object.Name,
+			Title: "Unconstrained delegation configured: " + objectLabel(object), Description: unconstrainedDescription(object),
+			Severity: unconstrainedSeverity(object), Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: object.Name,
 			EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/unconstraineddelegation", ObservedAt: now, Status: "open", ParserVersion: ParserVersion,
 		})
 	}
@@ -651,4 +652,20 @@ func mergeDuplicateObject(existing, incoming collectedObject) collectedObject {
 	top["Members"] = encoded
 	incoming.Top = top
 	return incoming
+}
+
+// Domain controllers have unconstrained delegation by default; on any other
+// object it is a condition worth reporting.
+func unconstrainedSeverity(object collectedObject) string {
+	if isDC, _ := rawBoolValue(object.Properties, "isdc"); isDC {
+		return "informational"
+	}
+	return "medium"
+}
+
+func unconstrainedDescription(object collectedObject) string {
+	if isDC, _ := rawBoolValue(object.Properties, "isdc"); isDC {
+		return "RustHound reports unconstrained delegation on this domain controller, which is the default for every domain controller and recorded for context."
+	}
+	return "RustHound directly reports unconstrained delegation on this directory object. A host or account with unconstrained delegation receives the forwardable tickets of everyone who authenticates to it; combined with authentication coercion this can yield a domain controller's ticket. Credential capture was not attempted."
 }

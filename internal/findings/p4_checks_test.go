@@ -339,3 +339,40 @@ func TestShadowAdminRights(t *testing.T) {
 		t.Fatalf("broad principal not called out: %s", found[0].Description)
 	}
 }
+
+func TestDelegationRisks(t *testing.T) {
+	ref := func(ids ...string) []any {
+		list := []any{}
+		for _, id := range ids {
+			list = append(list, map[string]any{"ObjectIdentifier": id, "ObjectType": "Computer"})
+		}
+		return list
+	}
+	dc := hygieneComputer("1001", "DC01", map[string]any{"isdc": true, "unconstraineddelegation": true})
+	dc["AllowedToAct"] = ref(hygieneDomainSID + "-1500")
+	client := hygieneComputer("1100", "WS01", nil)
+	client["AllowedToAct"] = ref(hygieneDomainSID + "-1500")
+	source := hygieneComputer("1500", "RBCD-SRC", nil)
+	transition := hygieneUser("1600", "svc-transition", map[string]any{"trustedtoauth": true})
+	transition["AllowedToDelegate"] = ref(hygieneDomainSID + "-1001")
+	plain := hygieneUser("1601", "svc-plain", map[string]any{"trustedtoauth": false, "allowedtodelegate": []string{"cifs/dc01.corp.example"}})
+	inputs := analyzeHygiene(t, writeHygieneCollection(t, []map[string]any{transition, plain}, []map[string]any{dc, client, source}, nil, nil))
+	severity := map[string]string{}
+	for _, input := range inputs {
+		switch input.FindingType {
+		case "constrained_delegation_to_dc", "rbcd_observed", "unconstrained_delegation_configured":
+			severity[input.FindingType+"|"+input.AffectedObject] = input.Severity
+		}
+	}
+	for key, want := range map[string]string{
+		"constrained_delegation_to_dc|SVC-TRANSITION@CORP.EXAMPLE": "high",
+		"constrained_delegation_to_dc|SVC-PLAIN@CORP.EXAMPLE":      "medium",
+		"rbcd_observed|WS01.CORP.EXAMPLE":                          "medium",
+		"rbcd_observed|DC01.CORP.EXAMPLE":                          "high",
+		"unconstrained_delegation_configured|DC01.CORP.EXAMPLE":    "informational",
+	} {
+		if severity[key] != want {
+			t.Fatalf("%s = %q, want %q (all %v)", key, severity[key], want, severity)
+		}
+	}
+}

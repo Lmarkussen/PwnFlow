@@ -2353,7 +2353,7 @@ func findingAttributes(finding storage.Finding, width int) string {
 	if typ == "ad_acl_group" || (strings.HasPrefix(typ, "ad_acl_") && !isGeneralACLInventory(finding)) || typ == "ad_writable_object_assessment" || strings.HasPrefix(typ, "adcs_esc_") {
 		return ""
 	}
-	if typ == "unconstrained_delegation_configured" || typ == "constrained_delegation_configured" || typ == "rbcd_observed" {
+	if typ == "unconstrained_delegation_configured" || typ == "constrained_delegation_configured" || typ == "constrained_delegation_to_dc" || typ == "rbcd_observed" {
 		return delegationFindingAttributes(finding, metadata, width)
 	}
 	if strings.HasPrefix(typ, "ad_account_") {
