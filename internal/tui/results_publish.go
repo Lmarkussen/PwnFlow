@@ -255,7 +255,22 @@ func publicationSources(execution publicationExecution, root string) []string {
 			}
 		}
 	}
-	return result
+	// A discovered artifact file inside a run directory that is published as
+	// a whole would otherwise be published twice.
+	pruned := make([]string, 0, len(result))
+	for _, path := range result {
+		nested := false
+		for _, other := range result {
+			if other != path && strings.HasPrefix(path, other+string(filepath.Separator)) {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			pruned = append(pruned, path)
+		}
+	}
+	return pruned
 }
 
 func entryTimeNear(path string, started, finished time.Time) bool {

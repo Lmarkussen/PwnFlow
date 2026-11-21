@@ -39,6 +39,11 @@ func TestHygieneFindingRouting(t *testing.T) {
 		{"ldap_signing_policy_not_required", "LDAP signing not required by policy (Domain Controllers)", "network", "ldap"},
 		{"smb_signing_policy_not_required", "SMB server signing explicitly not required by policy (domain root)", "network", "smb"},
 		{"ntlm_policy_wdigest_enabled", "WDigest credential caching enabled by policy (domain root)", "network", "ntlm_policy"},
+		// SCCMhunter and NetworkHound.
+		{"sccm_site_inventory", "SCCM infrastructure in Active Directory (SCCM site P01)", "credentials", "sccm"},
+		{"sccm_site_system_smb_signing_not_required", "SCCM site system without required SMB signing: mecm.corp.example", "credentials", "sccm"},
+		{"networkhound_open_ports", "Open services on 4 in-scope host(s)", "network", "port_discovery"},
+		{"networkhound_topology_unresolved_computers", "AD computers without a resolvable address (2 of 9)", "other", "other"},
 		// Existing routing is unchanged.
 		{"ad_account_passwd_notreqd", "Password Not Required Account", "active_directory", "account_security"},
 		{"ad_domain_policy_password_policy_snapshot", "Domain Password Policy Snapshot", "active_directory", "domain_security_policy"},

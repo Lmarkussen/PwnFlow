@@ -73,7 +73,10 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 	if err := m.reanalyzeLatestNetExec(ctx, assessmentID); err != nil {
 		return err
 	}
-	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool} {
+	if err := m.reanalyzeEachExecution(ctx, assessmentID, "NetworkHound"); err != nil {
+		return err
+	}
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool, "SCCMhunter"} {
 		if strings.EqualFold(source, "PwnFlow / RustHound Analysis") {
 			if err := m.reanalyzeWritableObjects(ctx, assessmentID, source); err != nil {
 				return err
@@ -84,6 +87,28 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
+			return err
+		}
+	}
+	return nil
+}
+
+// reanalyzeEachExecution resubmits every execution of a tool whose runs
+// produce different artifacts, such as NetworkHound's topology and scope
+// validation, each with the artifact discovered for that execution.
+func (m *Manager) reanalyzeEachExecution(ctx context.Context, assessmentID int64, sourceTool string) error {
+	executions, err := m.db.ExecutionsForTool(ctx, assessmentID, sourceTool)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, execution := range executions {
+		artifact := DiscoverArtifact(sourceTool, execution.OutputPath)
+		if artifact == "" || seen[artifact] {
+			continue
+		}
+		seen[artifact] = true
+		if err := m.Submit(Job{AssessmentID: assessmentID, ExecutionID: execution.ID, SourceTool: sourceTool, ArtifactPath: artifact, ObservedAt: time.Now().UTC(), Force: true}); err != nil {
 			return err
 		}
 	}
@@ -367,6 +392,22 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeWritableObjectReport(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "pwnflow ftp probe":
 		inputs, err = AnalyzeFTPAnonymous(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "sccmhunter":
+		artifact := job.ArtifactPath
+		if !strings.EqualFold(filepath.Base(artifact), "find.db") {
+			artifact = sccmHunterArtifact(job.ArtifactPath, job.ObservedAt)
+		}
+		inputs, err = AnalyzeSCCMHunter(m.ctx, artifact, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case "networkhound":
+		artifact := job.ArtifactPath
+		if !strings.HasSuffix(strings.ToLower(artifact), ".json") {
+			artifact = networkHoundArtifact(job.ArtifactPath, job.ObservedAt)
+		}
+		if artifact == "" {
+			err = fmt.Errorf("no NetworkHound artifact for %s", job.ArtifactPath)
+			break
+		}
+		inputs, err = AnalyzeNetworkHound(m.ctx, artifact, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case strings.ToLower(DirectorySettingsTool):
 		artifact := directorySettingsArtifact(job.ArtifactPath)
 		if artifact == "" {
@@ -551,6 +592,10 @@ func ParserVersionFor(tool string) string {
 		return masscanParserVersion
 	case strings.ToLower(DirectorySettingsTool):
 		return directorySettingsParserVersion
+	case "sccmhunter":
+		return sccmHunterParserVersion
+	case "networkhound":
+		return networkHoundParserVersion
 	case "ad writable object assessment", "pwnflow / rusthound analysis":
 		return writableObjectsParserVersion
 	case "pwnflow ftp probe":
@@ -602,6 +647,12 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	}
 	if strings.EqualFold(tool, DirectorySettingsTool) {
 		return directorySettingsArtifact(outputPath)
+	}
+	if strings.EqualFold(tool, "SCCMhunter") {
+		return sccmHunterArtifact(outputPath, completedAt)
+	}
+	if strings.EqualFold(tool, "NetworkHound") {
+		return networkHoundArtifact(outputPath, completedAt)
 	}
 	if strings.EqualFold(tool, "pxethief") {
 		if info, err := os.Stat(outputPath); err == nil {

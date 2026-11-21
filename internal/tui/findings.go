@@ -78,7 +78,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"ntlm_policy", "NTLM & Authentication Policy", "LM/NTLMv1, LM hash and WDigest settings configured by Group Policy"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
-		{"port_discovery", "Port Discovery", "Masscan open-port observations"},
+		{"port_discovery", "Port Discovery", "Masscan and NetworkHound open-port observations"},
 	},
 	"pwntools": {
 		{"ftp_anonymous_access", "FTP Anonymous Access", "Confirmed anonymous FTP authentication"},
@@ -149,7 +149,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "credentials"
 	case strings.HasPrefix(typ, "mssql_") || strings.EqualFold(source, "mssqlrelay") || strings.EqualFold(source, "mssqlpwner"):
 		return "network"
-	case strings.HasPrefix(typ, "masscan_") || strings.EqualFold(source, "masscan"):
+	case strings.HasPrefix(typ, "masscan_") || strings.EqualFold(source, "masscan"), strings.HasPrefix(typ, "networkhound_open_ports"):
 		return "network"
 	case strings.HasPrefix(typ, "pwntools_ftp_anonymous_"):
 		return "pwntools"
@@ -180,6 +180,10 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "trusts"
 	case strings.HasPrefix(typ, "ntlm_policy_"):
 		return "ntlm_policy"
+	case strings.HasPrefix(typ, "sccm_"):
+		return "sccm"
+	case strings.HasPrefix(typ, "networkhound_open_ports"):
+		return "port_discovery"
 	case strings.HasPrefix(typ, "ad_writable_object_"):
 		return "ad_writable_objects"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
