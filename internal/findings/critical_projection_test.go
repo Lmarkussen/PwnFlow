@@ -126,3 +126,19 @@ func TestProjectCriticalDirectoryHygiene(t *testing.T) {
 		t.Fatal("password attribute without reader was confirmed")
 	}
 }
+
+func TestCertipyESCSeverityAndProjection(t *testing.T) {
+	for esc, want := range map[string]string{"ESC1": "high", "ESC6": "high", "ESC11": "high", "ESC16": "high", "ESC9": "medium", "ESC10": "medium", "ESC5": "medium"} {
+		if got := certipyESCSeverity(esc); got != want {
+			t.Errorf("%s severity %q, want %q", esc, got, want)
+		}
+	}
+	for _, esc := range []string{"ESC6", "ESC11", "ESC13", "ESC16"} {
+		if !cpSupportedPotentialESC(esc) {
+			t.Errorf("%s is not projected as a potential Critical path", esc)
+		}
+	}
+	if cpSupportedPotentialESC("ESC9") {
+		t.Error("ESC9 needs write access to an account and is not projected on its own")
+	}
+}

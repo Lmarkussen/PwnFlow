@@ -289,7 +289,9 @@ func extractESCIdentifiers(value any) []string {
 
 func certipyESCSeverity(esc string) string {
 	switch strings.ToUpper(esc) {
-	case "ESC1", "ESC4", "ESC8", "ESC13", "ESC15":
+	// Each of these lets a low-privileged enrollee or relayed authentication
+	// obtain a certificate for a privileged account, or take over the CA.
+	case "ESC1", "ESC2", "ESC3", "ESC4", "ESC6", "ESC7", "ESC8", "ESC11", "ESC13", "ESC15", "ESC16":
 		return "high"
 	default:
 		return "medium"

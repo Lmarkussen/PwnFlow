@@ -304,7 +304,7 @@ func cpCriticalPathVerified(metadata map[string]any) bool {
 }
 func cpSupportedPotentialESC(esc string) bool {
 	switch esc {
-	case "ESC1", "ESC2", "ESC3", "ESC4", "ESC7", "ESC8", "ESC15", "ESC17":
+	case "ESC1", "ESC2", "ESC3", "ESC4", "ESC6", "ESC7", "ESC8", "ESC11", "ESC13", "ESC15", "ESC16", "ESC17":
 		return true
 	}
 	return false

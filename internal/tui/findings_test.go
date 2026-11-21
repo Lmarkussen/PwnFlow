@@ -1187,7 +1187,7 @@ func TestRelayTargetHighlightsOnlyExplicitSourceBackedIP(t *testing.T) {
 }
 
 func TestTechniqueReferencesCoverSupportedAttackFamilies(t *testing.T) {
-	for _, esc := range []string{"ESC1", "ESC2", "ESC3", "ESC4", "ESC6", "ESC7", "ESC8", "ESC15", "ESC17"} {
+	for _, esc := range []string{"ESC1", "ESC2", "ESC3", "ESC4", "ESC6", "ESC7", "ESC8", "ESC9", "ESC10", "ESC11", "ESC13", "ESC15", "ESC16", "ESC17"} {
 		reference := findingTechniqueReference(storage.Finding{FindingInput: storage.FindingInput{FindingType: "adcs_esc_" + strings.ToLower(esc)}})
 		if reference == "" || !strings.Contains(reference, "https://") {
 			t.Fatalf("%s has no verified technique reference: %q", esc, reference)

@@ -2935,8 +2935,15 @@ func certipyTechniqueReference(finding storage.Finding, typ string) string {
 		return "The Hacker Recipes — AD CS certificate authority\nhttps://www.thehacker.recipes/ad/movement/adcs/certificate-authority"
 	case "ESC8":
 		return "The Hacker Recipes — AD CS unsigned endpoints / ESC8\nhttps://www.thehacker.recipes/ad/movement/adcs/unsigned-endpoints\nThe Hacker Recipes — AD CS\nhttps://www.thehacker.recipes/ad/movement/adcs/"
-	default:
+	case "ESC11":
+		return "The Hacker Recipes — AD CS unsigned endpoints (RPC relay / ESC11)\nhttps://www.thehacker.recipes/ad/movement/adcs/unsigned-endpoints\nCertipy\nhttps://github.com/ly4k/Certipy/wiki\nMITRE ATT&CK T1649 — Steal or Forge Authentication Certificates\nhttps://attack.mitre.org/techniques/T1649/"
+	case "ESC16":
+		return "The Hacker Recipes — AD CS certificate authority\nhttps://www.thehacker.recipes/ad/movement/adcs/certificate-authority\nCertipy\nhttps://github.com/ly4k/Certipy/wiki\nMITRE ATT&CK T1649 — Steal or Forge Authentication Certificates\nhttps://attack.mitre.org/techniques/T1649/"
+	case "":
 		return ""
+	default:
+		// Any other ESC Certipy reports (ESC5, ESC9, ESC10, ESC13, ...).
+		return "The Hacker Recipes — AD CS\nhttps://www.thehacker.recipes/ad/movement/adcs/\nCertipy (ESC conditions and abuse)\nhttps://github.com/ly4k/Certipy/wiki\nMITRE ATT&CK T1649 — Steal or Forge Authentication Certificates\nhttps://attack.mitre.org/techniques/T1649/"
 	}
 }
 
