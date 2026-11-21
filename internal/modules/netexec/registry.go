@@ -48,6 +48,10 @@ type entry struct {
 	// anonymous replaces the assessment credentials with an empty user name and
 	// password, for checks of what an unauthenticated session can read.
 	anonymous bool
+	// fanOut runs the registration against every SMB endpoint the batch's
+	// NetworkHound scan confirmed (or SMB_ENDPOINTS), in one NetExec call,
+	// instead of only the configured domain controller.
+	fanOut bool
 	// output overrides the derived artifact name. It is set for registrations
 	// that already write into an existing assessment tree, so upgrading PwnFlow
 	// never orphans collected evidence.
@@ -84,7 +88,7 @@ func (e entry) definition() Definition {
 		RuntimeOnlyOptions: e.runtimeOnly,
 		OptionDefaults:     e.optionDefaults, DynamicOptions: e.dynamicOptions, ForcedOptions: e.forcedOptions,
 		DynamicArgs: e.dynamicArgs,
-		OutputValue: output, PrerequisiteValues: prerequisites, AnonymousValue: e.anonymous,
+		OutputValue: output, PrerequisiteValues: prerequisites, AnonymousValue: e.anonymous, FanOutValue: e.fanOut,
 		RequiredPrivilegeValues: privileges,
 		AdminRequiredValue:      e.admin != "",
 		AdminReasonValue:        e.admin,

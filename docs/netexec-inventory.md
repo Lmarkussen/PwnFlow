@@ -145,7 +145,6 @@ test asserts this for every registration).
 | --local-groups | smb-local-groups | Enumeration | ADMIN-REQ |
 | --users --pass-pol --shares (no credentials) | smb-null-session | Enumeration | - |
 |  | smb-server-info | Enumeration | - |
-| --smb-sessions | smb-sessions | Enumeration | ADMIN-REQ |
 | --shares | smb-shares | Enumeration | - |
 | --qwinsta | terminal-sessions | Enumeration | ADMIN-REQ |
 

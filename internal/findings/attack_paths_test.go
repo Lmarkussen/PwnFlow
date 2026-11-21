@@ -77,6 +77,17 @@ func TestAttackChainTemplates(t *testing.T) {
 		t.Fatalf("ADIDNS without a relay target is not a path: %+v", got)
 	}
 
+	// Local admin on a host where a privileged account is signed in; an
+	// unprivileged session or a host without admin access adds nothing.
+	admin := row("netexec_privileged_access", "192.0.2.12", "high", `{"protocol":"SMB","target":"192.0.2.12","privileged":true}`)
+	privilegedAccount := row("ad_account_privileged_not_protected", "CORP.EXAMPLE", "low", `{"affected_objects":["OPSADMIN@CORP.EXAMPLE"]}`)
+	session := row("smb_signed_in_accounts", "WS01", "informational", `{"target":"192.0.2.12","accounts":["CORP\\jdoe","CORP\\opsadmin"]}`)
+	elsewhere := row("smb_signed_in_accounts", "WS02", "informational", `{"target":"192.0.2.13","accounts":["CORP\\opsadmin"]}`)
+	theft := attackChainPaths([]storage.Finding{admin, privilegedAccount, session, elsewhere})
+	if len(theft) != 1 || theft[0].Capability != "admin-session-credentials" || theft[0].Target != "WS01" || len(theft[0].ConfirmedPrereqs) != 4 || !strings.Contains(theft[0].ConfirmedPrereqs[1], `CORP\opsadmin signed in on WS01`) || strings.Contains(theft[0].ConfirmedPrereqs[1], "jdoe") {
+		t.Fatalf("session chain %+v", theft)
+	}
+
 	projection := ProjectCritical(rows)
 	found := false
 	for _, path := range projection.Potential {

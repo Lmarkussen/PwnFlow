@@ -151,6 +151,17 @@ func (m Module) OutputFile() string {
 // scoped reports whether this registration is the operator-scoped validation.
 func (m Module) scoped() bool { return m.definition.SlugValue == "scope-validation" }
 
+// BatchPrerequisites makes scope validation run after the topology module in
+// the same batch: it scans the hosts the topology found. Modules that consume
+// the scan depend on scope validation, so batch ordering must not pull it
+// ahead of the topology.
+func (m Module) BatchPrerequisites() []string {
+	if m.scoped() {
+		return []string{"networkhound-topology"}
+	}
+	return nil
+}
+
 // secondaryConnections states what the module may contact, so the operator does not
 // have to infer it from the description.
 func (m Module) secondaryConnections() []string {

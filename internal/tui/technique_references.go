@@ -66,6 +66,8 @@ var (
 // references did not. findingTechniqueReference consults it last.
 var additionalTechniqueLinks = map[string][]techniqueLink{
 	// Anonymous access and enumeration.
+	"smb_signed_in_accounts":                     {thrLSASS, toolMimikatz, mitreLSASS},
+	"netexec_admin_reach":                        {thrLSASS, toolMimikatz, mitreLSASS},
 	"smb_null_session_accepted":                  {thrMSRPC, toolEnum4linuxNG, mitreAccountDisc},
 	"smb_null_session_enumeration":               {thrMSRPC, toolEnum4linuxNG, thrSpraying, toolKerbrute, mitreSpraying},
 	"smb_guest_session_mapped":                   {thrMSRPC, toolEnum4linuxNG},

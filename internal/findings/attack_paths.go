@@ -117,6 +117,50 @@ func attackChainPaths(rows []storage.Finding) []CriticalPath {
 
 	// Recovered or readable credentials of a privileged account.
 	privileged := privilegedAccountNames(byType)
+	// Local administrator on a host where a privileged account is signed in.
+	adminOn := map[string]storage.Finding{}
+	for _, access := range byType["netexec_privileged_access"] {
+		var evidence map[string]any
+		_ = json.Unmarshal([]byte(access.EvidenceJSON), &evidence)
+		if strings.EqualFold(cpFirstString(evidence, "protocol"), "SMB") || cpFirstString(evidence, "protocol") == "" {
+			if _, exists := adminOn[strings.ToLower(access.AffectedObject)]; !exists {
+				adminOn[strings.ToLower(access.AffectedObject)] = access
+			}
+		}
+	}
+	sessionPaths := map[string]bool{}
+	for _, session := range byType["smb_signed_in_accounts"] {
+		var evidence map[string]any
+		_ = json.Unmarshal([]byte(session.EvidenceJSON), &evidence)
+		target := strings.ToLower(cpFirstString(evidence, "target"))
+		access, ok := adminOn[target]
+		if !ok || sessionPaths[target] {
+			continue
+		}
+		var exposed []string
+		var source storage.Finding
+		for _, account := range cpStringSlice(evidence["accounts"]) {
+			if row, isPrivileged := privileged[normalizeAccountName(account)]; isPrivileged {
+				exposed = append(exposed, account)
+				source = row
+			}
+		}
+		if len(exposed) == 0 {
+			continue
+		}
+		sessionPaths[target] = true
+		accounts := strings.Join(exposed, ", ")
+		paths = append(paths, attackChain("admin-session-credentials", "Take a privileged account's credentials from a host you administer", session.AffectedObject,
+			[]attackChainStep{
+				{"Use the local administrator access PwnFlow's credentials have on " + session.AffectedObject, access},
+				{accounts + " signed in on " + session.AffectedObject, session},
+				{accounts + " is privileged", source},
+				{"Extract the signed-in account's credentials or Kerberos tickets from LSASS on " + session.AffectedObject + " and use them", session},
+			},
+			[]string{"the session is interactive and still leaves reusable material in memory (network logons do not)", "Credential Guard or LSA protection does not block the extraction", "endpoint protection allows it"},
+			"PwnFlow's credentials are local administrator on a host where a privileged account was signed in; its credentials can usually be taken from memory there."))
+	}
+
 	for _, typ := range []string{"netexec_gpp_password_exposure", "ad_account_password_attribute_readable", "sccm_task_sequence_credentials_exposed"} {
 		for _, exposure := range byType[typ] {
 			account := exposedAccount(exposure)

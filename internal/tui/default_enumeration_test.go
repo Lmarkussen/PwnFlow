@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pwnflow/pwnflow/internal/config"
+	"github.com/pwnflow/pwnflow/internal/runner"
 )
 
 func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *testing.T) {
@@ -12,7 +13,7 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 	// must be a deliberate change to this list.
 	want := []string{
 		"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
-		"smb-server-info", "smb-sessions", "logged-on-users", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
+		"smb-server-info", "registry-sessions", "logged-on-users", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
 		"certipy-adcs-discovery", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 		"sphunter-tenant-discovery", "ad-writable-objects", "ftp-anonymous-access", "smb-spider-plus", "smb-password-policy", "bloodyad-writable", "maq",
@@ -130,5 +131,30 @@ func TestEnumerationDetailProfileHasNoDuplicateChecks(t *testing.T) {
 	}
 	if seen["smb-enum-cve"] || !seen["bloodyad-writable"] || !seen["maq"] || seen["smb-ntlm-reflection"] {
 		t.Fatal(seen)
+	}
+}
+
+// Fan-out session modules depend on NetworkHound scope validation, which in
+// turn needs the topology: ordering the batch must keep that chain intact.
+func TestOrderBatchKeepsNetworkHoundChain(t *testing.T) {
+	registry := RegisteredModules()
+	byID := map[string]runner.BatchItem{}
+	for _, module := range registry {
+		byID[module.ID()] = runner.BatchItem{Module: module}
+	}
+	var items []runner.BatchItem
+	for _, id := range defaultEnumerationModuleIDs {
+		if item, ok := byID[id]; ok {
+			items = append(items, item)
+		}
+	}
+	position := map[string]int{}
+	for index, item := range orderBatch(items) {
+		position[item.Module.ID()] = index
+	}
+	for _, consumer := range []string{"logged-on-users", "registry-sessions", "smb-spider-plus"} {
+		if !(position["networkhound-topology"] < position["networkhound-scope-validation"] && position["networkhound-scope-validation"] < position[consumer]) {
+			t.Fatalf("%s at %d, topology at %d, scope validation at %d", consumer, position[consumer], position["networkhound-topology"], position["networkhound-scope-validation"])
+		}
 	}
 }

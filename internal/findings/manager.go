@@ -185,6 +185,8 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.HasSuffix(path, "smb_spooler.txt"), strings.HasSuffix(path, "smb_webdav.txt"):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case isNetExecSessionArtifact(path):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.HasSuffix(path, "smb_server_info.txt"), strings.HasSuffix(path, "smb_null_session.txt"):
 		// The SMB host banner carries the null-session, guest and SMBv1 state.
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
@@ -348,6 +350,17 @@ func (m *Manager) analyze(queued queuedJob) {
 			inputs, err = nil, authErr
 			break
 		}
+		if isNetExecSessionArtifact(job.ArtifactPath) {
+			// A fan-out output logs in to every SMB host; only administrative
+			// access is worth a Finding per host, not each successful login.
+			privileged := authInputs[:0]
+			for _, input := range authInputs {
+				if input.FindingType == "netexec_privileged_access" {
+					privileged = append(privileged, input)
+				}
+			}
+			authInputs = privileged
+		}
 		securityInputs, securityErr := AnalyzeNetExecSecurity(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		if securityErr != nil {
 			inputs, err = nil, securityErr
@@ -376,6 +389,8 @@ func (m *Manager) analyze(queued queuedJob) {
 			parserInputs, err = AnalyzeNetExecCoercion(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.HasSuffix(lowerPath, "smb_null_session.txt") {
 			parserInputs, err = AnalyzeNetExecNullSession(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if isNetExecSessionArtifact(job.ArtifactPath) {
+			parserInputs, err = AnalyzeNetExecSessions(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {
 			parserInputs, err = AnalyzeNetExecCredentials(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		}

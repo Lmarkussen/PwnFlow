@@ -59,7 +59,7 @@ var defaultEnumerationModuleIDs = []string{
 	// and the LAPS/gMSA password reads are not part of the automatic profile;
 	// they remain available to run by hand.
 	"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "asreproast", "kerberoasting", "ghostspn-audit",
-	"smb-server-info", "smb-sessions", "logged-on-users", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
+	"smb-server-info", "registry-sessions", "logged-on-users", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
 	// One unfiltered Certipy find carries every CA, template and ESC
 	// classification the -enabled and -vulnerable views report.
 	"certipy-adcs-discovery",

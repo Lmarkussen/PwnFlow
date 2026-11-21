@@ -56,8 +56,9 @@ coercing a WebClient host over HTTP and relaying to LDAP that does not require
 signing or channel binding (with MachineAccountQuota when present); registering
 a name through ADIDNS and relaying the authentication it attracts to the
 strongest observed target (AD CS web enrollment, then LDAP without signing,
-then SMB without signing); and a recovered or readable credential of a
-privileged account. Each step names the
+then SMB without signing); taking a privileged account's credentials from a
+host where PwnFlow's credentials are local administrator and that account is
+signed in; and a recovered or readable credential of a privileged account. Each step names the
 Finding it relies on, and a chain stays potential with its unverified
 conditions listed.
 

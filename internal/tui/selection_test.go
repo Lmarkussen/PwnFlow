@@ -255,7 +255,7 @@ func waitForBatch(t *testing.T, m *model) {
 
 func TestCompletedDefaultEnumerationRestoresToolRunnerNavigation(t *testing.T) {
 	log := &executionLog{}
-	profileIDs := []string{"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "smb-sessions", "maq"}
+	profileIDs := []string{"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "registry-sessions", "maq"}
 	registered := make([]modules.Module, 0, len(profileIDs))
 	ids := make([]int64, 0, len(profileIDs))
 	for index, id := range profileIDs {
@@ -344,7 +344,7 @@ func TestCompletedDefaultEnumerationRestoresToolRunnerNavigation(t *testing.T) {
 
 func TestGlobalShortcutsWorkFromNavigationPane(t *testing.T) {
 	log := &executionLog{}
-	profileIDs := []string{"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "smb-sessions", "maq"}
+	profileIDs := []string{"dns-nonsecure", "get-network", "obsolete", "sccm", "whoami", "registry-sessions", "maq"}
 	registered := make([]modules.Module, 0, len(profileIDs))
 	ids := make([]int64, 0, len(profileIDs))
 	for index, id := range profileIDs {

@@ -86,6 +86,8 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"authentication": {
 		{"successful_authentication", "Successful Authentication", "Verified successful protocol authentications"},
 		{"privileged_access", "Privileged Access", "Explicit NetExec elevated-access indicators"},
+		{"admin_reach", "Administrative Reach", "Hosts where each credential is local administrator"},
+		{"signed_in_accounts", "Signed-in Accounts", "Accounts NetExec saw signed in on SMB hosts"},
 	},
 	"other": {{"other", "Informational", "Evidence-backed domain and assessment information"}},
 }
@@ -153,7 +155,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "network"
 	case strings.HasPrefix(typ, "pwntools_ftp_anonymous_"):
 		return "pwntools"
-	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"):
+	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"), typ == "netexec_admin_reach", typ == "smb_signed_in_accounts":
 		return "authentication"
 	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"), strings.HasPrefix(typ, "ntlm_policy_"):
 		return "network"
@@ -222,6 +224,10 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "successful_authentication"
 	case strings.HasPrefix(typ, "netexec_privileged_"):
 		return "privileged_access"
+	case strings.HasPrefix(typ, "netexec_admin_reach"):
+		return "admin_reach"
+	case strings.HasPrefix(typ, "smb_signed_in_accounts"):
+		return "signed_in_accounts"
 	case strings.HasPrefix(typ, "pwntools_ftp_anonymous_"):
 		return "ftp_anonymous_access"
 	case strings.Contains(typ, "smb"):

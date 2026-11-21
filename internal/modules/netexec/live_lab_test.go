@@ -90,7 +90,7 @@ var liveReadOnlyModules = []string{
 	"dns-nonsecure", "dump-computers", "entra-id", "get-network", "groupmembership",
 	"obsolete", "sccm", "subnets", "whoami", "find-computer", "daclread",
 	// SMB enumeration, native queries and modules.
-	"smb-server-info", "smb-shares", "smb-disks", "smb-local-groups", "smb-sessions",
+	"smb-server-info", "smb-shares", "smb-disks", "smb-local-groups", "registry-sessions",
 	"logged-on-users", "registry-sessions", "terminal-sessions", "running-processes",
 	"smb-enum-av", "smb-enum-ca", "smb-gpp-privileges", "smb-ioxidresolver", "smb-spooler",
 	"smb-webdav", "smb-sccm-recon6", "smb-bitlocker",

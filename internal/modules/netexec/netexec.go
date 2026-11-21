@@ -98,6 +98,9 @@ type Definition struct {
 	// AnonymousValue sends an empty user name and password instead of the
 	// assessment credentials.
 	AnonymousValue bool
+	// FanOutValue targets every confirmed SMB endpoint instead of the
+	// configured domain controller; see endpointTargets.
+	FanOutValue bool
 }
 
 type Module struct{ definition Definition }
@@ -145,14 +148,14 @@ func (m Module) PlanApproval(runtime *modules.Runtime) (bool, string) {
 }
 
 func (m Module) BatchPrerequisites() []string {
-	if m.ID() == "smb-spider-plus" {
+	if m.ID() == "smb-spider-plus" || m.definition.FanOutValue {
 		return []string{"networkhound-scope-validation"}
 	}
 	return nil
 }
 
 func (m Module) BatchInputPrerequisites() []string {
-	if m.ID() == "smb-spider-plus" {
+	if m.ID() == "smb-spider-plus" || m.definition.FanOutValue {
 		return []string{"networkhound-scope-validation"}
 	}
 	return nil
@@ -423,6 +426,12 @@ func (m Module) DetailLines(runtime *modules.Runtime) []string {
 			"Approval: required once per assessment; metadata only, no downloads",
 		)
 	}
+	if m.definition.FanOutValue {
+		lines = append(lines,
+			"Targeting: every current-batch NetworkHound TCP/445 endpoint in one NetExec call; the domain controller when none are known",
+			"Manual override: SMB_ENDPOINTS (optional, exact in-scope hosts)",
+		)
+	}
 	if len(m.definition.OptionKeys) > 0 {
 		lines = append(lines, "Module options: "+strings.Join(m.definition.OptionKeys, ", "))
 	}
@@ -521,6 +530,9 @@ func (m Module) CommandArgs(runtime *modules.Runtime) []string {
 		}
 	}
 	args := []string{protocol.command, target}
+	if m.definition.FanOutValue {
+		args = append([]string{protocol.command}, m.endpointTargets(runtime)...)
+	}
 	switch {
 	case m.definition.AnonymousValue:
 		args = append(args, "-u", "", "-p", "")
@@ -798,6 +810,23 @@ func (m Module) spiderTargets(runtime *modules.Runtime) ([]string, error) {
 		targets[index] = endpointHost(targets[index])
 	}
 	return targets, nil
+}
+
+// endpointTargets is the target list of a fan-out registration: the SMB
+// endpoints spider_plus would inspect, with the domain controller added, or
+// only the domain controller when no endpoint list is available, so a manual
+// run without a NetworkHound scope behaves like any other registration.
+func (m Module) endpointTargets(runtime *modules.Runtime) []string {
+	targets, err := m.spiderTargets(runtime)
+	if err != nil || len(targets) == 0 {
+		return []string{runtime.Target}
+	}
+	for _, target := range targets {
+		if strings.EqualFold(target, runtime.Target) {
+			return targets
+		}
+	}
+	return append([]string{runtime.Target}, targets...)
 }
 
 func parseSMBTargets(value, scope string) ([]string, error) {

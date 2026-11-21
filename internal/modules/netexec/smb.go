@@ -57,29 +57,28 @@ func SMBEnumerationModules() []modules.Module {
 			args:        []string{"--local-groups"}, admin: adminLocal, output: "SMB_local_groups.txt",
 		},
 		{
-			id: "smb-sessions", name: "SMB Sessions",
-			description: "Enumerates active SMB sessions through --smb-sessions. The session table is only readable with " + adminLocal + ".",
-			args:        []string{"--smb-sessions"}, admin: adminLocal, output: "SMB_sessions.txt",
-		},
-		{
 			id: "logged-on-users", name: "Logged-on Users",
-			description: "Lists interactive sessions through --loggedon-users, which shows which accounts are signed in and where " + adminLocal + " is available.",
+			description: "Lists interactive sessions through --loggedon-users on every confirmed SMB host. Hosts where the credentials are " + adminLocal + " are marked Pwn3d! and show who is signed in; elsewhere the query is refused.",
 			args:        []string{"--loggedon-users"}, admin: adminLocal, output: "SMB_loggedon_users.txt",
+			fanOut: true, runtimeOnly: []string{"SMB_ENDPOINTS"},
 		},
 		{
 			id: "registry-sessions", name: "Registry Sessions",
 			description: "Reads the registry session table through --reg-sessions, an alternative view of logged-on users that needs " + adminRemote + ".",
 			args:        []string{"--reg-sessions"}, admin: adminRemote, output: "SMB_registry_sessions.txt",
+			fanOut: true, runtimeOnly: []string{"SMB_ENDPOINTS"},
 		},
 		{
 			id: "terminal-sessions", name: "Terminal Sessions",
 			description: "Lists RDP/terminal sessions through --qwinsta, which needs " + adminLocal + ".",
 			args:        []string{"--qwinsta"}, admin: adminLocal, output: "SMB_terminal_sessions.txt",
+			fanOut: true, runtimeOnly: []string{"SMB_ENDPOINTS"},
 		},
 		{
 			id: "running-processes", name: "Running Processes",
 			description: "Lists processes with --tasklist, including the accounts that own them. Needs " + adminLocal + ".",
 			args:        []string{"--tasklist"}, admin: adminLocal, output: "SMB_running_processes.txt",
+			fanOut: true, runtimeOnly: []string{"SMB_ENDPOINTS"},
 		},
 		{
 			id: "smb-enum-av", name: "Enumerate Endpoint Protection",

@@ -151,7 +151,9 @@ Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the
 registry. It includes the selected NetExec LDAP checks (DNS, obsolete operating
 systems, SCCM, authenticated-user info, machine account quota, AS-REP and
 Kerberos material, password attributes) and the selected SMB checks
-(server/session and logged-on-user observations, GPP/AWS/user
+(server information; logged-on users and registry sessions on every SMB host
+NetworkHound confirmed, which also shows where the credentials are local
+administrator; GPP/AWS/user
 attributes, an SMB null-session check that sends no credentials, and whether the
 Print Spooler and WebClient services answer on the domain controller), one
 unfiltered Certipy AD CS discovery, RustHound-CE, the AD Directory Settings read
