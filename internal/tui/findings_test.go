@@ -360,7 +360,12 @@ func TestFindingsFooterUsesOpenBackAndQuit(t *testing.T) {
 	if !strings.Contains(frame, "Q Quit") {
 		t.Fatalf("root footer missing Q Quit: %s", frame)
 	}
-	for _, unwanted := range []string{"Search", "OBSERVED", "All"} {
+	// The search key (/) was approved on 2026-11-21 and is advertised as
+	// "/ Search"; the retired view-mode hints stay out.
+	if !strings.Contains(frame, "/ Search") {
+		t.Fatalf("findings footer does not advertise the search key: %s", frame)
+	}
+	for _, unwanted := range []string{"OBSERVED", "All"} {
 		if strings.Contains(frame, unwanted) {
 			t.Fatalf("findings footer still advertises %q: %s", unwanted, frame)
 		}

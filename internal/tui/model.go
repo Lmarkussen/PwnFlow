@@ -59,6 +59,10 @@ type model struct {
 	runHistory              runHistory
 	runDiff                 runDiff
 	runDiffKnown            bool
+	findingSearchActive     bool
+	findingSearchQuery      string
+	findingResults          []storage.Finding
+	findingResultsTitle     string
 	notReobservedHidden     int
 	criticalProjection      findingengine.CriticalProjection
 	criticalNavigationLevel int

@@ -428,11 +428,14 @@ func (m *model) refreshFindings() {
 	if m.findingCategory == "changes" {
 		rows = m.runDiff.rows()
 	}
+	if m.findingCategory == "results" {
+		rows = m.findingResults
+	}
 	m.findingViewMode = "all"
 	m.findingSeverity = ""
 	filtered := make([]storage.Finding, 0, len(rows))
 	for _, finding := range rows {
-		if m.findingCategory != "critical" && m.findingCategory != "changes" && m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
+		if m.findingCategory != "critical" && m.findingCategory != "changes" && m.findingCategory != "results" && m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
 			continue
 		}
 		if m.findingCategory == "critical" && !m.findingCategoryView {
@@ -1948,6 +1951,9 @@ func (m *model) findingsViewRender() string {
 	if m.findingCategory == "critical" {
 		content.WriteString(dim.Render(wrapFindingNotice(criticalFindingsNotice, width-4)) + "\n\n")
 	}
+	if m.findingCategory == "results" && !m.findingDetail {
+		content.WriteString(infoBlueStyle().Bold(true).Render(m.findingResultsTitle) + "\n\n")
+	}
 	m.keepFindingVisible()
 	end := min(len(m.findingRows), m.findingTop+m.findingPageSize())
 	if m.findingDetail && len(m.findingRows) > 0 {
@@ -2054,7 +2060,7 @@ func (m *model) findingsViewRender() string {
 		m.findingDetailTop = min(max(0, m.findingDetailTop), maxDetailTop)
 		endDetail := min(len(detailLines), m.findingDetailTop+detailPageSize)
 		content.WriteString(strings.Join(detailLines[m.findingDetailTop:endDetail], "\n"))
-		footer := "\n↑/↓ Scroll    PgUp/PgDn Change Finding    ←/Esc Back    A Account Evidence    E Original Evidence    Q Quit"
+		footer := "\n↑/↓ Scroll    PgUp/PgDn Change Finding    ←/Esc Back    A Account Evidence    E Original Evidence    O Everything About Object    Q Quit"
 		if len(m.criticalSourceFindings) > 1 {
 			footer = "\n[/] Supporting Finding    " + strings.TrimPrefix(footer, "\n")
 		}
@@ -2111,6 +2117,9 @@ func (m *model) findingsHeader() string {
 	header := title.Render("PwnFlow // FINDINGS")
 	if m.findingsOnly() {
 		header += "  " + dim.Render("FINDINGS ONLY · OFFLINE")
+	}
+	if m.findingSearchActive {
+		header += "\n" + infoBlueStyle().Render("Search: "+m.findingSearchQuery+"▌") + dim.Render("   Enter search · Esc cancel")
 	}
 	return header
 }
@@ -5350,7 +5359,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    D Changes    H Show/Hide Not Re-observed    R Write Report    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    / Search    D Changes    H Show/Hide Not Re-observed    R Write Report    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

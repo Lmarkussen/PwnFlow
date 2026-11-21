@@ -618,6 +618,23 @@ func (m *model) requestQuit() tea.Cmd {
 }
 
 func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
+	if m.findingSearchActive {
+		m.handleFindingSearchKey(key)
+		return m, nil
+	}
+	if key == "/" && !m.evidenceView {
+		m.findingSearchActive = true
+		m.findingSearchQuery = ""
+		return m, nil
+	}
+	if (key == "o" || key == "O") && !m.evidenceView && !m.findingCategoryView && m.findingCursor >= 0 && m.findingCursor < len(m.findingRows) {
+		selected := m.activeFindingForDetail(m.findingRows[m.findingCursor])
+		object := fallbackText(selected.AffectedObject, selected.AffectedObjectID)
+		if object != "" {
+			m.openFindingResults("Everything about "+object, findingsAboutObject(m.findingAllRows, object))
+		}
+		return m, nil
+	}
 	if m.findingsOnly() && key == "ctrl+w" {
 		return m, nil
 	}

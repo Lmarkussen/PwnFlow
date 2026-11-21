@@ -67,6 +67,14 @@ them. Nothing is deleted: `--reset-findings` remains the way to clear history.
 shows its path in the status line, and `D` lists the changes since the previous
 run (below).
 
+**Search and object view.** `/` opens a search line: type words and press
+Enter to list every Finding, in any category, whose title, affected or related
+object, tool, type or listed object names contain all of them; `Esc` cancels.
+`O` on a Finding lists everything about its affected object, matching the
+forms one host or account takes across tools (`HOST`, `host.domain`, `HOST$`,
+`DOMAIN\user`, `user@domain`). Evidence values are not searched, so a recovered
+secret cannot be found by typing it.
+
 **Changes since the previous run.** Every Default Enumeration batch is recorded
 as a run. Once two runs have completed, the category screen summarizes what the
 latest run changed: new conditions, conditions it resolved (seen in the
