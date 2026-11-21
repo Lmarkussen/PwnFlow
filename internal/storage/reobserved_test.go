@@ -50,7 +50,11 @@ func TestListFindingsMarksFindingsNotReobserved(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// The second run repeats only the spooler module and re-observes one Finding.
+	// The second run happens in a new session, which registers the module
+	// again under a new id, repeats only the spooler module and re-observes
+	// one Finding.
+	spooler, _ = db.RegisterModule(ctx, "Check Print Spooler", "NetExec (nxc)", "SMB", "", "SMB_spooler.txt")
+	quota, _ = db.RegisterModule(ctx, "Check Machine Account Quota", "NetExec (nxc)", "LDAP", "", "LDAP_machine_account_quota.txt")
 	spooler2 := execute(spooler, run2, "completed", AnalysisComplete)
 	if err := db.IngestFindings(ctx, []FindingInput{finding("still-present", spooler2, run2.Add(time.Minute))}); err != nil {
 		t.Fatal(err)

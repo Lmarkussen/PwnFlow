@@ -56,9 +56,13 @@ type Finding struct {
 // execution of the Finding's source module exists that started after the
 // Finding was last observed. Re-observation moves last_seen to the later
 // execution, so a Finding that is still present never matches.
+// Modules are matched by name and tool: every PwnFlow session registers its
+// modules again under new ids.
 const notReobservedExpression = `EXISTS (
 	SELECT 1 FROM executions source
-	JOIN executions later ON later.module_id = source.module_id AND later.target_id = source.target_id AND later.id <> source.id
+	JOIN modules source_def ON source_def.id = source.module_id
+	JOIN executions later ON later.target_id = source.target_id AND later.id <> source.id
+	JOIN modules later_def ON later_def.id = later.module_id AND later_def.name = source_def.name AND later_def.tool = source_def.tool
 	JOIN analysis_jobs job ON job.execution_id = later.id AND upper(job.status) = 'COMPLETE'
 	WHERE source.id = findings.source_execution_id
 	  AND lower(later.status) = 'completed'
