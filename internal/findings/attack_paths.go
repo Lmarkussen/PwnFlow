@@ -1,0 +1,186 @@
+package findings
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/pwnflow/pwnflow/internal/storage"
+)
+
+// attackChainFamily is the Critical projection family of stitched paths.
+const attackChainFamily = "attack_chain"
+
+// attackChainStep is one link of a stitched path: what it does and the
+// Finding that shows the condition it relies on.
+type attackChainStep struct {
+	Action  string
+	Finding storage.Finding
+}
+
+// attackChainPaths joins current Findings into concrete multi-step paths. A
+// chain only uses conditions that were each observed; it never infers one.
+// Chains are potential Critical paths: the observed conditions are listed
+// step by step and what was not verified is listed as such.
+func attackChainPaths(rows []storage.Finding) []CriticalPath {
+	byType := map[string][]storage.Finding{}
+	for _, row := range rows {
+		if row.NotReobserved {
+			continue
+		}
+		typ := strings.ToLower(strings.TrimSpace(row.FindingType))
+		byType[typ] = append(byType[typ], row)
+	}
+	for _, list := range byType {
+		sort.SliceStable(list, func(i, j int) bool { return list[i].ID < list[j].ID })
+	}
+	first := func(types ...string) (storage.Finding, bool) {
+		for _, typ := range types {
+			if list := byType[typ]; len(list) > 0 {
+				return list[0], true
+			}
+		}
+		return storage.Finding{}, false
+	}
+	var paths []CriticalPath
+
+	coercion, coercionOK := first("smb_webclient_service_running", "smb_spooler_service_running")
+	coercionMethod := "the Print Spooler (MS-RPRN)"
+	if coercionOK && strings.EqualFold(coercion.FindingType, "smb_webclient_service_running") {
+		coercionMethod = "WebClient (HTTP)"
+	}
+
+	// Coerce the domain controller and relay to AD CS web enrollment (ESC8).
+	if coercionOK {
+		for _, esc8 := range byType["adcs_esc_esc8"] {
+			paths = append(paths, attackChain("coerce-relay-esc8", "Coerce the domain controller and relay to AD CS web enrollment (ESC8)", esc8.AffectedObject,
+				[]attackChainStep{
+					{"Coerce " + coercion.AffectedObject + " to authenticate through " + coercionMethod, coercion},
+					{"Relay the authentication to the HTTP web enrollment endpoint of " + esc8.AffectedObject, esc8},
+					{"Enroll a certificate as the domain controller's machine account and use it (PKINIT) to replicate secrets (DCSync)", esc8},
+				},
+				[]string{"the web enrollment endpoint accepts NTLM without Extended Protection for Authentication", "the coerced machine account may enroll in a template that allows client authentication", "coercion and relay succeed from the operator's position"},
+				"Every condition for a coerce-and-relay path to AD CS was observed: a coercion-capable service on the domain controller and HTTP web enrollment on the CA. Together they are a common route to domain compromise."))
+		}
+	}
+
+	// Coerce the domain controller to a host with unconstrained delegation.
+	if coercionOK {
+		for _, unconstrained := range byType["unconstrained_delegation_configured"] {
+			if strings.EqualFold(unconstrained.Severity, "informational") {
+				continue // a domain controller's own default
+			}
+			paths = append(paths, attackChain("coerce-unconstrained", "Coerce the domain controller to an unconstrained-delegation principal", unconstrained.AffectedObject,
+				[]attackChainStep{
+					{"Take control of " + unconstrained.AffectedObject + ", which has unconstrained delegation", unconstrained},
+					{"Coerce " + coercion.AffectedObject + " to authenticate to it through " + coercionMethod, coercion},
+					{"Extract the domain controller's forwarded TGT and use it to replicate secrets (DCSync)", unconstrained},
+				},
+				[]string{"control of the unconstrained-delegation principal (its credentials or host)", "a name and SPN that route the coerced authentication to that principal", "coercion succeeds from the operator's position"},
+				"An unconstrained-delegation principal and a coercion-capable domain controller were both observed; together they let the principal's controller capture the domain controller's TGT."))
+		}
+	}
+
+	// Coerce over HTTP and relay to LDAP.
+	if webclient, ok := first("smb_webclient_service_running"); ok {
+		if ldap, ldapOK := first("ldap_signing_policy_not_required", "ldap_signing_not_enforced", "ldap_channel_binding_policy_not_required", "ldap_channel_binding_not_enforced"); ldapOK {
+			steps := []attackChainStep{
+				{"Coerce " + webclient.AffectedObject + " to authenticate over HTTP through WebClient", webclient},
+				{"Relay the authentication to LDAP on a domain controller that does not require signing or channel binding", ldap},
+			}
+			if maq, maqOK := first("ad_domain_policy_machine_account_creation_quota"); maqOK {
+				steps = append(steps, attackChainStep{"Create a computer account (MachineAccountQuota) and write resource-based delegation or shadow credentials on " + webclient.AffectedObject, maq})
+			} else {
+				steps = append(steps, attackChainStep{"Write resource-based delegation or shadow credentials on " + webclient.AffectedObject + "'s computer object", ldap})
+			}
+			steps = append(steps, attackChainStep{"Obtain a ticket as an administrator to " + webclient.AffectedObject, webclient})
+			paths = append(paths, attackChain("webclient-relay-ldap", "Coerce over HTTP and relay to LDAP", webclient.AffectedObject, steps,
+				[]string{"the relay target is a domain controller other than the coerced host (NTLM reflection is blocked)", "the coerced host resolves an attacker-controlled name in the intranet zone", "relay succeeds from the operator's position"},
+				"WebClient on a host and LDAP that does not require signing or channel binding were both observed; HTTP authentication relayed to LDAP can rewrite the host's own computer object."))
+		}
+	}
+
+	// Recovered or readable credentials of a privileged account.
+	privileged := privilegedAccountNames(byType)
+	for _, typ := range []string{"netexec_gpp_password_exposure", "ad_account_password_attribute_readable", "sccm_task_sequence_credentials_exposed"} {
+		for _, exposure := range byType[typ] {
+			account := exposedAccount(exposure)
+			source, ok := privileged[normalizeAccountName(account)]
+			if account == "" || !ok {
+				continue
+			}
+			paths = append(paths, attackChain("credential-privileged", "Exposed credential of a privileged account", account,
+				[]attackChainStep{
+					{"Recover the credential of " + account, exposure},
+					{account + " is privileged", source},
+				},
+				[]string{"the recovered value is the account's current password"},
+				"A credential PwnFlow recovered or could read belongs to a privileged account."))
+		}
+	}
+	return paths
+}
+
+// attackChain builds one stitched path from its steps.
+func attackChain(template, title, target string, steps []attackChainStep, unverified []string, reason string) CriticalPath {
+	assessment := int64(0)
+	var confirmed []string
+	var evidence []CriticalEvidenceReference
+	var ids []int64
+	for index, step := range steps {
+		if assessment == 0 {
+			assessment = step.Finding.AssessmentID
+		}
+		confirmed = append(confirmed, fmt.Sprintf("Step %d: %s (%s)", index+1, step.Action, step.Finding.Title))
+		evidence = append(evidence, CriticalEvidenceReference{FindingID: step.Finding.ID, SourceExecution: step.Finding.SourceExecution, ArtifactPath: step.Finding.ArtifactPath, ArtifactRef: step.Finding.ArtifactRef})
+		ids = append(ids, step.Finding.ID)
+	}
+	path := CriticalPath{
+		AssessmentID: assessment, ID: cpStableProjectionID(assessment, attackChainFamily, template, target, ""), State: CriticalPotential,
+		Family: attackChainFamily, Target: target, Capability: template, ConfirmedPrereqs: confirmed, UnverifiedPrereqs: unverified,
+		Evidence: cpUniqueEvidence(evidence), SupportingFindingIDs: cpUniqueInt64(ids), Reason: reason, Title: "Attack path: " + title,
+	}
+	path.Finding = projectedFinding(path)
+	return path
+}
+
+// privilegedAccountNames maps normalized account names that Findings show to
+// be privileged to the Finding that shows it.
+func privilegedAccountNames(byType map[string][]storage.Finding) map[string]storage.Finding {
+	names := map[string]storage.Finding{}
+	for _, typ := range []string{"ad_account_privileged_not_protected", "ad_account_privileged_kerberoastable", "ad_account_privileged_pwd_never_expires", "ad_account_privileged_stale", "ad_account_privileged_old_password"} {
+		for _, row := range byType[typ] {
+			var evidence map[string]any
+			if json.Unmarshal([]byte(row.EvidenceJSON), &evidence) != nil {
+				continue
+			}
+			for _, name := range cpStringSlice(evidence["affected_objects"]) {
+				if key := normalizeAccountName(name); key != "" {
+					if _, exists := names[key]; !exists {
+						names[key] = row
+					}
+				}
+			}
+		}
+	}
+	return names
+}
+
+func exposedAccount(finding storage.Finding) string {
+	var evidence map[string]any
+	_ = json.Unmarshal([]byte(finding.EvidenceJSON), &evidence)
+	return strings.TrimSpace(fallbackString(cpFirstString(evidence, "account", "account_identity"), finding.AffectedObject))
+}
+
+// normalizeAccountName reduces DOMAIN\user, user@domain and USER to "user".
+func normalizeAccountName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if index := strings.LastIndexByte(name, '\\'); index >= 0 {
+		name = name[index+1:]
+	}
+	if index := strings.IndexByte(name, '@'); index >= 0 {
+		name = name[:index]
+	}
+	return name
+}

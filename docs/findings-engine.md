@@ -49,6 +49,15 @@ configured:
 | `CRIT-AD-DCSYNC` | Replication-rights overview | Complete, verified evidence of GetChanges and GetChangesAll on the domain root for an inappropriate principal |
 | `CRIT-AD-TIER0-CONTROL` | Privileged ACL evidence | Complete evidence of an allowed GenericAll, WriteDacl or WriteOwner by an inappropriate principal over the domain root or a Tier Zero group |
 
+Attack paths stitch current Findings into multi-step chains, grouped first under
+"Attack Paths": coercing the domain controller and relaying to AD CS web
+enrollment (ESC8); coercing it to an unconstrained-delegation principal;
+coercing a WebClient host over HTTP and relaying to LDAP that does not require
+signing or channel binding (with MachineAccountQuota when present); and a
+recovered or readable credential of a privileged account. Each step names the
+Finding it relies on, and a chain stays potential with its unverified
+conditions listed.
+
 Potential paths keep the condition and list what is not verified. Besides
 unverified ESC, ACL, replication, delegation, relay and SMB-signing evidence,
 they include: LAPS passwords readable by a broad group; a gMSA readable by a

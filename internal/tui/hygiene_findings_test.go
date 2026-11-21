@@ -93,3 +93,9 @@ func TestCriticalFamiliesForDirectoryHygiene(t *testing.T) {
 		}
 	}
 }
+
+func TestAttackPathsGroupFirst(t *testing.T) {
+	if pathGroupName("attack_chain") != "Attack Paths" || criticalDisplayGroupOrder[0] != "Attack Paths" {
+		t.Fatalf("attack chains are not grouped first: %q %v", pathGroupName("attack_chain"), criticalDisplayGroupOrder)
+	}
+}

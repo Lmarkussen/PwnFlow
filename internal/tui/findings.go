@@ -511,6 +511,7 @@ func criticalProjectionRows(projection findingengine.CriticalProjection) []stora
 }
 
 var criticalDisplayGroupOrder = []string{
+	"Attack Paths",
 	"AD CS",
 	"AD Privileged",
 	"SCCM / MECM",
@@ -524,6 +525,8 @@ func criticalDisplayGroup(finding storage.Finding) string {
 	switch {
 	case strings.HasPrefix(family, "adcs_"):
 		return "AD CS"
+	case family == "attack_chain":
+		return "Attack Paths"
 	case family == "privileged_access", family == "acl_control", family == "dcsync", family == "sid_history", family == "trust":
 		return "AD Privileged"
 	case family == "credential_disclosure":
@@ -579,6 +582,8 @@ func pathGroupName(family string) string {
 	switch {
 	case strings.HasPrefix(strings.ToLower(family), "adcs_"):
 		return "AD CS"
+	case family == "attack_chain":
+		return "Attack Paths"
 	case family == "privileged_access", family == "acl_control", family == "dcsync", family == "sid_history", family == "trust":
 		return "AD Privileged"
 	case family == "credential_disclosure":
@@ -2874,6 +2879,8 @@ func findingTechniqueReference(finding storage.Finding) string {
 			return "The Hacker Recipes — NTLM relay\nhttps://www.thehacker.recipes/ad/movement/ntlm/relay"
 		case strings.Contains(typ, "credential_disclosure"):
 			return "The Hacker Recipes — SCCM / MECM\nhttps://www.thehacker.recipes/ad/movement/sccm-mecm/"
+		case strings.Contains(typ, "attack_chain"):
+			return "The Hacker Recipes — MITM and coerced authentications\nhttps://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications\nThe Hacker Recipes — NTLM relay\nhttps://www.thehacker.recipes/ad/movement/ntlm/relay\nThe Hacker Recipes — AD CS unsigned endpoints / ESC8\nhttps://www.thehacker.recipes/ad/movement/adcs/unsigned-endpoints\nThe Hacker Recipes — Kerberos delegations\nhttps://www.thehacker.recipes/ad/movement/kerberos/delegations\nCoercer\nhttps://github.com/p0dalirius/Coercer\nimpacket (ntlmrelayx.py)\nhttps://github.com/fortra/impacket"
 		}
 	}
 	if strings.HasPrefix(typ, "adcs_esc_") {

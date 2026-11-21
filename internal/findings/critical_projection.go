@@ -84,6 +84,9 @@ func ProjectCritical(rows []storage.Finding) CriticalProjection {
 			mergeProjectedPath(potential, path)
 		}
 	}
+	for _, path := range attackChainPaths(ordered) {
+		mergeProjectedPath(potential, path)
+	}
 	for key := range potential {
 		if _, exists := confirmed[key]; exists {
 			delete(potential, key)
