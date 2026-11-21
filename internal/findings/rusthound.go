@@ -231,7 +231,9 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	}
 	findings = append(findings, hygieneFindings(objects, assessmentID, executionID, now, collectedAt)...)
 	findings = append(findings, passwordReaderFindings(objects, aces, assessmentID, executionID, now)...)
-	findings = append(findings, shadowAdminFindings(objects, aces, privilegedMembership(objects), assessmentID, executionID, now)...)
+	privileged := privilegedMembership(objects)
+	findings = append(findings, shadowAdminFindings(objects, aces, privileged, assessmentID, executionID, now)...)
+	findings = append(findings, gpoControlFindings(objects, aces, privileged, assessmentID, executionID, now)...)
 	findings = append(findings, delegationRiskFindings(objects, assessmentID, executionID, now)...)
 	for _, ace := range aces {
 		if err := ctx.Err(); err != nil {
@@ -379,7 +381,7 @@ func decodeObject(raw json.RawMessage, objectType string) (collectedObject, []ma
 	object := collectedObject{ID: rawString(fields, "ObjectIdentifier"), Type: objectType, Properties: properties}
 	object.Name = firstString(properties, "name", "samaccountname", "distinguishedname", "dn")
 	object.HighValue = rawBool(properties, "highvalue")
-	if kind := strings.ToLower(objectType); kind == "domains" || kind == "groups" || kind == "users" || kind == "computers" {
+	if kind := strings.ToLower(objectType); kind == "domains" || kind == "groups" || kind == "users" || kind == "computers" || kind == "ous" {
 		object.Top = fields
 	}
 	var aces []map[string]json.RawMessage

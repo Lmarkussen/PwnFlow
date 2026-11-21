@@ -59,6 +59,11 @@ var (
 	toolWsuks          = techniqueLink{"wsuks", "https://github.com/NeffIsBack/wsuks"}
 	toolPyWSUS         = techniqueLink{"pywsus", "https://github.com/GoSecure/pywsus"}
 	mitreAiTM          = techniqueLink{"MITRE ATT&CK T1557 — Adversary-in-the-Middle", "https://attack.mitre.org/techniques/T1557/"}
+	thrGPO             = techniqueLink{"The Hacker Recipes — Group Policies", "https://www.thehacker.recipes/ad/movement/group-policies"}
+	toolPyGPOAbuse     = techniqueLink{"pyGPOAbuse", "https://github.com/Hackndo/pyGPOAbuse"}
+	toolGPOBackdoor    = techniqueLink{"GroupPolicyBackdoor", "https://github.com/synacktiv/GroupPolicyBackdoor"}
+	toolSharpGPOAbuse  = techniqueLink{"SharpGPOAbuse", "https://github.com/FSecureLABS/SharpGPOAbuse"}
+	mitreGPOModify     = techniqueLink{"MITRE ATT&CK T1484.001 — Group Policy Modification", "https://attack.mitre.org/techniques/T1484/001/"}
 	mitreRelay         = techniqueLink{"MITRE ATT&CK T1557.001 — LLMNR/NBT-NS Poisoning and SMB Relay", "https://attack.mitre.org/techniques/T1557/001/"}
 	mitreForcedAuth    = techniqueLink{"MITRE ATT&CK T1187 — Forced Authentication", "https://attack.mitre.org/techniques/T1187/"}
 	mitreSIDHistory    = techniqueLink{"MITRE ATT&CK T1134.005 — SID-History Injection", "https://attack.mitre.org/techniques/T1134/005/"}
@@ -73,6 +78,7 @@ var (
 // references did not. findingTechniqueReference consults it last.
 var additionalTechniqueLinks = map[string][]techniqueLink{
 	// Anonymous access and enumeration.
+	"ad_gpo_control_by_non_admin":                {thrGPO, toolPyGPOAbuse, toolGPOBackdoor, toolSharpGPOAbuse, mitreGPOModify},
 	"network_poisoning_name_resolution":          {thrLLMNR, thrWPAD, toolResponder, thrNTLMRelay, toolImpacket, mitreRelay},
 	"network_poisoning_ipv6_dhcpv6":              {thrDHCPv6, thrWPAD, toolMitm6, thrNTLMRelay, toolImpacket, mitreAiTM},
 	"network_poisoning_wsus_http":                {thrWSUS, toolWsuks, toolPyWSUS, mitreAiTM},

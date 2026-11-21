@@ -120,7 +120,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "network"
 	case strings.HasPrefix(typ, "ad_writable_object_"):
 		return "acl"
-	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"), strings.HasPrefix(typ, "ad_shadow_admin_"):
+	case strings.HasPrefix(typ, "ad_privileged_acl_"), strings.HasPrefix(typ, "ad_replication_rights_"), strings.HasPrefix(typ, "ad_shadow_admin_"), strings.HasPrefix(typ, "ad_gpo_control_"):
 		return "acl"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):
 		return "active_directory"
@@ -185,7 +185,7 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "ntlm_policy"
 	case strings.HasPrefix(typ, "network_poisoning_"):
 		return "poisoning"
-	case strings.HasPrefix(typ, "ad_shadow_admin_"):
+	case strings.HasPrefix(typ, "ad_shadow_admin_"), strings.HasPrefix(typ, "ad_gpo_control_"):
 		return "acl"
 	case strings.HasPrefix(typ, "sccm_"):
 		return "sccm"
