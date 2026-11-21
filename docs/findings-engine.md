@@ -60,7 +60,7 @@ by default, such as any authenticated user adding DNS records, and information
 disclosure without a privilege path, such as anonymous enumeration, stay in
 their categories and are not projected.
 
-The automatic enumeration plan is an explicit, protected list of 43 modules.
+The automatic enumeration plan is an explicit, protected list of 42 modules.
 GhostSPN is the additive audit immediately after Kerberoasting. The plan is
 separate from manually selected modules and from offline artifact analysis;
 `--reanalyze-latest` analyzes retained supported artifacts and never starts a

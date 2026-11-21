@@ -116,7 +116,6 @@ test asserts this for every registration).
 | -M module | registration | category | privilege | options |
 |---|---|---|---|---|
 | adcs | adcs | Enumeration | - |  |
-| badsuccessor | badsuccessor | Enumeration | - |  |
 | daclread | daclread | Enumeration | - | TARGET, TARGET_DN, PRINCIPAL, ACTION, ACE_TYPE, RIGHTS, RIGHTS_GUID |
 | dns-nonsecure | dns-nonsecure | Enumeration | - |  |
 | dump-computers | dump-computers | Enumeration | - |  |
@@ -323,8 +322,9 @@ Per protocol:
 
 The Credential Dumping category has since been renamed Credential Exposure; its
 results directory keeps the name `CredentialDumping` so existing assessments stay
-valid. Nine further registrations were removed afterwards: the seven SMB
-vulnerability checks and the RDP and VNC screen captures (see below).
+valid. Eleven further registrations were removed afterwards: the eight SMB
+vulnerability checks (including `enum_cve`), the LDAP `badsuccessor` check, and
+the RDP and VNC screen captures (see below).
 
 The previous count in this document (175) was under-reported: the script that
 produced it skipped the rows whose native-flag cell is empty, which is every
@@ -343,7 +343,7 @@ test fails if an advertised module is neither registered nor listed as excluded.
 | Domain data read over SMB | `users`, `groups`, `computers`, `pass-pol`, `rid-brute` | The domain dataset is read over LDAP (LDAPS), which returns more attributes and needs no SAMR path. The SMB local-group, session, and logged-on-user queries stay, because a host's local data has no LDAP equivalent. `smb-null-session` uses `--users --pass-pol --shares` with an empty user name and password for a different question - what an unauthenticated client can read - and never with the assessment credentials |
 | Native duplicate | `interfaces` (native) | `-M enum_interfaces` is the module that superseded the flag, and it is the one registered |
 | Duplicate LDAP user-description query | `user-desc` | `get-desc-users` is retained as the canonical description query because it returns the same attribute and exposes filtering and password-policy options |
-| Vulnerability checks | `ms17-010`, `nopac`, `ntlm_reflection`, `printnightmare`, `remove-mic`, `smbghost`, `zerologon` (SMB and WMI) | PwnFlow enumerates configuration and reports what it observes; CVE detection belongs in a vulnerability scanner |
+| Vulnerability checks | `ms17-010`, `nopac`, `ntlm_reflection`, `printnightmare`, `remove-mic`, `smbghost`, `zerologon` (SMB and WMI), `enum_cve`, `badsuccessor` (LDAP) | PwnFlow enumerates configuration and reports what it observes; CVE detection belongs in a vulnerability scanner |
 | Screen capture | `--nla-screenshot` (RDP), `--screenshot` (VNC) | A captured screen is not directory or host configuration |
 | Duplicate module on a second transport | `aws-credentials` (WinRM, SSH), `bitlocker`, `spooler`, `ioxidresolver`, `enum_dns`, `get_netconnections` (WMI) | Registered once, under the protocol PwnFlow keeps for that capability |
 | Configuration, not enumeration | `test_connection` (SMB, MSSQL), `spider_plus` | `test_connection` pings a host the operator names, which is a probe rather than a read of the target; `spider_plus` is oriented at collecting files (download flags, size limits) and its crawl duplicates the operator's dedicated share tooling |
@@ -495,8 +495,8 @@ Result vocabulary:
 
 ### Live results
 
-The SMB vulnerability checks and screen captures that were part of this run
-have since been removed from the registry, and their rows are omitted below.
+The vulnerability checks and screen captures that were part of this run have
+since been removed from the registry, and their rows are omitted below.
 
 Every registration below ran through PwnFlow's runner against the authorized
 target with a valid domain account: 77 modules, exit status 0, no failures.
@@ -517,7 +517,6 @@ result is told apart from a real one.
 | domain-controllers | completed | exit=0 | 362 | LIVE PASS |
 | maq | completed | exit=0 | 462 | LIVE PASS |
 | adcs | completed | exit=0 | 611 | LIVE PASS |
-| badsuccessor | completed | exit=0 | 702 | LIVE PASS |
 | dns-nonsecure | completed | exit=0 | 520 | LIVE PASS |
 | dump-computers | completed | exit=0 | 960 | LIVE PASS |
 | entra-id | completed | exit=0 | 272 | LIVE PASS |

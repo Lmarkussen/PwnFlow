@@ -86,7 +86,7 @@ var liveReadOnlyModules = []string{
 	// LDAP enumeration, native queries and modules.
 	"domain-users", "active-users", "domain-groups", "domain-sid",
 	"password-policy", "fine-grained-password-policy", "admin-count", "password-not-required",
-	"delegation", "domain-controllers", "maq", "adcs", "badsuccessor",
+	"delegation", "domain-controllers", "maq", "adcs",
 	"dns-nonsecure", "dump-computers", "entra-id", "get-network", "groupmembership",
 	"obsolete", "sccm", "subnets", "whoami", "find-computer", "daclread",
 	// SMB enumeration, native queries and modules.

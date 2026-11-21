@@ -343,8 +343,6 @@ func (m *Manager) analyze(queued queuedJob) {
 		var parserInputs []storage.FindingInput
 		if strings.Contains(lowerPath, "gpp_password") || strings.Contains(lowerPath, "gpp-password") {
 			parserInputs, err = AnalyzeNetExecGPP(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
-		} else if strings.Contains(lowerPath, "enum_cve") {
-			parserInputs, err = AnalyzeEnumCVE(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.HasSuffix(lowerPath, "smb_null_session.txt") {

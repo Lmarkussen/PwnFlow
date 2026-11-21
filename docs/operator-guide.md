@@ -97,7 +97,7 @@ Local sudo is not the same thing as `ADMIN-REQ`, which describes rights **on the
 registry. It includes the selected NetExec LDAP checks (DNS, obsolete operating
 systems, SCCM, authenticated-user info, machine account quota, AS-REP and
 Kerberos material, password attributes) and the selected SMB checks
-(server/session and logged-on-user observations, NTLM reflection, GPP/AWS/user
+(server/session and logged-on-user observations, GPP/AWS/user
 attributes, and an SMB null-session check that sends no credentials), one
 unfiltered Certipy AD CS discovery, RustHound-CE, the AD Directory Settings read
 (dSHeuristics, an unauthenticated LDAP search, DNS zone ACLs), SCCMhunter,
@@ -116,7 +116,7 @@ gated; declined items are recorded and the eligible remainder continues.
 Masscan is deliberately excluded from this profile. Run it manually with
 `Enter` after entering and approving its target and port inputs.
 
-The protected profile contains exactly 43 modules. Its order is defined
+The protected profile contains exactly 42 modules. Its order is defined
 explicitly in `internal/tui/plan.go`; GhostSPN (`ghostspn-audit`) immediately
 follows Kerberoasting. This count and ordering are part of the assessment
 workflow contract, not a documentation-only list.

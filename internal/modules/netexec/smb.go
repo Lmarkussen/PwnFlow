@@ -87,11 +87,6 @@ func SMBEnumerationModules() []modules.Module {
 			module:      "enum_av",
 		},
 		{
-			id: "smb-enum-cve", name: "Enumerate CVE Patch Exposure",
-			description: "Uses enum_cve registry OS/UBR checks to identify potential patch exposure. Results do not verify vulnerable components, mitigations or exploitation.",
-			module:      "enum_cve",
-		},
-		{
 			id: "smb-enum-ca", name: "Find AD CS CAs via RPC",
 			description: "Hunts for certificate authorities through unauthenticated RPC endpoints with -M enum_ca. It complements the LDAP AD CS search, which reads the directory instead of the RPC endpoints.",
 			module:      "enum_ca",

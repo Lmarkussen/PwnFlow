@@ -75,11 +75,6 @@ func LDAPEnumerationModules() []modules.Module {
 			module:      "adcs",
 		},
 		{
-			id: "badsuccessor", name: "Check BadSuccessor (dMSA)",
-			description: "Tests whether the domain is vulnerable to the BadSuccessor delegated managed service account attack through -M badsuccessor. Read-only check.",
-			module:      "badsuccessor",
-		},
-		{
 			id: "dns-nonsecure", name: "Find Nonsecure DNS Zones",
 			description: "Detects DNS zones that accept nonsecure dynamic updates through -M dns-nonsecure, a common record-hijack path.",
 			module:      "dns-nonsecure",

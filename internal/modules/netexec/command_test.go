@@ -242,7 +242,7 @@ case "$1 $2" in
 esac
 exit 0
 `)
-	registered := findModule(t, "badsuccessor")
+	registered := findModule(t, "obsolete")
 	// The capability snapshot is filled off the render path; the test asks for
 	// the same refresh the TUI performs in the background.
 	registered.RefreshDetails(context.Background(), testRuntime())

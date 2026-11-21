@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -370,12 +369,6 @@ func (m Module) checkCapabilities(ctx context.Context) error {
 	if capability, ok := Capabilities().lookup(ctx, m.Protocol()); !ok || !capability.probed {
 		return fmt.Errorf("cannot inspect NetExec %s capabilities", m.Protocol())
 	}
-	if m.ID() == "smb-enum-cve" {
-		capability, _ := Capabilities().cached(m.Protocol())
-		if !capability.modulesOK {
-			return fmt.Errorf("cannot verify enum_cve availability: nxc smb -L failed")
-		}
-	}
 	if reason := Capabilities().reason(m.Protocol(), m.definition.ModuleName, m.definition.Arguments); reason != "" {
 		return fmt.Errorf("%s", reason)
 	}
@@ -618,28 +611,6 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 
 	if m.ID() == "smb-spider-plus" {
 		return m.runSpiderPlus(ctx, runtime, sink)
-	}
-	if m.ID() == "smb-enum-cve" {
-		runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		var diagnostics bytes.Buffer
-		clean := security.NewCredentialSink(io.MultiWriter(sink, &diagnostics), runtime.Password)
-		cmd := process.Command(runCtx, executable, m.CommandArgs(runtime)...)
-		cmd.Stdout, cmd.Stderr = clean, clean
-		runErr := process.Wait(runCtx, cmd)
-		if err := clean.Flush(); err != nil {
-			return err
-		}
-		if runErr != nil {
-			return runErr
-		}
-		lower := strings.ToLower(diagnostics.String())
-		for _, marker := range []string{"dcerpc error:", "dcerpc transport error:", "unexpected error:", "could not determine os version", "remoteregistry is probably deactivated"} {
-			if strings.Contains(lower, marker) {
-				return fmt.Errorf("enum_cve could not complete its registry checks; see source evidence")
-			}
-		}
-		return nil
 	}
 	cmd := process.Command(ctx, executable, m.CommandArgs(runtime)...)
 	cmd.Stdout, cmd.Stderr = sink, sink

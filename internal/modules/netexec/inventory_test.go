@@ -82,6 +82,7 @@ var excludedModules = map[string]string{
 	"ldap:trusted-for-delegation": "duplicate: --find-delegation reports delegation relationships in full",
 	"ldap:pre2k":                  "exploitation: creates computer accounts and requests tickets",
 	"ldap:raisechild":             "exploitation: abuses a parent-domain trust",
+	"ldap:badsuccessor":           "vulnerability-check: reports whether the domain is exposed to the BadSuccessor attack",
 	// SMB: domain data that LDAP reads better, and native duplicates.
 	"smb:users":           "duplicate: LDAP --users reads the same dataset over LDAPS",
 	"smb:groups":          "duplicate: LDAP --groups reads the same dataset over LDAPS",
@@ -155,6 +156,7 @@ var excludedModules = map[string]string{
 	"smb:remove-mic":      "vulnerability-check: CVE detection is out of scope",
 	"smb:smbghost":        "vulnerability-check: CVE detection is out of scope",
 	"smb:zerologon":       "vulnerability-check: CVE detection is out of scope",
+	"smb:enum_cve":        "vulnerability-check: CVE detection is out of scope",
 	// WinRM.
 	"winrm:aws-credentials": "duplicate: registered under SMB",
 	"winrm:ntds-dump-raw":   "credential-dump: directory database files",
@@ -252,7 +254,7 @@ func TestRetiredAndSupersededRegistrationsAreAbsent(t *testing.T) {
 		"link_xpcmd": true, "link_enable_cmdshell": true, "enable_cmdshell": true,
 		// Vulnerability checks and screen captures.
 		"ms17-010": true, "nopac": true, "ntlm_reflection": true, "printnightmare": true,
-		"remove-mic": true, "smbghost": true, "zerologon": true,
+		"remove-mic": true, "smbghost": true, "zerologon": true, "enum_cve": true, "badsuccessor": true,
 		"rdp-screenshot": true, "vnc-screenshot": true,
 		// The retired PwnFlow registrations.
 		"bloodhound": true, "organizational-units": true,
