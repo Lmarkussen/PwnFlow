@@ -76,6 +76,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 		{"smb", "SMB Security", "SMB signing, SMBv1 and anonymous or guest session conditions"},
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
 		{"ntlm_policy", "NTLM & Authentication Policy", "LM/NTLMv1, LM hash and WDigest settings configured by Group Policy"},
+		{"poisoning", "Name Resolution & Update Poisoning", "LLMNR, NetBIOS, mDNS, IPv6/DHCPv6 and WSUS settings from Group Policy"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
 		{"port_discovery", "Port Discovery", "Masscan and NetworkHound open-port observations"},
@@ -157,7 +158,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "pwntools"
 	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"), typ == "netexec_admin_reach", typ == "smb_signed_in_accounts":
 		return "authentication"
-	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"), strings.HasPrefix(typ, "ntlm_policy_"):
+	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"), strings.HasPrefix(typ, "ntlm_policy_"), strings.HasPrefix(typ, "network_poisoning_"):
 		return "network"
 	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
 		return "adcs"
@@ -182,6 +183,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "trusts"
 	case strings.HasPrefix(typ, "ntlm_policy_"):
 		return "ntlm_policy"
+	case strings.HasPrefix(typ, "network_poisoning_"):
+		return "poisoning"
 	case strings.HasPrefix(typ, "ad_shadow_admin_"):
 		return "acl"
 	case strings.HasPrefix(typ, "sccm_"):

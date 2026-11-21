@@ -58,7 +58,10 @@ a name through ADIDNS and relaying the authentication it attracts to the
 strongest observed target (AD CS web enrollment, then LDAP without signing,
 then SMB without signing); taking a privileged account's credentials from a
 host where PwnFlow's credentials are local administrator and that account is
-signed in; and a recovered or readable credential of a privileged account. Each step names the
+signed in; poisoning LLMNR/NBT-NS or taking over DNS through DHCPv6 (mitm6)
+and relaying to the strongest observed target; serving a malicious update from
+WSUS over HTTP after a DHCPv6 DNS takeover; and a recovered or readable
+credential of a privileged account. Each step names the
 Finding it relies on, and a chain stays potential with its unverified
 conditions listed.
 

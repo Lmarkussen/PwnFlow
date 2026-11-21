@@ -76,7 +76,7 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 	if err := m.reanalyzeEachExecution(ctx, assessmentID, "NetworkHound"); err != nil {
 		return err
 	}
-	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool, "SCCMhunter"} {
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool, GPORegistryPoliciesTool, "SCCMhunter"} {
 		if strings.EqualFold(source, "PwnFlow / RustHound Analysis") {
 			if err := m.reanalyzeWritableObjects(ctx, assessmentID, source); err != nil {
 				return err
@@ -423,6 +423,8 @@ func (m *Manager) analyze(queued queuedJob) {
 			break
 		}
 		inputs, err = AnalyzeNetworkHound(m.ctx, artifact, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case strings.ToLower(GPORegistryPoliciesTool):
+		inputs, err = AnalyzeGPORegistryPolicies(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case strings.ToLower(DirectorySettingsTool):
 		artifact := directorySettingsArtifact(job.ArtifactPath)
 		if artifact == "" {
@@ -607,6 +609,8 @@ func ParserVersionFor(tool string) string {
 		return masscanParserVersion
 	case strings.ToLower(DirectorySettingsTool):
 		return directorySettingsParserVersion
+	case strings.ToLower(GPORegistryPoliciesTool):
+		return gpoRegistryParserVersion
 	case "sccmhunter":
 		return sccmHunterParserVersion
 	case "networkhound":
@@ -662,6 +666,15 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	}
 	if strings.EqualFold(tool, DirectorySettingsTool) {
 		return directorySettingsArtifact(outputPath)
+	}
+	if strings.EqualFold(tool, GPORegistryPoliciesTool) {
+		// The module's console log is the execution output; the analyzer
+		// reads the document written next to it.
+		candidate := filepath.Join(filepath.Dir(outputPath), "registry_policies.json")
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+		return ""
 	}
 	if strings.EqualFold(tool, "SCCMhunter") {
 		return sccmHunterArtifact(outputPath, completedAt)

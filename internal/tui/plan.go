@@ -65,7 +65,9 @@ var defaultEnumerationModuleIDs = []string{
 	"certipy-adcs-discovery",
 	"rusthound-ce", "sccmhunter", "pxethief",
 	"networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit",
-	"gpoparser-remote",
+	// gpoParser reads security templates only; the registry settings module
+	// adds Administrative Templates and preference registry items.
+	"gpoparser-remote", "ad-gpo-registry-policies",
 	// Authentication checks are deliberately additive to the fixed profile. The
 	// SMB server check and LDAP whoami check above already perform their
 	// protocol authentication and must not be duplicated here.

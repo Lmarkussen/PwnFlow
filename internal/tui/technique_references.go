@@ -52,6 +52,13 @@ var (
 	toolTargetedRoast  = techniqueLink{"targetedKerberoast", "https://github.com/ShutdownRepo/targetedKerberoast"}
 	toolSCCMHunter     = techniqueLink{"sccmhunter", "https://github.com/garrettfoster13/sccmhunter"}
 	toolPXEThief       = techniqueLink{"PXEThief", "https://github.com/MWR-CyberSec/PXEThief"}
+	thrLLMNR           = techniqueLink{"The Hacker Recipes — LLMNR, NBT-NS, mDNS spoofing", "https://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/llmnr-nbtns-mdns-spoofing"}
+	thrDHCPv6          = techniqueLink{"The Hacker Recipes — DHCPv6 spoofing", "https://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/dhcpv6-spoofing"}
+	thrWPAD            = techniqueLink{"The Hacker Recipes — WPAD spoofing", "https://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/wpad-spoofing"}
+	thrWSUS            = techniqueLink{"The Hacker Recipes — WSUS spoofing", "https://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/wsus-spoofing"}
+	toolWsuks          = techniqueLink{"wsuks", "https://github.com/NeffIsBack/wsuks"}
+	toolPyWSUS         = techniqueLink{"pywsus", "https://github.com/GoSecure/pywsus"}
+	mitreAiTM          = techniqueLink{"MITRE ATT&CK T1557 — Adversary-in-the-Middle", "https://attack.mitre.org/techniques/T1557/"}
 	mitreRelay         = techniqueLink{"MITRE ATT&CK T1557.001 — LLMNR/NBT-NS Poisoning and SMB Relay", "https://attack.mitre.org/techniques/T1557/001/"}
 	mitreForcedAuth    = techniqueLink{"MITRE ATT&CK T1187 — Forced Authentication", "https://attack.mitre.org/techniques/T1187/"}
 	mitreSIDHistory    = techniqueLink{"MITRE ATT&CK T1134.005 — SID-History Injection", "https://attack.mitre.org/techniques/T1134/005/"}
@@ -66,6 +73,9 @@ var (
 // references did not. findingTechniqueReference consults it last.
 var additionalTechniqueLinks = map[string][]techniqueLink{
 	// Anonymous access and enumeration.
+	"network_poisoning_name_resolution":          {thrLLMNR, thrWPAD, toolResponder, thrNTLMRelay, toolImpacket, mitreRelay},
+	"network_poisoning_ipv6_dhcpv6":              {thrDHCPv6, thrWPAD, toolMitm6, thrNTLMRelay, toolImpacket, mitreAiTM},
+	"network_poisoning_wsus_http":                {thrWSUS, toolWsuks, toolPyWSUS, mitreAiTM},
 	"smb_signed_in_accounts":                     {thrLSASS, toolMimikatz, mitreLSASS},
 	"netexec_admin_reach":                        {thrLSASS, toolMimikatz, mitreLSASS},
 	"smb_null_session_accepted":                  {thrMSRPC, toolEnum4linuxNG, mitreAccountDisc},

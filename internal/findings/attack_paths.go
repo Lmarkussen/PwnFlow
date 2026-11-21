@@ -115,6 +115,43 @@ func attackChainPaths(rows []storage.Finding) []CriticalPath {
 		}
 	}
 
+	// Poison name resolution or DHCPv6 and relay the captured authentication.
+	for _, poisoning := range []struct{ typ, template, title, action, reason string }{
+		{"network_poisoning_name_resolution", "llmnr-relay", "Poison LLMNR/NBT-NS and relay the captured authentication",
+			"Answer the LLMNR, NBT-NS or mDNS queries of clients on the segment (including WPAD lookups) so they authenticate to the operator",
+			"Multicast name resolution is not disabled by Group Policy and a relay target that accepts NTLM was observed."},
+		{"network_poisoning_ipv6_dhcpv6", "mitm6-relay", "Take over DNS through DHCPv6 and relay the captured authentication",
+			"Answer DHCPv6 requests to become the clients' IPv6 DNS server and point WPAD at the operator, so their HTTP clients authenticate to it",
+			"IPv6 is not disabled by Group Policy and a relay target that accepts NTLM was observed; mitm6 with a relay is a common route from the network to the directory."},
+	} {
+		finding, ok := first(poisoning.typ)
+		if !ok {
+			continue
+		}
+		relayStep, relayOK := adidnsRelayStep(byType)
+		if !relayOK {
+			continue
+		}
+		paths = append(paths, attackChain(poisoning.template, poisoning.title, finding.AffectedObject,
+			[]attackChainStep{{poisoning.action, finding}, relayStep},
+			[]string{"the operator's host is on a segment with clients that send the queries or DHCPv6 requests", "no switch or host control (RA Guard, DHCPv6 Guard, firewall) blocks the spoofed answers", "the relayed account has rights worth using on the relay target"},
+			poisoning.reason))
+	}
+
+	// Take over DNS through DHCPv6 and serve a malicious update from HTTP WSUS.
+	if wsus, ok := first("network_poisoning_wsus_http"); ok {
+		if ipv6, ipv6OK := first("network_poisoning_ipv6_dhcpv6"); ipv6OK {
+			paths = append(paths, attackChain("mitm6-wsus", "Serve a malicious update from WSUS over HTTP", wsus.AffectedObject,
+				[]attackChainStep{
+					{"Become the clients' IPv6 DNS server through DHCPv6 spoofing", ipv6},
+					{"Resolve the WSUS host name to the operator and answer the clients' update scan over HTTP", wsus},
+					{"Offer a Microsoft-signed binary (for example PsExec) as an update that runs a command as SYSTEM on each client", wsus},
+				},
+				[]string{"clients resolve the WSUS name through the spoofed DNS server", "the operator's host is on the clients' segment", "endpoint protection allows the offered binary and command"},
+				"Clients fetch updates from WSUS over plain HTTP and IPv6 is not disabled, so a DHCPv6 spoofer controls where they look up the WSUS server."))
+		}
+	}
+
 	// Recovered or readable credentials of a privileged account.
 	privileged := privilegedAccountNames(byType)
 	// Local administrator on a host where a privileged account is signed in.

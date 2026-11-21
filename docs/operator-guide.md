@@ -156,7 +156,9 @@ NetworkHound confirmed, which also shows where the credentials are local
 administrator; GPP/AWS/user
 attributes, an SMB null-session check that sends no credentials, and whether the
 Print Spooler and WebClient services answer on the domain controller), one
-unfiltered Certipy AD CS discovery, RustHound-CE, the AD Directory Settings read
+unfiltered Certipy AD CS discovery, RustHound-CE, the GPO registry settings read
+(each GPO's Registry.pol and preference Registry.xml for LLMNR, NetBIOS, mDNS,
+IPv6 and WSUS), the AD Directory Settings read
 (dSHeuristics, an unauthenticated LDAP search, DNS zone ACLs), SCCMhunter,
 PXEThief, and the eligible Network assessments.
 

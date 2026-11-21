@@ -79,6 +79,7 @@ func RegisteredModules() []modules.Module {
 	registry.Register(trustinventory.Module{})
 	registry.Register(directorysettings.Module{})
 	registry.Register(gpoevidence.Module{})
+	registry.Register(gpoevidence.RegistryPoliciesModule{})
 	for _, module := range certipy.EnumerationModules() {
 		registry.Register(module)
 	}

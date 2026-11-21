@@ -88,6 +88,24 @@ func TestAttackChainTemplates(t *testing.T) {
 		t.Fatalf("session chain %+v", theft)
 	}
 
+	// Poisoning plus a relay target, and DHCPv6 spoofing plus HTTP WSUS.
+	poison := attackChainPaths([]storage.Finding{
+		row("network_poisoning_name_resolution", "CORP.EXAMPLE", "medium", "{}"),
+		row("network_poisoning_ipv6_dhcpv6", "CORP.EXAMPLE", "medium", "{}"),
+		row("network_poisoning_wsus_http", "CORP.EXAMPLE", "high", "{}"),
+		row("smb_signing_not_required", "SRV01", "medium", "{}"),
+	})
+	capabilities := map[string]bool{}
+	for _, path := range poison {
+		capabilities[path.Capability] = true
+	}
+	if len(poison) != 3 || !capabilities["llmnr-relay"] || !capabilities["mitm6-relay"] || !capabilities["mitm6-wsus"] {
+		t.Fatalf("poisoning chains %v", capabilities)
+	}
+	if got := attackChainPaths([]storage.Finding{row("network_poisoning_name_resolution", "CORP.EXAMPLE", "medium", "{}")}); len(got) != 0 {
+		t.Fatalf("poisoning without a relay target is not a path: %+v", got)
+	}
+
 	projection := ProjectCritical(rows)
 	found := false
 	for _, path := range projection.Potential {
