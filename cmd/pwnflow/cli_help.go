@@ -128,7 +128,7 @@ func printFullHelp(w io.Writer) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, cliSection(theme, "USAGE"))
-	for _, line := range wrapCLI("pwnflow --dc-ip ADDRESS --domain DOMAIN --username USER [OPTIONS] or pwnflow --findings [--domain DOMAIN] [--dc-ip ADDRESS]", maxCLI(1, width-2)) {
+	for _, line := range wrapCLI("pwnflow --dc-ip ADDRESS --domain DOMAIN --username USER [OPTIONS] or pwnflow --findings|--report [--domain DOMAIN] [--dc-ip ADDRESS]", maxCLI(1, width-2)) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintln(w)
@@ -146,6 +146,7 @@ func printFullHelp(w io.Writer) {
 	})
 	printCLIOptions(w, theme, width, "EVIDENCE & MAINTENANCE", []cliHelpOption{
 		{"--findings", "Browse existing Findings and supporting evidence offline; never starts tools or changes the database"},
+		{"--report", "Write a Markdown report of the stored Findings to results/<domain>/reports; never starts tools"},
 		{"--reanalyze-latest", "Offline-analyze the latest supported saved artifacts; never starts modules"},
 		{"--reset-findings", "Remove derived Findings history for this assessment; original artifacts remain"},
 		{"--confirm-reset-findings", "Confirm the destructive --reset-findings operation"},

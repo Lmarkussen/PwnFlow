@@ -20,6 +20,7 @@ Original assessment artifacts remain available for review, while Findings provid
 - Read-only directory checks no collector covers: dSHeuristics, unauthenticated LDAP and SMB access, and DNS zone permissions.
 - Confirmed Critical and Potential Critical — Not Verified projections over original Findings.
 - Offline Findings review through `--findings`, without network access or execution.
+- Markdown assessment report through `--report`, with Critical paths and every Finding, without reproducing recovered secrets.
 
 ## Installation
 

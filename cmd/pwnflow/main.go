@@ -133,11 +133,37 @@ func main() {
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	reanalyzeLatest := flag.Bool("reanalyze-latest", false, "offline-analyze the latest supported saved artifacts; never starts modules")
 	findingsOnly := flag.Bool("findings", false, "browse existing Findings and evidence without network access or execution")
+	reportOnly := flag.Bool("report", false, "write a Markdown report of the stored Findings to results/<domain>/reports; never starts modules")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	if *reportOnly {
+		if *findingsOnly || *flushDB || *resetFindings || *reanalyzeLatest {
+			fail(errors.New("--report cannot be combined with --findings, database maintenance or reanalysis flags"))
+		}
+		root, err := config.ProjectRoot()
+		if err != nil {
+			fail(err)
+		}
+		targetValue, err := resolveDCIP(*dcIP, *targetAlias)
+		if err != nil {
+			fail(err)
+		}
+		selection, err := openFindingsSelection(ctx, root, *domain, targetValue)
+		if err != nil {
+			fail(err)
+		}
+		defer selection.db.Close()
+		resultsRoot := filepath.Join(root, "results", selection.domain)
+		path, err := tui.WriteReport(ctx, selection.db, selection.targetID, selection.domain, selection.target, resultsRoot, time.Now())
+		if err != nil {
+			fail(err)
+		}
+		fmt.Fprintf(os.Stdout, "Report written: %s\n", path)
+		return
+	}
 	if *findingsOnly {
 		if *flushDB || *resetFindings || *reanalyzeLatest {
 			fail(errors.New("--findings cannot be combined with database maintenance or reanalysis flags"))

@@ -55,6 +55,16 @@ browser is hierarchical: `Critical Findings → Confirmed` or `Potential — Not
 Verified → family → Finding`. It does not create database records or replace
 specialist-category detail.
 
+`pwnflow --report [--domain DOMAIN] [--dc-ip ADDRESS]` writes the stored
+Findings as a Markdown report to `results/<domain>/reports/`, named with the
+UTC generation time, and prints its path. It reads the database only and never
+starts a module. The report holds a severity summary, the Confirmed and
+Potential Critical paths with what was observed and what was not verified, and
+every Finding grouped by the same categories as the Findings browser, with
+evidence references relative to the results directory. Evidence JSON is not
+copied: recovered secrets, such as GPP passwords, stay in the evidence store and
+the original artifacts. An existing report is never overwritten.
+
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `Ctrl+R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `Ctrl+A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 
 `Ctrl+A` reports requested, eligible, authorization-required, skipped, executed, and analysis counts separately. It collects required values before execution and keeps credential-access, remote-admin, local-sudo, missing-input, and wider-scope entries visible with their reason. Declining a specific authorization continues the eligible remainder; it does not make the profile appear complete.
