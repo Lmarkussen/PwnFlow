@@ -66,12 +66,22 @@ them. Nothing is deleted: `--reset-findings` remains the way to clear history.
 `R` on the category screen writes the same report as `--report` (below) and
 shows its path in the status line.
 
+**Collection gaps.** For every module, the latest execution is checked: a
+failure, timeout or abort, a completed NetExec run whose login the target
+refused, collection errors recorded by AD Directory Settings, or a failed
+Findings analysis makes it a gap. The category screen lists the gaps, and the
+categories those modules feed are marked "incomplete": a missing Finding there
+is not evidence that the condition is absent. Skipped modules and the optional
+per-protocol authentication checks are not gaps.
+
 `pwnflow --report [--domain DOMAIN] [--dc-ip ADDRESS]` writes the stored
 Findings as a Markdown report to `results/<domain>/reports/`, named with the
 UTC generation time, and prints its path. It reads the database only and never
 starts a module. The report holds a severity summary, the Confirmed and
 Potential Critical paths with what was observed and what was not verified, and
-every Finding grouped by the same categories as the Findings browser, with
+a collection-gap section, a fix list that groups Findings by remediation
+action (ordered by the most severe Finding each action resolves), and every
+Finding grouped by the same categories as the Findings browser, with
 evidence references relative to the results directory. Evidence JSON is not
 copied: recovered secrets, such as GPP passwords, stay in the evidence store and
 the original artifacts. Findings that were not re-observed are listed in an

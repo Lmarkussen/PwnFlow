@@ -55,6 +55,7 @@ type model struct {
 	findingLoadedRows       []storage.Finding
 	showNotReobserved       bool
 	reportWriting           bool
+	collectionGaps          []collectionGap
 	notReobservedHidden     int
 	criticalProjection      findingengine.CriticalProjection
 	criticalNavigationLevel int
@@ -206,6 +207,7 @@ type reportWrittenMsg struct {
 type findingsLoadedMsg struct {
 	generation uint64
 	rows       []storage.Finding
+	gaps       []collectionGap
 	status     string
 	err        error
 }

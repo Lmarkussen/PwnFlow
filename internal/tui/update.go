@@ -162,6 +162,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "findings unavailable: " + msg.err.Error()
 			return m, nil
 		}
+		m.collectionGaps = msg.gaps
 		m.setFindingRows(msg.rows)
 		m.findingsAnalysisStatus = msg.status
 		m.findingsLoaded = true

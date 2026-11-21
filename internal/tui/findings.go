@@ -368,7 +368,16 @@ func (m *model) applyFindingRows() {
 	rows = m.consolidatePresentationFindings(rows)
 	m.findingAllRows = append(m.findingAllRows[:0], rows...)
 	m.findingCategories = buildFindingCategories(rows)
+	incomplete := map[string]bool{}
+	for _, gap := range m.collectionGaps {
+		for _, category := range gap.Categories {
+			incomplete[category] = true
+		}
+	}
 	for index := range m.findingCategories {
+		if incomplete[m.findingCategories[index].Key] {
+			m.findingCategories[index].Name += " · incomplete"
+		}
 		if m.findingCategories[index].Key != "critical" {
 			continue
 		}
@@ -397,6 +406,7 @@ func (m *model) refreshFindings() {
 			m.status = "findings unavailable: " + err.Error()
 			return
 		}
+		m.collectionGaps, _ = loadCollectionGaps(m.ctx, m.db, m.targetID, m.cfg.ResultsRoot(), rows)
 		m.setFindingRows(rows)
 		m.findingsAnalysisStatus = findingsStatusLabel(m.db, m.ctx, m.targetID)
 		m.findingsLoaded = true
@@ -1693,14 +1703,15 @@ func (m *model) beginFindingsLoad() tea.Cmd {
 	m.findingsLoading = true
 	m.findingsLoadGeneration++
 	generation := m.findingsLoadGeneration
-	db, ctx, targetID := m.db, m.ctx, m.targetID
+	db, ctx, targetID, resultsRoot := m.db, m.ctx, m.targetID, m.cfg.ResultsRoot()
 	return func() tea.Msg {
 		rows, err := db.ListFindings(ctx, targetID)
 		if err != nil {
 			return findingsLoadedMsg{generation: generation, err: err}
 		}
+		gaps, _ := loadCollectionGaps(ctx, db, targetID, resultsRoot, rows)
 		rows = append(rows, findingengine.DeriveInformationalFindings(ctx, rows)...)
-		return findingsLoadedMsg{generation: generation, rows: rows, status: findingsStatusLabel(db, ctx, targetID)}
+		return findingsLoadedMsg{generation: generation, rows: rows, gaps: gaps, status: findingsStatusLabel(db, ctx, targetID)}
 	}
 }
 
@@ -5266,6 +5277,16 @@ func (m *model) findingCategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(m.findingsHeader() + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
+	if len(m.collectionGaps) > 0 {
+		content.WriteString(warn.Render(fmt.Sprintf("COLLECTION GAPS: %d module(s) did not collect completely in their latest run; Findings they feed may be missing.", len(m.collectionGaps))) + "\n")
+		for index, gap := range m.collectionGaps {
+			if index == 5 {
+				content.WriteString(warn.Render(fmt.Sprintf("  … and %d more (see the report)", len(m.collectionGaps)-5)) + "\n")
+				break
+			}
+			content.WriteString(warn.Render(truncateFinding(fmt.Sprintf("  %s (%s): %s", gap.Module, gap.Status, gap.Reason), max(20, width-4))) + "\n")
+		}
+	}
 	if m.notReobservedHidden > 0 {
 		content.WriteString(dim.Render(fmt.Sprintf("%d Finding(s) not re-observed by the latest run of their module are hidden; H shows them.", m.notReobservedHidden)) + "\n")
 	} else if m.showNotReobserved {

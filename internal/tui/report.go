@@ -30,7 +30,11 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 	if err != nil {
 		return "", err
 	}
-	content := RenderReport(rows, domain, target, resultsRoot, now)
+	gaps, err := loadCollectionGaps(ctx, db, assessmentID, resultsRoot, rows)
+	if err != nil {
+		return "", err
+	}
+	content := RenderReport(rows, gaps, domain, target, resultsRoot, now)
 	dir := filepath.Join(resultsRoot, "reports")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -50,7 +54,7 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 // RenderReport builds the Markdown report from Finding rows. Findings the
 // latest run of their module did not re-observe are listed in an appendix
 // and kept out of the summary, the Critical paths and the categories.
-func RenderReport(all []storage.Finding, domain, target, resultsRoot string, now time.Time) string {
+func RenderReport(all []storage.Finding, gaps []collectionGap, domain, target, resultsRoot string, now time.Time) string {
 	var rows, stale []storage.Finding
 	for _, row := range markRetiredSources(append([]storage.Finding(nil), all...)) {
 		if row.NotReobserved {
@@ -79,6 +83,22 @@ func RenderReport(all []storage.Finding, domain, target, resultsRoot string, now
 	b.WriteString("\nFindings are evidence-backed observations. Each one states what was observed and what was not verified; ")
 	b.WriteString("recovered secrets are not reproduced here and remain in the restricted original artifacts.\n\n")
 
+	if len(gaps) > 0 {
+		fmt.Fprintf(&b, "## Collection gaps (%d)\n\n", len(gaps))
+		b.WriteString("These modules did not collect completely in their latest run, so Findings they feed may be missing from this report. An absent Finding in an affected category is not evidence that the condition is absent.\n\n")
+		for _, gap := range gaps {
+			var affected []string
+			for _, category := range gap.Categories {
+				affected = append(affected, categoryName(category))
+			}
+			fmt.Fprintf(&b, "- **%s** (%s): %s", reportText(gap.Module), reportText(gap.Status), reportText(gap.Reason))
+			if len(affected) > 0 {
+				fmt.Fprintf(&b, " Affects: %s.", reportText(strings.Join(affected, ", ")))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
 	projection := findingengine.ProjectCritical(rows)
 	b.WriteString("## Critical findings\n\n")
 	if len(projection.Confirmed)+len(projection.Potential) == 0 {
@@ -87,6 +107,7 @@ func RenderReport(all []storage.Finding, domain, target, resultsRoot string, now
 	writeCriticalSection(&b, "Confirmed critical", projection.Confirmed, resultsRoot)
 	writeCriticalSection(&b, "Potential critical (not verified)", projection.Potential, resultsRoot)
 
+	writeFixList(&b, rows)
 	b.WriteString("## Findings by category\n\n")
 	byCategory := map[string][]storage.Finding{}
 	for _, row := range rows {
@@ -198,6 +219,9 @@ func writeReportFinding(b *strings.Builder, finding storage.Finding, resultsRoot
 		}
 		fmt.Fprintf(b, "  - Objects: %s\n", reportText(line))
 	}
+	if remediation, ok := findingengine.RemediationFor(finding.FindingType); ok {
+		fmt.Fprintf(b, "  - Fix: %s\n", reportText(remediation.Detail))
+	}
 	fmt.Fprintf(b, "  - Source: %s · %s\n", reportText(finding.SourceTool), reportText(finding.Confidence))
 	fmt.Fprintf(b, "  - Evidence: %s\n", reportEvidence(finding.ArtifactPath, finding.ArtifactRef, resultsRoot))
 }
@@ -267,4 +291,74 @@ func (m *model) writeReportCmd() tea.Cmd {
 		path, err := WriteReport(ctx, db, targetID, cfg.Domain, cfg.Target, cfg.ResultsRoot(), time.Now())
 		return reportWrittenMsg{path: path, err: err}
 	}
+}
+
+// writeFixList groups the current Findings by remediation action, so one
+// change that resolves several Findings is listed once, ordered by the most
+// severe Finding it resolves and then by how many.
+func writeFixList(b *strings.Builder, rows []storage.Finding) {
+	type fix struct {
+		action, detail string
+		count, rank    int
+		examples       []string
+	}
+	rank := map[string]int{}
+	for index, severity := range reportSeverityOrder {
+		rank[severity] = index
+	}
+	fixes := map[string]*fix{}
+	for _, row := range rows {
+		remediation, ok := findingengine.RemediationFor(row.FindingType)
+		if !ok {
+			continue
+		}
+		severity := strings.ToLower(row.Severity)
+		if severity == "informational" {
+			continue
+		}
+		item := fixes[remediation.Action]
+		if item == nil {
+			item = &fix{action: remediation.Action, detail: remediation.Detail, rank: len(reportSeverityOrder)}
+			fixes[remediation.Action] = item
+		}
+		item.count++
+		if value, known := rank[severity]; known && value < item.rank {
+			item.rank = value
+		}
+		if len(item.examples) < 3 {
+			item.examples = append(item.examples, row.Title)
+		}
+	}
+	if len(fixes) == 0 {
+		return
+	}
+	list := make([]*fix, 0, len(fixes))
+	for _, item := range fixes {
+		list = append(list, item)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].rank != list[j].rank {
+			return list[i].rank < list[j].rank
+		}
+		if list[i].count != list[j].count {
+			return list[i].count > list[j].count
+		}
+		return list[i].action < list[j].action
+	})
+	fmt.Fprintf(b, "## Fix list (%d)\n\n", len(list))
+	b.WriteString("Each action resolves the Findings listed under it; actions are ordered by the most severe Finding they resolve.\n\n")
+	for index, item := range list {
+		severity := "INFORMATIONAL"
+		if item.rank < len(reportSeverityOrder) {
+			severity = strings.ToUpper(reportSeverityOrder[item.rank])
+		}
+		fmt.Fprintf(b, "%d. **%s** (up to %s, %d Finding(s)): %s\n", index+1, reportText(item.action), severity, item.count, reportText(item.detail))
+		for _, example := range item.examples {
+			fmt.Fprintf(b, "   - %s\n", reportText(example))
+		}
+		if item.count > len(item.examples) {
+			fmt.Fprintf(b, "   - … and %d more\n", item.count-len(item.examples))
+		}
+	}
+	b.WriteString("\n")
 }
