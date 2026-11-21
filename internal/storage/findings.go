@@ -39,7 +39,30 @@ type Finding struct {
 	ID        int64
 	FirstSeen time.Time
 	LastSeen  time.Time
+	// NotReobserved is set when the module that produced the Finding has run
+	// again later, completed, and been analyzed without reporting it. Such a
+	// Finding describes an earlier state of the target.
+	NotReobserved bool
+	// SourceModule and SourceModuleTool name the module of the source
+	// execution, empty when unknown. SourceModuleRetired is set by callers
+	// that know the current registry when that module no longer exists, so
+	// the Finding can never be re-observed.
+	SourceModule        string
+	SourceModuleTool    string
+	SourceModuleRetired bool
 }
+
+// notReobservedExpression is true when a later, completed and analyzed
+// execution of the Finding's source module exists that started after the
+// Finding was last observed. Re-observation moves last_seen to the later
+// execution, so a Finding that is still present never matches.
+const notReobservedExpression = `EXISTS (
+	SELECT 1 FROM executions source
+	JOIN executions later ON later.module_id = source.module_id AND later.target_id = source.target_id AND later.id <> source.id
+	JOIN analysis_jobs job ON job.execution_id = later.id AND upper(job.status) = 'COMPLETE'
+	WHERE source.id = findings.source_execution_id
+	  AND lower(later.status) = 'completed'
+	  AND julianday(later.started_at) > julianday(findings.last_seen))`
 
 // ResetDerivedState removes only findings-engine state for one assessment. It
 // deliberately leaves targets, executions, modules, endpoints, schema metadata,
@@ -139,7 +162,7 @@ func evidenceKey(input FindingInput) string {
 }
 
 func (d *DB) ListFindings(ctx context.Context, assessmentID int64) ([]Finding, error) {
-	rows, err := d.QueryContext(ctx, `SELECT id,finding_key,assessment_id,source_tool,COALESCE(source_execution_id,0),finding_type,title,description,severity,confidence,affected_object_id,affected_object_name,related_object_id,related_object_name,evidence_json,artifact_path,artifact_ref,first_seen,last_seen,status,parser_version FROM findings WHERE assessment_id=? ORDER BY id`, assessmentID)
+	rows, err := d.QueryContext(ctx, `SELECT findings.id,findings.finding_key,findings.assessment_id,findings.source_tool,COALESCE(findings.source_execution_id,0),findings.finding_type,findings.title,findings.description,findings.severity,findings.confidence,findings.affected_object_id,findings.affected_object_name,findings.related_object_id,findings.related_object_name,findings.evidence_json,findings.artifact_path,findings.artifact_ref,findings.first_seen,findings.last_seen,findings.status,findings.parser_version,`+notReobservedExpression+`,COALESCE(source_module.name,''),COALESCE(source_module.tool,'') FROM findings LEFT JOIN executions source_execution ON source_execution.id = findings.source_execution_id LEFT JOIN modules source_module ON source_module.id = source_execution.module_id WHERE findings.assessment_id=? ORDER BY findings.id`, assessmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +171,7 @@ func (d *DB) ListFindings(ctx context.Context, assessmentID int64) ([]Finding, e
 	for rows.Next() {
 		var finding Finding
 		var first, last string
-		if err := rows.Scan(&finding.ID, &finding.FindingKey, &finding.AssessmentID, &finding.SourceTool, &finding.SourceExecution, &finding.FindingType, &finding.Title, &finding.Description, &finding.Severity, &finding.Confidence, &finding.AffectedObjectID, &finding.AffectedObject, &finding.RelatedObjectID, &finding.RelatedObject, &finding.EvidenceJSON, &finding.ArtifactPath, &finding.ArtifactRef, &first, &last, &finding.Status, &finding.ParserVersion); err != nil {
+		if err := rows.Scan(&finding.ID, &finding.FindingKey, &finding.AssessmentID, &finding.SourceTool, &finding.SourceExecution, &finding.FindingType, &finding.Title, &finding.Description, &finding.Severity, &finding.Confidence, &finding.AffectedObjectID, &finding.AffectedObject, &finding.RelatedObjectID, &finding.RelatedObject, &finding.EvidenceJSON, &finding.ArtifactPath, &finding.ArtifactRef, &first, &last, &finding.Status, &finding.ParserVersion, &finding.NotReobserved, &finding.SourceModule, &finding.SourceModuleTool); err != nil {
 			return nil, err
 		}
 		finding.FirstSeen, err = time.Parse(time.RFC3339Nano, first)

@@ -145,6 +145,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+	case reportWrittenMsg:
+		m.reportWriting = false
+		if msg.err != nil {
+			m.status = "report not written: " + msg.err.Error()
+		} else {
+			m.status = "report written: " + msg.path
+		}
+		return m, nil
 	case findingsLoadedMsg:
 		if msg.generation != m.findingsLoadGeneration {
 			return m, nil
@@ -825,6 +833,22 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.findingCategoryView {
 		switch key {
+		case "r", "R":
+			if m.findingCategory == "" {
+				return m, m.writeReportCmd()
+			}
+		case "h", "H":
+			if m.findingCategory == "" {
+				m.showNotReobserved = !m.showNotReobserved
+				m.applyFindingRows()
+				m.refreshFindings()
+				if m.showNotReobserved {
+					m.status = "showing Findings not re-observed by the latest run"
+				} else {
+					m.status = "hiding Findings not re-observed by the latest run"
+				}
+				return m, nil
+			}
 		case "ctrl+w":
 			if m.findingsOnly() {
 				return m, nil

@@ -25,6 +25,43 @@ import (
 )
 
 func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string, dependencyReasons ...map[string]string) error {
+	registered := RegisteredModules()
+	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
+		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
+	}
+	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
+	if err != nil {
+		return err
+	}
+	moduleIDs := make([]int64, len(registered))
+	for i, module := range registered {
+		id, err := db.RegisterModule(ctx, module.Name(), module.Tool(), string(module.Protocol()), module.Description(), module.OutputFile())
+		if err != nil {
+			return err
+		}
+		moduleIDs[i] = id
+	}
+	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
+	model.findingsAsync = true
+	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
+	if model.batch != nil {
+		model.cancelBatch()
+		waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = model.batch.Wait(waitContext)
+		cancel()
+	}
+	return err
+}
+
+func RunFindingsOnly(ctx context.Context, cfg config.Config, db *storage.DB, targetID int64, version string) error {
+	model := newFindingsOnlyModel(ctx, cfg, db, targetID, version)
+	_, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
+	return err
+}
+
+// RegisteredModules builds the module registry the interface runs: every
+// family, in the order the navigation and Default Enumeration rely on.
+func RegisteredModules() []modules.Module {
 	registry := &modules.Registry{}
 	for _, module := range netexec.EnumerationModules() {
 		registry.Register(module)
@@ -66,36 +103,5 @@ func Run(ctx context.Context, cfg config.Config, db *storage.DB, version string,
 	registry.Register(pwntools.SPHunter{})
 	registry.Register(pwntools.ADWritableObjects{})
 	registry.Register(pwntools.FTPAnonymousAccess{})
-	registered := registry.All()
-	for _, warning := range modules.OptionWarnings(registered, cfg.ModuleOptions) {
-		fmt.Fprintln(os.Stderr, "[!] module option: "+warning)
-	}
-	targetID, err := db.TargetID(ctx, cfg.Domain, cfg.Target)
-	if err != nil {
-		return err
-	}
-	moduleIDs := make([]int64, len(registered))
-	for i, module := range registered {
-		id, err := db.RegisterModule(ctx, module.Name(), module.Tool(), string(module.Protocol()), module.Description(), module.OutputFile())
-		if err != nil {
-			return err
-		}
-		moduleIDs[i] = id
-	}
-	model := newModel(ctx, cfg, db, registered, moduleIDs, targetID, version, dependencyReasons...)
-	model.findingsAsync = true
-	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
-	if model.batch != nil {
-		model.cancelBatch()
-		waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = model.batch.Wait(waitContext)
-		cancel()
-	}
-	return err
-}
-
-func RunFindingsOnly(ctx context.Context, cfg config.Config, db *storage.DB, targetID int64, version string) error {
-	model := newFindingsOnlyModel(ctx, cfg, db, targetID, version)
-	_, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx)).Run()
-	return err
+	return registry.All()
 }

@@ -76,3 +76,56 @@ func TestReportRendersCategoriesCriticalAndWithholdsSecrets(t *testing.T) {
 		t.Fatal("an existing report was overwritten")
 	}
 }
+
+func TestReportMovesNotReobservedFindingsToAppendix(t *testing.T) {
+	current := storage.Finding{FindingInput: storage.FindingInput{FindingType: "smb_spooler_service_running", Title: "Print Spooler reachable: DC01", Severity: "medium", SourceTool: "NetExec (nxc)", ArtifactPath: "a.txt", ArtifactRef: "line:1", EvidenceJSON: "{}"}}
+	stale := storage.Finding{FindingInput: storage.FindingInput{FindingType: "netexec_cve_check", Title: "Old CVE observation", Severity: "high", SourceTool: "NetExec (nxc)", ArtifactPath: "b.txt", ArtifactRef: "line:2", EvidenceJSON: "{}"}, NotReobserved: true, LastSeen: time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)}
+	report := RenderReport([]storage.Finding{current, stale}, "corp.example", "192.0.2.10", "", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	appendix := strings.Index(report, "## Appendix: not re-observed (1)")
+	if appendix < 0 || !strings.Contains(report[appendix:], "Old CVE observation") || !strings.Contains(report[appendix:], "last seen 2026-05-01 08:00 UTC") {
+		t.Fatalf("appendix missing:\n%s", report)
+	}
+	if strings.Contains(report[:appendix], "Old CVE observation") || strings.Contains(report, "| HIGH |") {
+		t.Fatalf("not re-observed Finding leaked into the main report:\n%s", report)
+	}
+	if !strings.Contains(report, "1 further Finding(s) were not re-observed") {
+		t.Fatalf("summary note missing:\n%s", report)
+	}
+}
+
+func TestFindingsViewReportKeyWritesReport(t *testing.T) {
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "enumeration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.UpsertTarget(ctx, "corp.example", "192.0.2.10"); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := db.TargetID(ctx, "corp.example", "192.0.2.10")
+	if err := db.IngestFindings(ctx, reportFixture(id, filepath.Join(root, "results", "corp.example"))); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{ctx: ctx, db: db, targetID: id, findingsView: true, findingCategoryView: true, width: 120, height: 40}
+	m.cfg.Root, m.cfg.Domain, m.cfg.Target = root, "corp.example", "192.0.2.10"
+	_, cmd := m.handleFindingsKey("R")
+	if cmd == nil || !m.reportWriting {
+		t.Fatal("R did not start writing a report")
+	}
+	if _, again := m.handleFindingsKey("R"); again != nil {
+		t.Fatal("a second report started while one is being written")
+	}
+	msg, ok := cmd().(reportWrittenMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("report command result %#v", msg)
+	}
+	if !strings.HasPrefix(msg.path, filepath.Join(root, "results", "corp.example", "reports")) {
+		t.Fatalf("report written to %s", msg.path)
+	}
+	m.Update(msg)
+	if m.reportWriting || !strings.Contains(m.status, "report written: "+msg.path) {
+		t.Fatalf("status %q", m.status)
+	}
+}

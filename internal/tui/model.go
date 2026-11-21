@@ -50,51 +50,57 @@ type model struct {
 	findingRowTops               map[string]int
 	findingCategories            []findingCategory
 	findingAllRows               []storage.Finding
-	criticalProjection           findingengine.CriticalProjection
-	criticalNavigationLevel      int
-	criticalState                findingengine.CriticalState
-	criticalFamily               string
-	criticalStateCursor          int
-	criticalFamilyCursor         int
-	criticalSourceFindings       []storage.Finding
-	criticalSourceIndex          int
-	findingsLoaded               bool
-	findingsLoading              bool
-	findingsLoadGeneration       uint64
-	findingsAsync                bool
-	findingsAnalysisStatus       string
-	inlineEvidence               inlineEvidence
-	inlineEvidenceTop            int
-	inlineEvidenceLoading        bool
-	evidenceView                 bool
-	evidenceLines                []string
-	evidenceTop                  int
-	evidencePath                 string
-	evidenceError                string
-	modules                      []modules.Module
-	moduleIDs                    []int64
-	moduleKeys                   []int
-	allModules                   []modules.Module
-	allModuleIDs                 []int64
-	endpoints                    modules.EndpointStore
-	availability                 map[string]string
-	toolFamilies                 []modules.ToolFamily
-	toolFamilyIndex              int
-	categories                   []modules.Category
-	categoryIndex                int
-	protocols                    []modules.Protocol
-	protocolIndex                int
-	targetID                     int64
-	selected, cursor             int
-	selectedModules              map[string]bool
-	running                      bool
-	watcher                      bool
-	focusBeforeWatcher           paneFocus
-	quitConfirm                  bool
-	quitAfterCancel              bool
-	quitCancelDeadline           time.Time
-	elevationPrompt              bool
-	elevationModules             []string
+	// findingLoadedRows are the rows as loaded, before Findings that the
+	// latest run did not re-observe are hidden; showNotReobserved reveals them.
+	findingLoadedRows       []storage.Finding
+	showNotReobserved       bool
+	reportWriting           bool
+	notReobservedHidden     int
+	criticalProjection      findingengine.CriticalProjection
+	criticalNavigationLevel int
+	criticalState           findingengine.CriticalState
+	criticalFamily          string
+	criticalStateCursor     int
+	criticalFamilyCursor    int
+	criticalSourceFindings  []storage.Finding
+	criticalSourceIndex     int
+	findingsLoaded          bool
+	findingsLoading         bool
+	findingsLoadGeneration  uint64
+	findingsAsync           bool
+	findingsAnalysisStatus  string
+	inlineEvidence          inlineEvidence
+	inlineEvidenceTop       int
+	inlineEvidenceLoading   bool
+	evidenceView            bool
+	evidenceLines           []string
+	evidenceTop             int
+	evidencePath            string
+	evidenceError           string
+	modules                 []modules.Module
+	moduleIDs               []int64
+	moduleKeys              []int
+	allModules              []modules.Module
+	allModuleIDs            []int64
+	endpoints               modules.EndpointStore
+	availability            map[string]string
+	toolFamilies            []modules.ToolFamily
+	toolFamilyIndex         int
+	categories              []modules.Category
+	categoryIndex           int
+	protocols               []modules.Protocol
+	protocolIndex           int
+	targetID                int64
+	selected, cursor        int
+	selectedModules         map[string]bool
+	running                 bool
+	watcher                 bool
+	focusBeforeWatcher      paneFocus
+	quitConfirm             bool
+	quitAfterCancel         bool
+	quitCancelDeadline      time.Time
+	elevationPrompt         bool
+	elevationModules        []string
 	// elevationRenewal carries a privileged module's request for fresh sudo
 	// authorization while the batch waits before it. The module blocks on the
 	// reply channel; the model answers after the terminal handoff.
@@ -190,6 +196,13 @@ const (
 )
 
 type tickMsg time.Time
+
+// reportWrittenMsg reports the outcome of the Findings view's report key.
+type reportWrittenMsg struct {
+	path string
+	err  error
+}
+
 type findingsLoadedMsg struct {
 	generation uint64
 	rows       []storage.Finding

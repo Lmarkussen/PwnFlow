@@ -61,6 +61,13 @@ by default, such as any authenticated user adding DNS records, and information
 disclosure without a privilege path, such as anonymous enumeration, stay in
 their categories and are not projected.
 
+Findings are upserted on a stable key, so a re-observed Finding keeps its row
+and moves its last-seen time and source execution forward. A Finding is
+reported as not re-observed when a later, completed and analyzed execution of
+its source module started after it was last seen, or when its source module is
+no longer registered. Presentation (Findings view, Critical projection,
+report) leaves such Findings out by default; the rows themselves are kept.
+
 The automatic enumeration plan is an explicit, protected list of 44 modules.
 GhostSPN is the additive audit immediately after Kerberoasting. The plan is
 separate from manually selected modules and from offline artifact analysis;

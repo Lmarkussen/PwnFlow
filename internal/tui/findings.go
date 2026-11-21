@@ -345,6 +345,24 @@ func buildFindingCategories(rows []storage.Finding) []findingCategory {
 }
 
 func (m *model) setFindingRows(rows []storage.Finding) {
+	m.findingLoadedRows = markRetiredSources(append(m.findingLoadedRows[:0], rows...))
+	m.applyFindingRows()
+}
+
+// applyFindingRows builds the presentation from the loaded rows. Findings the
+// latest run of their module did not re-observe describe an earlier state, so
+// they are left out of categories, counts and the Critical projection unless
+// the operator asks to see them.
+func (m *model) applyFindingRows() {
+	rows := make([]storage.Finding, 0, len(m.findingLoadedRows))
+	m.notReobservedHidden = 0
+	for _, row := range m.findingLoadedRows {
+		if row.NotReobserved && !m.showNotReobserved {
+			m.notReobservedHidden++
+			continue
+		}
+		rows = append(rows, row)
+	}
 	rows = append(rows, findingengine.DeriveInformationalFindings(m.ctx, rows)...)
 	m.criticalProjection = findingengine.ProjectCritical(rows)
 	rows = m.consolidatePresentationFindings(rows)
@@ -1913,6 +1931,13 @@ func (m *model) findingsViewRender() string {
 		finding = m.hydrateHistoricalUserDescription(finding)
 		var detail strings.Builder
 		detail.WriteString(findingDetailHeader(finding, width-4) + "\n\n")
+		if finding.NotReobserved {
+			reason := "the module that reported this ran again later and did not report it"
+			if finding.SourceModuleRetired {
+				reason = "the module that reported this (" + finding.SourceModule + ") is no longer part of PwnFlow, so it cannot be re-observed"
+			}
+			detail.WriteString(warn.Render(wrapPaneText(fmt.Sprintf("NOT RE-OBSERVED: %s. It was last seen %s and may describe an earlier state of the target.", reason, finding.LastSeen.UTC().Format("2006-01-02 15:04 UTC")), width-4)) + "\n\n")
+		}
 		detail.WriteString(wrapPaneText(findingCondition(finding), width-4) + "\n\n")
 		detail.WriteString(findingAttributes(finding, width-4))
 		if state := findingengine.CriticalStateOf(projectionFinding); state == findingengine.CriticalConfirmed || state == findingengine.CriticalPotential {
@@ -2187,6 +2212,11 @@ func findingDetailHeader(finding storage.Finding, width int) string {
 }
 
 func displayFindingTitle(finding storage.Finding) string {
+	if finding.NotReobserved {
+		copy := finding
+		copy.NotReobserved = false
+		return displayFindingTitle(copy) + " · not re-observed"
+	}
 	if !strings.EqualFold(finding.FindingType, "ghostspn_orphaned_spn") {
 		return finding.Title
 	}
@@ -5236,6 +5266,11 @@ func (m *model) findingCategoryOverview(width int) string {
 	var content strings.Builder
 	content.WriteString(m.findingsHeader() + "\n")
 	content.WriteString(dim.Render("Choose a category. Original detection records and evidence remain available.") + "\n")
+	if m.notReobservedHidden > 0 {
+		content.WriteString(dim.Render(fmt.Sprintf("%d Finding(s) not re-observed by the latest run of their module are hidden; H shows them.", m.notReobservedHidden)) + "\n")
+	} else if m.showNotReobserved {
+		content.WriteString(dim.Render("Findings not re-observed by the latest run are shown and marked; H hides them.") + "\n")
+	}
 	columns := findingTableColumnsForWidth(width)
 	content.WriteString(findingTableHeader(width, "CATEGORY") + "\n")
 	if width >= 80 {
@@ -5258,7 +5293,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    H Show/Hide Not Re-observed    R Write Report    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 

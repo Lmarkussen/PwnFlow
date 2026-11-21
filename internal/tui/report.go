@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	findingengine "github.com/pwnflow/pwnflow/internal/findings"
 	"github.com/pwnflow/pwnflow/internal/storage"
 )
@@ -45,8 +47,18 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 	return path, file.Close()
 }
 
-// RenderReport builds the Markdown report from Finding rows.
-func RenderReport(rows []storage.Finding, domain, target, resultsRoot string, now time.Time) string {
+// RenderReport builds the Markdown report from Finding rows. Findings the
+// latest run of their module did not re-observe are listed in an appendix
+// and kept out of the summary, the Critical paths and the categories.
+func RenderReport(all []storage.Finding, domain, target, resultsRoot string, now time.Time) string {
+	var rows, stale []storage.Finding
+	for _, row := range markRetiredSources(append([]storage.Finding(nil), all...)) {
+		if row.NotReobserved {
+			stale = append(stale, row)
+		} else {
+			rows = append(rows, row)
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# PwnFlow assessment report: %s\n\n", reportText(domain))
 	fmt.Fprintf(&b, "- Generated: %s\n- Domain controller: %s\n- Findings: %d\n\n", now.UTC().Format(time.RFC3339), reportText(target), len(rows))
@@ -60,6 +72,9 @@ func RenderReport(rows []storage.Finding, domain, target, resultsRoot string, no
 		if counts[severity] > 0 {
 			fmt.Fprintf(&b, "| %s | %d |\n", strings.ToUpper(severity), counts[severity])
 		}
+	}
+	if len(stale) > 0 {
+		fmt.Fprintf(&b, "\n%d further Finding(s) were not re-observed by the latest run of their module and are listed in the appendix.\n", len(stale))
 	}
 	b.WriteString("\nFindings are evidence-backed observations. Each one states what was observed and what was not verified; ")
 	b.WriteString("recovered secrets are not reproduced here and remain in the restricted original artifacts.\n\n")
@@ -109,6 +124,19 @@ func RenderReport(rows []storage.Finding, domain, target, resultsRoot string, no
 			for _, finding := range group {
 				writeReportFinding(&b, finding, resultsRoot)
 			}
+		}
+	}
+	if len(stale) > 0 {
+		fmt.Fprintf(&b, "## Appendix: not re-observed (%d)\n\n", len(stale))
+		b.WriteString("The module that reported each of these either ran again later, completed and was analyzed without reporting it, or is no longer part of PwnFlow. They may describe an earlier state of the target.\n\n")
+		sortReportFindings(stale)
+		for _, finding := range stale {
+			fmt.Fprintf(&b, "- **[%s] %s** (last seen %s)\n", strings.ToUpper(fallbackText(finding.Severity, "informational")), reportText(finding.Title), finding.LastSeen.UTC().Format("2006-01-02 15:04 UTC"))
+			source := finding.SourceTool
+			if finding.SourceModuleRetired {
+				source += " (module " + finding.SourceModule + " is no longer part of PwnFlow)"
+			}
+			fmt.Fprintf(&b, "  - Source: %s · Evidence: %s\n", reportText(source), reportEvidence(finding.ArtifactPath, finding.ArtifactRef, resultsRoot))
 		}
 	}
 	return b.String()
@@ -224,4 +252,19 @@ func containsKey(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// writeReportCmd writes the assessment report from the Findings view without
+// blocking the interface. The report reads the database, as --report does.
+func (m *model) writeReportCmd() tea.Cmd {
+	if m.db == nil || m.reportWriting {
+		return nil
+	}
+	m.reportWriting = true
+	m.status = "writing report…"
+	db, ctx, targetID, cfg := m.db, m.ctx, m.targetID, m.cfg
+	return func() tea.Msg {
+		path, err := WriteReport(ctx, db, targetID, cfg.Domain, cfg.Target, cfg.ResultsRoot(), time.Now())
+		return reportWrittenMsg{path: path, err: err}
+	}
 }

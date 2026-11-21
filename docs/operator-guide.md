@@ -55,6 +55,17 @@ browser is hierarchical: `Critical Findings → Confirmed` or `Potential — Not
 Verified → family → Finding`. It does not create database records or replace
 specialist-category detail.
 
+A Finding is **not re-observed** when the module that reported it has run
+again later, completed and been analyzed without reporting it, or when that
+module is no longer part of PwnFlow. Such Findings describe an earlier state of
+the target, so the Findings view hides them from categories, counts and the
+Critical projection and says how many are hidden. `H` on the category screen
+shows them, marked "not re-observed" with their last-seen time; `H` again hides
+them. Nothing is deleted: `--reset-findings` remains the way to clear history.
+
+`R` on the category screen writes the same report as `--report` (below) and
+shows its path in the status line.
+
 `pwnflow --report [--domain DOMAIN] [--dc-ip ADDRESS]` writes the stored
 Findings as a Markdown report to `results/<domain>/reports/`, named with the
 UTC generation time, and prints its path. It reads the database only and never
@@ -63,7 +74,8 @@ Potential Critical paths with what was observed and what was not verified, and
 every Finding grouped by the same categories as the Findings browser, with
 evidence references relative to the results directory. Evidence JSON is not
 copied: recovered secrets, such as GPP passwords, stay in the evidence store and
-the original artifacts. An existing report is never overwritten.
+the original artifacts. Findings that were not re-observed are listed in an
+appendix instead of the main sections. An existing report is never overwritten.
 
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `Ctrl+R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `Ctrl+A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 
