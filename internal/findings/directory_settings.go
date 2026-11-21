@@ -179,7 +179,7 @@ func AnalyzeDirectorySettings(ctx context.Context, artifactPath string, assessme
 		}
 		result = append(result, finding("dns-zone-record-creation", domain, "ad_domain_config_dns_record_creation",
 			fmt.Sprintf("Any authenticated user can add DNS records (%s)", domain),
-			fmt.Sprintf("A broad principal such as Authenticated Users holds CreateChild on %d AD-integrated DNS zone(s), so any domain account can register new names, including ones clients look up by default such as WPAD or a mistyped host. This is the Windows default; %d zone(s) have no wildcard record to absorb unknown names. No record was created.", len(createZones), withoutWildcard),
+			fmt.Sprintf("A broad principal such as Authenticated Users holds CreateChild on %d AD-integrated DNS zone(s), so any domain account can register names that do not exist yet, for example a mistyped or decommissioned host name that clients still look up. This is the Windows default; %d zone(s) have no wildcard record to absorb unknown names. No record was created.", len(createZones), withoutWildcard),
 			"medium", createZones[0]["ref"].(string), map[string]any{"account": fmt.Sprintf("%d zone(s)", len(createZones)), "flag": "CreateChild for a broad principal", "affected_objects": names, "zones": createZones}))
 	}
 	for _, zone := range broadWrite {

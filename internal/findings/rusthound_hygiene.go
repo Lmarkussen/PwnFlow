@@ -552,11 +552,26 @@ func fallbackString(value, fallback string) string {
 
 func trustFindings(ctx hygieneContext, object collectedObject) []storage.FindingInput {
 	var trusts []map[string]json.RawMessage
-	if raw, ok := object.Top["Trusts"]; ok {
-		_ = json.Unmarshal(raw, &trusts)
+	raw, collected := object.Top["Trusts"]
+	if collected {
+		collected = json.Unmarshal(raw, &trusts) == nil
 	}
 	domain := strings.ToUpper(fallbackString(firstString(object.Properties, "name"), firstString(object.Properties, "domain")))
 	var result []storage.FindingInput
+	// An exported, empty trust list is a result: the domain has no trusts.
+	// A missing list means trusts were not collected, and nothing is said.
+	if collected && len(trusts) == 0 && domain != "" {
+		evidence, _ := json.Marshal(map[string]any{"domain": domain, "trust_count": 0})
+		result = append(result, storage.FindingInput{
+			FindingKey: stableSourceKey(ctx.assessmentID, "rusthound-trust-none", domain, "none"), AssessmentID: ctx.assessmentID,
+			SourceTool: "RustHound-CE", SourceExecution: ctx.executionID, FindingType: "ad_trust_none_observed",
+			Title:       fmt.Sprintf("No domain trusts observed (%s)", domain),
+			Description: "The RustHound-CE domain export lists no trust relationships for this domain.",
+			Severity:    "informational", Confidence: "observed-directory-object", AffectedObjectID: domain, AffectedObject: domain,
+			EvidenceJSON: string(evidence), ArtifactPath: object.Artifact, ArtifactRef: strings.TrimSuffix(object.RefPrefix, "/Properties") + "/Trusts",
+			ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
+		})
+	}
 	for index, trust := range trusts {
 		target := strings.ToUpper(rawString(trust, "TargetDomainName"))
 		if target == "" {

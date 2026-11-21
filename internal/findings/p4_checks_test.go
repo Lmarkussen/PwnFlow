@@ -194,3 +194,20 @@ func TestDirectorySettingsFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestNoTrustsObservedOnlyWhenTrustsWereExported(t *testing.T) {
+	domain := func(trusts any) map[string]any {
+		object := map[string]any{"ObjectIdentifier": hygieneDomainSID, "Properties": map[string]any{"name": "CORP.EXAMPLE", "domain": "CORP.EXAMPLE", "functionallevel": "2016"}}
+		if trusts != nil {
+			object["Trusts"] = trusts
+		}
+		return object
+	}
+	empty := findingsOfType(analyzeHygiene(t, writeHygieneCollection(t, nil, nil, nil, []map[string]any{domain([]any{})})), "ad_trust_none_observed")
+	if len(empty) != 1 || empty[0].Severity != "informational" {
+		t.Fatalf("empty trust list: %+v", empty)
+	}
+	if missing := findingsOfType(analyzeHygiene(t, writeHygieneCollection(t, nil, nil, nil, []map[string]any{domain(nil)})), "ad_trust_none_observed"); len(missing) != 0 {
+		t.Fatalf("missing trust list reported as no trusts: %+v", missing)
+	}
+}
