@@ -63,3 +63,30 @@ func TestRegressionScriptCheck(t *testing.T) {
 		t.Fatalf("expected failures: %v\n%s", err, output)
 	}
 }
+
+func TestRegressionScriptTrend(t *testing.T) {
+	dir := t.TempDir()
+	header := "time,duration_s,findings,high,medium,low,informational,failed_checks,status\n"
+	stable := "2026-06-01T01:00:00Z,80,110,7,32,7,64,0,0\n2026-06-02T01:00:00Z,85,111,7,32,7,65,0,0\n2026-06-03T01:00:00Z,82,110,7,32,7,64,0,0\n"
+	run := func(lines string) (string, error) {
+		path := filepath.Join(dir, "history.csv")
+		if err := os.WriteFile(path, []byte(header+lines), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.Command("bash", "scripts/regression.sh", "trend", "--history", path).CombinedOutput()
+		return string(output), err
+	}
+	if output, err := run(stable); err != nil || !strings.Contains(output, "in line with history") {
+		t.Fatalf("stable history flagged: %v\n%s", err, output)
+	}
+	for name, latest := range map[string]string{
+		"failed checks rose": "2026-06-04T01:00:00Z,84,110,7,32,7,64,2,1\n",
+		"duration":           "2026-06-04T01:00:00Z,200,110,7,32,7,64,0,0\n",
+		"Finding count":      "2026-06-04T01:00:00Z,84,80,7,20,7,46,0,0\n",
+	} {
+		output, err := run(stable + latest)
+		if err == nil || !strings.Contains(output, name) {
+			t.Fatalf("%s not flagged: %v\n%s", name, err, output)
+		}
+	}
+}

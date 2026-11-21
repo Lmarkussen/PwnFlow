@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Repeatable Default Enumeration regression for an authorized lab.
 #
-#   scripts/regression.sh run   --env FILE --expect FILE [--timeout SECONDS]
+#   scripts/regression.sh run   --env FILE --expect FILE [--timeout SECONDS] [--history FILE]
 #   scripts/regression.sh check --db FILE --domain DOMAIN --expect FILE [--since TIMESTAMP]
+#   scripts/regression.sh trend --history FILE [--last N]
 #
 # run builds PwnFlow, starts it in a detached tmux session with the settings in
 # the env file, presses Ctrl+A, declines every elevation prompt, waits for the
@@ -23,10 +24,16 @@
 # Only Findings observed at or after --since count, so rows left by earlier
 # runs cannot satisfy or break an expectation. Any failed execution or
 # analysis job since then also fails the check.
+#
+# --history appends one CSV line per run (time, duration, Findings by
+# severity, failed checks, exit status). trend prints the latest runs and
+# exits 1 when the newest one regressed: more failed checks, a duration over
+# 1.5x the median of the five before it, or a total Finding count that moved
+# by more than 10%.
 set -euo pipefail
 
 usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -80,12 +87,13 @@ check() {
 }
 
 run() {
-  local env="" expect="" timeout=1800
+  local env="" expect="" timeout=1800 history=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --env) env="$2"; shift 2 ;;
       --expect) expect="$2"; shift 2 ;;
       --timeout) timeout="$2"; shift 2 ;;
+      --history) history="$2"; shift 2 ;;
       *) usage ;;
     esac
   done
@@ -113,6 +121,7 @@ run() {
     sleep 2
   done
   tmux send-keys -t "$session" C-a
+  local batch_started=$SECONDS
   deadline=$((SECONDS + timeout))
   while :; do
     screen="$(tmux capture-pane -p -t "$session")"
@@ -131,11 +140,61 @@ run() {
   grep -E '^(PROGRESS|Requested:|COMPLETED [0-9]|Elapsed:|Findings:)' <<<"$screen" || true
   tmux send-keys -t "$session" q
   sleep 2
-  check --db "$root/results/$PWNFLOW_DOMAIN/enumeration.db" --domain "$PWNFLOW_DOMAIN" --expect "$expect" --since "$since"
+  local db="$root/results/$PWNFLOW_DOMAIN/enumeration.db" report status=0 duration=$((SECONDS - batch_started))
+  report="$(mktemp)"
+  check --db "$db" --domain "$PWNFLOW_DOMAIN" --expect "$expect" --since "$since" | tee "$report" || status=$?
+  if [[ -n "$history" ]]; then
+    record_history "$history" "$db" "$PWNFLOW_DOMAIN" "$since" "$duration" "$(grep -c '^FAIL' "$report" || true)" "$status"
+  fi
+  rm -f "$report"
+  return "$status"
+}
+
+record_history() {
+  local history="$1" db="$2" domain="$3" since="$4" duration="$5" failed="$6" status="$7" counts
+  counts="$(sqlite3 -readonly -separator , "$db" "SELECT count(*), sum(lower(severity)='high'), sum(lower(severity)='medium'), sum(lower(severity)='low'), sum(lower(severity)='informational') FROM findings WHERE assessment_id IN (SELECT id FROM targets WHERE lower(domain)=lower($(sql_quote "$domain"))) AND last_seen >= $(sql_quote "${since%Z}");")"
+  [[ -s "$history" ]] || echo "time,duration_s,findings,high,medium,low,informational,failed_checks,status" >"$history"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$duration,${counts:-0,0,0,0,0},$failed,$status" >>"$history"
+}
+
+trend() {
+  local history="" last=10
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --history) history="$2"; shift 2 ;;
+      --last) last="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [[ -f "$history" ]] || usage
+  awk -F, -v last="$last" '
+    NR == 1 { next }
+    { n++; time[n]=$1; duration[n]=$2; findings[n]=$3; failed[n]=$8; status[n]=$9 }
+    END {
+      if (n == 0) { print "regression: no runs recorded"; exit 0 }
+      start = n - last + 1; if (start < 1) start = 1
+      printf "%-21s %9s %9s %7s %7s\n", "time", "duration", "findings", "failed", "status"
+      for (i = start; i <= n; i++) printf "%-21s %8ss %9s %7s %7s\n", time[i], duration[i], findings[i], failed[i], status[i]
+      flags = 0
+      if (n >= 2) {
+        if (failed[n] > failed[n-1]) { print "REGRESSION: failed checks rose from " failed[n-1] " to " failed[n]; flags++ }
+        m = 0; for (i = n - 1; i >= 1 && i >= n - 5; i--) sample[++m] = duration[i]
+        for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++) if (sample[j] < sample[i]) { t = sample[i]; sample[i] = sample[j]; sample[j] = t }
+        median = (m % 2) ? sample[(m + 1) / 2] : (sample[m / 2] + sample[m / 2 + 1]) / 2
+        if (median > 0 && duration[n] > 1.5 * median) { print "REGRESSION: duration " duration[n] "s is over 1.5x the median " median "s"; flags++ }
+        if (findings[n-1] > 0) {
+          change = (findings[n] - findings[n-1]) / findings[n-1]; if (change < 0) change = -change
+          if (change > 0.10) { print "REGRESSION: Finding count moved from " findings[n-1] " to " findings[n]; flags++ }
+        }
+      }
+      if (flags == 0) print "regression: latest run in line with history"
+      exit (flags > 0)
+    }' "$history"
 }
 
 case "${1:-}" in
   run) shift; run "$@" ;;
   check) shift; check "$@" ;;
+  trend) shift; trend "$@" ;;
   *) usage ;;
 esac

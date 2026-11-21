@@ -6,8 +6,9 @@ checks the resulting Findings against an expectations file. It turns the manual
 whether every expected condition was found and nothing unexpected appeared.
 
 ```sh
-scripts/regression.sh run   --env LAB.env --expect LAB.expect [--timeout SECONDS]
+scripts/regression.sh run   --env LAB.env --expect LAB.expect [--timeout SECONDS] [--history LAB.csv]
 scripts/regression.sh check --db results/DOMAIN/enumeration.db --domain DOMAIN --expect LAB.expect [--since TIMESTAMP]
+scripts/regression.sh trend --history LAB.csv [--last N]
 ```
 
 `run` builds PwnFlow, starts it in a detached tmux session, presses `Ctrl+A`,
@@ -49,5 +50,25 @@ Seed the lab with one object per condition you want to keep covered, write a
 `present` line for it, and add `absent` lines for conditions the lab must not
 show. A failed check after a code change is then either a regression or a lab
 change, and the output names which expectation moved.
+
+## History and trends
+
+With `--history`, every run appends one CSV line: time, duration, the Findings
+observed by that run by severity, the number of failed checks and the exit
+status. `trend` prints the latest runs and exits 1 when the newest one
+regressed: more failed checks than the run before, a duration above 1.5 times
+the median of the previous five, or a total Finding count that moved by more
+than 10%. A slow or flaky module shows up as a duration or failure trend before
+it shows up as a missing Finding.
+
+## Scheduling
+
+Run it unattended with a systemd user timer on the lab host, for example a
+oneshot service whose script calls `run ... --history` followed by `trend`, and
+a timer with `OnCalendar=*-*-* 03:30:00` and `Persistent=true`. Enable
+lingering (`loginctl enable-linger USER`) so the timer fires without a login,
+and give the service an explicit `PATH`, since it does not run a login shell.
+The run uses whatever tree is deployed on the lab host, so it tracks lab
+drift; deploy a new tree to regression-test a change.
 
 Requirements: `tmux`, `sqlite3`, and the tools Default Enumeration uses.
