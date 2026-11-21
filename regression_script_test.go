@@ -90,3 +90,74 @@ func TestRegressionScriptTrend(t *testing.T) {
 		}
 	}
 }
+
+// path expectations are checked against the attack paths of a report the
+// PwnFlow binary next to the database writes; the report is removed again.
+func TestRegressionScriptPathExpectations(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 is not installed")
+	}
+	root := t.TempDir()
+	results := filepath.Join(root, "results", "corp.example")
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(results, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(results, "enumeration.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE targets (id INTEGER PRIMARY KEY, domain TEXT)`,
+		`CREATE TABLE findings (id INTEGER PRIMARY KEY, assessment_id INTEGER, finding_type TEXT, title TEXT, affected_object_name TEXT, last_seen TEXT)`,
+		`CREATE TABLE executions (id INTEGER PRIMARY KEY, target_id INTEGER, started_at TEXT, status TEXT)`,
+		`CREATE TABLE analysis_jobs (id INTEGER PRIMARY KEY, assessment_id INTEGER, updated_at TEXT, status TEXT)`,
+		`INSERT INTO targets VALUES (1, 'corp.example')`,
+	} {
+		if _, err := db.ExecContext(context.Background(), statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	report := filepath.Join(results, "report.md")
+	fake := "#!/bin/sh\n[ \"$1\" = --report ] || exit 9\nprintf '%s\\n' '- **Attack path: Spoof a name through ADIDNS and relay the authentication it attracts — CORP.EXAMPLE**' > " + report + "\necho \"Report written: " + report + "\"\n"
+	if err := os.WriteFile(filepath.Join(root, "bin", "pwnflow"), []byte(fake), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expect := filepath.Join(root, "expect.txt")
+	run := func(expectations string) (string, error) {
+		if err := os.WriteFile(expect, []byte(expectations), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.Command("bash", "scripts/regression.sh", "check", "--db", dbPath, "--domain", "corp.example", "--expect", expect).CombinedOutput()
+		return string(output), err
+	}
+	output, err := run("path ADIDNS\npath relay the authentication\n")
+	if err != nil || !strings.Contains(output, "PASS path    ADIDNS") || !strings.Contains(output, "all checks passed") {
+		t.Fatalf("expected the path to pass: %v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(report); !os.IsNotExist(statErr) {
+		t.Fatal("the generated report was not removed")
+	}
+	output, err = run("path unconstrained\n")
+	if err == nil || !strings.Contains(output, "FAIL path    unconstrained") {
+		t.Fatalf("expected the path to fail: %v\n%s", err, output)
+	}
+}
+
+// --notify receives a summary when a run fails, here one that cannot start.
+func TestRegressionScriptNotifiesOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	notified := filepath.Join(dir, "notified")
+	output, err := exec.Command("bash", "scripts/regression.sh", "run", "--env", filepath.Join(dir, "missing.env"), "--expect", filepath.Join(dir, "missing.txt"), "--notify", "cat > "+notified).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a run without its files succeeded:\n%s", output)
+	}
+	summary, readErr := os.ReadFile(notified)
+	if readErr != nil || !strings.Contains(string(summary), "run exit 2") {
+		t.Fatalf("no failure summary: %v %q\n%s", readErr, summary, output)
+	}
+}

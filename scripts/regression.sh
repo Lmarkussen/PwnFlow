@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Repeatable Default Enumeration regression for an authorized lab.
 #
-#   scripts/regression.sh run   --env FILE --expect FILE [--timeout SECONDS] [--history FILE]
+#   scripts/regression.sh run   --env FILE --expect FILE [--timeout SECONDS] [--history FILE] [--notify COMMAND]
 #   scripts/regression.sh check --db FILE --domain DOMAIN --expect FILE [--since TIMESTAMP]
 #   scripts/regression.sh trend --history FILE [--last N]
 #
@@ -21,7 +21,10 @@
 # Expectations file, one per line ('#' starts a comment):
 #   present <finding_type> [<text in the affected object or title>]
 #   absent  <finding_type> [<text in the affected object or title>]
-# Only Findings observed at or after --since count, so rows left by earlier
+#   path    <text in an attack path title>
+# path lines are checked against a report PwnFlow writes from the database
+# (and removes again), so they see the attack paths stitched from current
+# Findings. Only Findings observed at or after --since count, so rows left by earlier
 # runs cannot satisfy or break an expectation. Any failed execution or
 # analysis job since then also fails the check.
 #
@@ -29,11 +32,16 @@
 # severity, failed checks, exit status). trend prints the latest runs and
 # exits 1 when the newest one regressed: more failed checks, a duration over
 # 1.5x the median of the five before it, or a total Finding count that moved
-# by more than 10%.
+# by more than 10%. With --history, run also prints that trend.
+#
+# --notify runs COMMAND (through sh -c) with a short summary on its standard
+# input when the run fails - an unmet expectation, a failed execution, a run
+# that did not finish - or the trend flags a regression. The summary holds the
+# FAIL and REGRESSION lines, which name Finding types and expectation text.
 set -euo pipefail
 
 usage() {
-  sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -57,12 +65,26 @@ check() {
   # Stored times carry fractional seconds ("...:05.2Z"), which sort before
   # "...:05Z"; comparing against the timestamp without its Z keeps them.
   since="${since%Z}"
-  local scope failures=0 line kind type text count where
+  local scope failures=0 line kind type text count where report_file="" root
+  root="$(cd "$(dirname "$db")/../.." && pwd)"
   scope="f.assessment_id IN (SELECT id FROM targets WHERE lower(domain)=lower($(sql_quote "$domain"))) AND f.last_seen >= $(sql_quote "$since")"
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%%#*}"
     read -r kind type text <<<"$line" || true
     [[ -z "${kind:-}" ]] && continue
+    if [[ "$kind" == path ]]; then
+      text="$type${text:+ $text}"
+      if [[ -z "$report_file" ]]; then
+        report_file="$(cd "$root" && "$root/bin/pwnflow" --report --domain "$domain" 2>/dev/null | sed -n 's/^Report written: //p' | tail -1)"
+        [[ -f "$report_file" ]] || die "PwnFlow did not write a report for the path expectations"
+      fi
+      if grep -iF -- "Attack path: " "$report_file" | grep -qiF -- "$text"; then
+        echo "PASS path    $text"
+      else
+        echo "FAIL path    $text"; failures=$((failures + 1))
+      fi
+      continue
+    fi
     where="$scope AND f.finding_type=$(sql_quote "$type")"
     if [[ -n "${text:-}" ]]; then
       where="$where AND (instr(lower(f.affected_object_name), lower($(sql_quote "$text"))) > 0 OR instr(lower(f.title), lower($(sql_quote "$text"))) > 0)"
@@ -74,6 +96,7 @@ check() {
       *) die "unknown expectation '$kind' in $expect" ;;
     esac
   done <"$expect"
+  [[ -n "$report_file" ]] && rm -f -- "$report_file"
   local failed_executions failed_jobs
   failed_executions="$(sqlite3 -readonly "$db" "SELECT count(*) FROM executions e WHERE e.target_id IN (SELECT id FROM targets WHERE lower(domain)=lower($(sql_quote "$domain"))) AND e.started_at >= $(sql_quote "$since") AND lower(e.status) IN ('failed','error','timeout');")"
   failed_jobs="$(sqlite3 -readonly "$db" "SELECT count(*) FROM analysis_jobs a WHERE a.assessment_id IN (SELECT id FROM targets WHERE lower(domain)=lower($(sql_quote "$domain"))) AND a.updated_at >= $(sql_quote "$since") AND upper(a.status)='FAILED';")"
@@ -150,6 +173,40 @@ run() {
   return "$status"
 }
 
+# run_notified runs run, prints the trend when there is a history, and hands
+# a summary to the --notify command when either reports a problem.
+run_notified() {
+  local notify="" history="" args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --notify) notify="$2"; shift 2 ;;
+      --history) history="$2"; args+=("$1" "$2"); shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  local output status=0 trend_status=0
+  output="$(mktemp)"
+  # run exits through die on a stuck batch; the subshell keeps that exit here.
+  set +e
+  (run "${args[@]}") 2>&1 | tee "$output"
+  status="${PIPESTATUS[0]}"
+  if [[ -n "$history" && -f "$history" ]]; then
+    echo "== trend"
+    trend --history "$history" --last 7 2>&1 | tee -a "$output"
+    trend_status="${PIPESTATUS[0]}"
+  fi
+  set -e
+  if [[ -n "$notify" && ( "$status" -ne 0 || "$trend_status" -ne 0 ) ]]; then
+    {
+      echo "PwnFlow lab regression on $(hostname): run exit $status, trend exit $trend_status"
+      grep -E '^FAIL|^REGRESSION|^regression: ' "$output" | grep -v 'declined an elevation prompt' || true
+    } | sh -c "$notify" || echo "regression: the --notify command failed" >&2
+  fi
+  rm -f "$output"
+  [[ "$status" -ne 0 ]] && return "$status"
+  return "$trend_status"
+}
+
 record_history() {
   local history="$1" db="$2" domain="$3" since="$4" duration="$5" failed="$6" status="$7" counts
   counts="$(sqlite3 -readonly -separator , "$db" "SELECT count(*), sum(lower(severity)='high'), sum(lower(severity)='medium'), sum(lower(severity)='low'), sum(lower(severity)='informational') FROM findings WHERE assessment_id IN (SELECT id FROM targets WHERE lower(domain)=lower($(sql_quote "$domain"))) AND last_seen >= $(sql_quote "${since%Z}");")"
@@ -193,7 +250,7 @@ trend() {
 }
 
 case "${1:-}" in
-  run) shift; run "$@" ;;
+  run) shift; run_notified "$@" ;;
   check) shift; check "$@" ;;
   trend) shift; trend "$@" ;;
   *) usage ;;

@@ -6,7 +6,7 @@ checks the resulting Findings against an expectations file. It turns the manual
 whether every expected condition was found and nothing unexpected appeared.
 
 ```sh
-scripts/regression.sh run   --env LAB.env --expect LAB.expect [--timeout SECONDS] [--history LAB.csv]
+scripts/regression.sh run   --env LAB.env --expect LAB.expect [--timeout SECONDS] [--history LAB.csv] [--notify COMMAND]
 scripts/regression.sh check --db results/DOMAIN/enumeration.db --domain DOMAIN --expect LAB.expect [--since TIMESTAMP]
 scripts/regression.sh trend --history LAB.csv [--last N]
 ```
@@ -38,6 +38,7 @@ PWNFLOW_EXTRA_PATH=$HOME/.cargo/bin     # optional, prepended to PATH
 present smb_spooler_service_running
 present ad_account_reversible_encryption SVC-LEGACY
 absent  smb_webclient_service_running
+path    relay to AD CS web enrollment (ESC8)
 ```
 
 `present` and `absent` take a Finding type and, optionally, text that must
@@ -45,6 +46,11 @@ appear in the affected object or the title. Only Findings observed at or after
 the run start (`--since`) count, so rows kept from earlier runs neither satisfy
 nor break an expectation. Any execution or analysis job that failed since then
 also fails the check.
+
+`path` takes text that must appear in an attack path title. Attack paths are
+stitched from current Findings rather than stored, so `check` has the PwnFlow
+binary next to the results directory write a report, matches its
+`Attack path:` lines, and removes the report again.
 
 Seed the lab with one object per condition you want to keep covered, write a
 `present` line for it, and add `absent` lines for conditions the lab must not
@@ -59,12 +65,29 @@ status. `trend` prints the latest runs and exits 1 when the newest one
 regressed: more failed checks than the run before, a duration above 1.5 times
 the median of the previous five, or a total Finding count that moved by more
 than 10%. A slow or flaky module shows up as a duration or failure trend before
-it shows up as a missing Finding.
+it shows up as a missing Finding. With `--history`, `run` prints the trend
+after the check.
+
+## Alerts
+
+`--notify COMMAND` runs the command through `sh -c` with a short summary on
+its standard input whenever the run fails (an unmet expectation, a failed
+execution or analysis job, a batch that did not finish) or the trend flags a
+regression. The summary is the run and trend exit codes plus the `FAIL` and
+`REGRESSION` lines, which name Finding types and expectation text, so send it
+only to a channel meant for lab results. For example, a webhook:
+
+```sh
+scripts/regression.sh run --env LAB.env --expect LAB.expect --history LAB.csv \
+  --notify 'jq -Rs "{content: .}" | curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"'
+```
+
+Nothing is sent when the run passes and the trend is in line.
 
 ## Scheduling
 
 Run it unattended with a systemd user timer on the lab host, for example a
-oneshot service whose script calls `run ... --history` followed by `trend`, and
+oneshot service whose script calls `run ... --history --notify ...`, and
 a timer with `OnCalendar=*-*-* 03:30:00` and `Persistent=true`. Enable
 lingering (`loginctl enable-linger USER`) so the timer fires without a login,
 and give the service an explicit `PATH`, since it does not run a login shell.
