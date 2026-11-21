@@ -92,7 +92,7 @@ categories those modules feed are marked "incomplete": a missing Finding there
 is not evidence that the condition is absent. Skipped modules and the optional
 per-protocol authentication checks are not gaps.
 
-`pwnflow --report [--domain DOMAIN] [--dc-ip ADDRESS]` writes the stored
+`pwnflow --report [--format md|html] [--domain DOMAIN] [--dc-ip ADDRESS]` writes the stored
 Findings as a Markdown report to `results/<domain>/reports/`, named with the
 UTC generation time, and prints its path. It reads the database only and never
 starts a module. The report holds a severity summary, the Confirmed and
@@ -105,7 +105,9 @@ ATT&CK entry), with
 evidence references relative to the results directory. Evidence JSON is not
 copied: recovered secrets, such as GPP passwords, stay in the evidence store and
 the original artifacts. Findings that were not re-observed are listed in an
-appendix instead of the main sections. An existing report is never overwritten.
+appendix instead of the main sections. `--format html` writes the same content
+as one self-contained HTML page with a table of contents and severity colors;
+print it from a browser for a PDF. An existing report is never overwritten.
 
 `Space` selection is registry-wide: a module selected in one tool family, category, or protocol stays selected while you navigate, and the modules pane header shows the running total. `Enter` runs only the highlighted module. `Ctrl+R` runs the selected eligible modules as a single batch, whatever scope is visible; an unavailable selection is reported and skipped rather than run. `Ctrl+A` runs the fixed Default Enumeration profile regardless of the family, category, protocol, focus, scroll position, or selection on screen; it never means “run the whole registry.”
 

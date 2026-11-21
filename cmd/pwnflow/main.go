@@ -133,7 +133,8 @@ func main() {
 	confirmResetFindings := flag.Bool("confirm-reset-findings", false, "confirm --reset-findings")
 	reanalyzeLatest := flag.Bool("reanalyze-latest", false, "offline-analyze the latest supported saved artifacts; never starts modules")
 	findingsOnly := flag.Bool("findings", false, "browse existing Findings and evidence without network access or execution")
-	reportOnly := flag.Bool("report", false, "write a Markdown report of the stored Findings to results/<domain>/reports; never starts modules")
+	reportOnly := flag.Bool("report", false, "write a report of the stored Findings to results/<domain>/reports; never starts modules")
+	reportFormat := flag.String("format", "md", "report format for --report: md or html")
 	var moduleOptionsFlag multiFlag
 	flag.Var(&moduleOptionsFlag, "module-options", "value for one module option, as MODULE.KEY=VALUE; repeat for more options")
 	flag.Parse()
@@ -157,7 +158,7 @@ func main() {
 		}
 		defer selection.db.Close()
 		resultsRoot := filepath.Join(root, "results", selection.domain)
-		path, err := tui.WriteReport(ctx, selection.db, selection.targetID, selection.domain, selection.target, resultsRoot, time.Now())
+		path, err := tui.WriteReportFormat(ctx, selection.db, selection.targetID, selection.domain, selection.target, resultsRoot, time.Now(), *reportFormat)
 		if err != nil {
 			fail(err)
 		}

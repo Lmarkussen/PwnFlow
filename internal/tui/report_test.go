@@ -145,3 +145,41 @@ func TestReportListsTechniqueLinks(t *testing.T) {
 		t.Fatalf("report still contains remediation:\n%s", report)
 	}
 }
+
+func TestHTMLReportIsSelfContainedAndEscaped(t *testing.T) {
+	root := t.TempDir()
+	db, err := storage.Open(filepath.Join(root, "enumeration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	db.UpsertTarget(ctx, "corp.example", "192.0.2.10")
+	id, _ := db.TargetID(ctx, "corp.example", "192.0.2.10")
+	inputs := reportFixture(id, root)
+	inputs = append(inputs, storage.FindingInput{FindingKey: "spool", AssessmentID: id, SourceTool: "NetExec (nxc)", FindingType: "smb_spooler_service_running", Title: "Print Spooler reachable: DC01", Severity: "medium", Confidence: "c", EvidenceJSON: "{}", ArtifactPath: "a", ArtifactRef: "r", ObservedAt: time.Now(), Status: "open", ParserVersion: "v"})
+	if err := db.IngestFindings(ctx, inputs); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 2, 9, 30, 0, 0, time.UTC)
+	path, err := WriteReportFormat(ctx, db, id, "corp.example", "192.0.2.10", root, now, "html")
+	if err != nil || !strings.HasSuffix(path, "PwnFlow_report_20260602-093000Z.html") {
+		t.Fatalf("html report %q %v", path, err)
+	}
+	data, _ := os.ReadFile(path)
+	page := string(data)
+	for _, want := range []string{
+		"<!doctype html>", "<nav><strong>Contents</strong>", `<h2 id="critical-findings">`, "<table>", `<span class="sev sev-high">HIGH</span>`,
+		`<a href="https://github.com/p0dalirius/Coercer" rel="noopener noreferrer">Coercer</a>`, "Stale enabled user accounts | &lt;script&gt;",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("html report missing %q", want)
+		}
+	}
+	if strings.Contains(page, "<script>") || strings.Contains(page, "Fixture-Recovered-Secret") {
+		t.Fatal("html report contains unescaped markup or a secret")
+	}
+	if _, err := WriteReportFormat(ctx, db, id, "corp.example", "192.0.2.10", root, now, "pdf"); err == nil {
+		t.Fatal("an unsupported format was accepted")
+	}
+}

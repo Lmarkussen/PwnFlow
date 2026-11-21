@@ -146,7 +146,8 @@ func printFullHelp(w io.Writer) {
 	})
 	printCLIOptions(w, theme, width, "EVIDENCE & MAINTENANCE", []cliHelpOption{
 		{"--findings", "Browse existing Findings and supporting evidence offline; never starts tools or changes the database"},
-		{"--report", "Write a Markdown report of the stored Findings to results/<domain>/reports; never starts tools"},
+		{"--report", "Write a report of the stored Findings to results/<domain>/reports; never starts tools"},
+		{"--format", "Report format for --report: md (default) or html"},
 		{"--reanalyze-latest", "Offline-analyze the latest supported saved artifacts; never starts modules"},
 		{"--reset-findings", "Remove derived Findings history for this assessment; original artifacts remain"},
 		{"--confirm-reset-findings", "Confirm the destructive --reset-findings operation"},

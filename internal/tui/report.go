@@ -26,6 +26,19 @@ var reportSeverityOrder = []string{"critical", "high", "medium", "low", "informa
 // recovered secrets stay in the evidence store and the original artifacts.
 // An existing report is never overwritten.
 func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain, target, resultsRoot string, now time.Time) (string, error) {
+	return WriteReportFormat(ctx, db, assessmentID, domain, target, resultsRoot, now, "md")
+}
+
+// WriteReportFormat writes the report as Markdown ("md") or as one
+// self-contained HTML page ("html").
+func WriteReportFormat(ctx context.Context, db *storage.DB, assessmentID int64, domain, target, resultsRoot string, now time.Time, format string) (string, error) {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" {
+		format = "md"
+	}
+	if format != "md" && format != "html" {
+		return "", fmt.Errorf("unsupported report format %q (use md or html)", format)
+	}
 	rows, err := db.ListFindings(ctx, assessmentID)
 	if err != nil {
 		return "", err
@@ -37,11 +50,14 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 	marked := markRetiredSources(append([]storage.Finding(nil), rows...))
 	diff, known := computeRunDiff(marked, loadRunHistory(ctx, db, assessmentID))
 	content := renderReport(rows, gaps, diff, known, domain, target, resultsRoot, now)
+	if format == "html" {
+		content = reportHTML(content, "PwnFlow assessment report: "+domain)
+	}
 	dir := filepath.Join(resultsRoot, "reports")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "PwnFlow_report_"+now.UTC().Format("20060102-150405")+"Z.md")
+	path := filepath.Join(dir, "PwnFlow_report_"+now.UTC().Format("20060102-150405")+"Z."+format)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
