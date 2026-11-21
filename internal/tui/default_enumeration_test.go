@@ -16,10 +16,10 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 		"certipy-adcs-discovery", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 		"sphunter-tenant-discovery", "ad-writable-objects", "ftp-anonymous-access", "smb-spider-plus", "smb-password-policy", "bloodyad-writable", "maq",
-		"ad-directory-settings", "smb-null-session",
+		"ad-directory-settings", "smb-null-session", "smb-spooler", "smb-webdav",
 	}
-	if len(defaultEnumerationModuleIDs) != 42 || len(want) != 42 {
-		t.Fatalf("Default Enumeration has %d entries, want 42", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 44 || len(want) != 44 {
+		t.Fatalf("Default Enumeration has %d entries, want 44", len(defaultEnumerationModuleIDs))
 	}
 	for index, id := range want {
 		if defaultEnumerationModuleIDs[index] != id {

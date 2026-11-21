@@ -84,6 +84,9 @@ var defaultEnumerationModuleIDs = []string{
 	"ad-directory-settings",
 	// What an SMB session with no credentials can enumerate on the target.
 	"smb-null-session",
+	// Authentication-coercion surface on the domain controller: whether the
+	// Print Spooler and WebClient services answer. Read-only checks.
+	"smb-spooler", "smb-webdav",
 }
 
 // globalPlan builds the deliberate Default Enumeration plan for the primary shortcut. Missing

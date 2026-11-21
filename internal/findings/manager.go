@@ -158,6 +158,8 @@ func netExecArtifactForExecution(moduleName, outputPath string) string {
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case isNetExecLDAPObservationArtifact(path):
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
+	case strings.HasSuffix(path, "smb_spooler.txt"), strings.HasSuffix(path, "smb_webdav.txt"):
+		return DiscoverArtifact("NetExec (nxc)", outputPath)
 	case strings.HasSuffix(path, "smb_server_info.txt"), strings.HasSuffix(path, "smb_null_session.txt"):
 		// The SMB host banner carries the null-session, guest and SMBv1 state.
 		return DiscoverArtifact("NetExec (nxc)", outputPath)
@@ -345,6 +347,8 @@ func (m *Manager) analyze(queued queuedJob) {
 			parserInputs, err = AnalyzeNetExecGPP(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "kerberoast") || strings.Contains(lowerPath, "asreproast") {
 			parserInputs, err = AnalyzeNetExecKerberos(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+		} else if strings.HasSuffix(lowerPath, "smb_spooler.txt") || strings.HasSuffix(lowerPath, "smb_webdav.txt") {
+			parserInputs, err = AnalyzeNetExecCoercion(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.HasSuffix(lowerPath, "smb_null_session.txt") {
 			parserInputs, err = AnalyzeNetExecNullSession(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 		} else if strings.Contains(lowerPath, "get_users_info") || strings.Contains(lowerPath, "get_users_description") {

@@ -443,6 +443,15 @@ func potentialHygienePaths(row storage.Finding, metadata map[string]any, typ str
 			"a broad principal holds write rights on the DNS zone object",
 			"record changes, name resolution by victims and any follow-on relay are not verified",
 			"Any domain account can change existing records in this zone and redirect clients.")
+	case "smb_spooler_service_running", "smb_webclient_service_running":
+		capability := "authentication coercion (Print Spooler)"
+		if typ == "smb_webclient_service_running" {
+			capability = "authentication coercion over HTTP (WebClient)"
+		}
+		return path("ntlm_relay", "any authenticated user", row.AffectedObject, "domain controller", capability,
+			"the coercion-capable service answered on the configured domain controller",
+			"a relay target that accepts the coerced authentication, or a host with unconstrained delegation, and a successful coercion are not verified",
+			"Coercing the domain controller's machine account is the first step of NTLM relay and unconstrained-delegation paths to domain compromise.")
 	case "ldap_signing_policy_not_required", "ldap_channel_binding_policy_not_required":
 		capability := "LDAP signing not required by policy"
 		if typ == "ldap_channel_binding_policy_not_required" {
