@@ -76,7 +76,7 @@ func (m *Manager) ReanalyzeLatestSupported(ctx context.Context, assessmentID int
 	if err := m.reanalyzeEachExecution(ctx, assessmentID, "NetworkHound"); err != nil {
 		return err
 	}
-	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool, GPORegistryPoliciesTool, "SCCMhunter"} {
+	for _, source := range []string{"RustHound-CE", "Certipy", "RelayKing", "PXEThief", "PwnFlow / RustHound Analysis", DirectorySettingsTool, GPORegistryPoliciesTool, ServiceExposureTool, "SCCMhunter"} {
 		if strings.EqualFold(source, "PwnFlow / RustHound Analysis") {
 			if err := m.reanalyzeWritableObjects(ctx, assessmentID, source); err != nil {
 				return err
@@ -407,6 +407,8 @@ func (m *Manager) analyze(queued queuedJob) {
 		inputs, err = AnalyzeWritableObjectReport(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "pwnflow ftp probe":
 		inputs, err = AnalyzeFTPAnonymous(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
+	case strings.ToLower(ServiceExposureTool):
+		inputs, err = AnalyzeServiceExposure(m.ctx, job.ArtifactPath, job.AssessmentID, job.ExecutionID, job.ObservedAt)
 	case "sccmhunter":
 		artifact := job.ArtifactPath
 		if !strings.EqualFold(filepath.Base(artifact), "find.db") {
@@ -619,6 +621,8 @@ func ParserVersionFor(tool string) string {
 		return writableObjectsParserVersion
 	case "pwnflow ftp probe":
 		return ftpAnonymousParserVersion
+	case strings.ToLower(ServiceExposureTool):
+		return serviceExposureParserVersion
 	default:
 		return ""
 	}
@@ -648,7 +652,7 @@ func discoverArtifact(tool, outputPath string, completedAt time.Time) string {
 	if outputPath == "" {
 		return ""
 	}
-	specializedTool := map[string]bool{"bloodyad": true, "ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true, "pwnflow ftp probe": true}
+	specializedTool := map[string]bool{"bloodyad": true, "ghostspn": true, "gpoparser": true, "mssqlrelay": true, "mssqlpwner": true, "ad gpo evidence": true, "masscan": true, "ad writable object assessment": true, "pwnflow ftp probe": true, strings.ToLower(ServiceExposureTool): true}
 	if specializedTool[strings.ToLower(tool)] {
 		if strings.EqualFold(tool, "AD GPO Evidence") {
 			if info, err := os.Stat(outputPath); err == nil && info.Mode().IsRegular() {

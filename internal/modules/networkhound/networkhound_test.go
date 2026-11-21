@@ -136,7 +136,7 @@ func TestAutomaticServiceValidationUsesCurrentTopologyHostsAndExactPorts(t *test
 	runtime.AutomaticBatch = true
 	runtime.BatchArtifacts = map[string]string{"networkhound-topology": topology}
 	args := entry.CommandArgs(runtime)
-	want := []string{"--networks", "198.51.100.12,198.51.100.13", "-Pn", "--port-scan", "--ports", "21,445", "--scan-timeout", "3", "--scan-threads", "10"}
+	want := []string{"--networks", "198.51.100.12,198.51.100.13", "-Pn", "--port-scan", "--ports", "21,23,445,3389,6379,9200,27017", "--scan-timeout", "3", "--scan-threads", "10"}
 	for index, value := range want {
 		if index >= len(args) || args[index] != value {
 			t.Fatalf("automatic arguments[%d:] = %v, want prefix %v", index, args, want)

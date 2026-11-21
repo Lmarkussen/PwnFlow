@@ -104,5 +104,6 @@ func RegisteredModules() []modules.Module {
 	registry.Register(pwntools.SPHunter{})
 	registry.Register(pwntools.ADWritableObjects{})
 	registry.Register(pwntools.FTPAnonymousAccess{})
+	registry.Register(pwntools.ServiceExposure{})
 	return registry.All()
 }

@@ -74,7 +74,7 @@ var defaultEnumerationModuleIDs = []string{
 	"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
 	"sphunter-tenant-discovery",
 	"ad-writable-objects",
-	"ftp-anonymous-access",
+	"ftp-anonymous-access", "network-service-exposure",
 	"smb-spider-plus",
 	"smb-password-policy",
 	"bloodyad-writable",

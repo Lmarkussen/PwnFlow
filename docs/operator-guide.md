@@ -160,7 +160,9 @@ unfiltered Certipy AD CS discovery, RustHound-CE, the GPO registry settings read
 (each GPO's Registry.pol and preference Registry.xml for LLMNR, NetBIOS, mDNS,
 IPv6 and WSUS), the AD Directory Settings read
 (dSHeuristics, an unauthenticated LDAP search, DNS zone ACLs), SCCMhunter,
-PXEThief, and the eligible Network assessments.
+PXEThief, the eligible Network assessments, and the Network Service Exposure
+probe (Telnet, RDP without NLA, Redis, Elasticsearch, MongoDB, SNMP default
+communities and IPMI, each asked once whether it answers without credentials).
 
 RustHound-CE supplies password-not-required accounts, delegation, and who can
 read LAPS and gMSA passwords, so the NetExec `password-not-required`,

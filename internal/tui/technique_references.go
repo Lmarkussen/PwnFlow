@@ -64,6 +64,17 @@ var (
 	toolGPOBackdoor    = techniqueLink{"GroupPolicyBackdoor", "https://github.com/synacktiv/GroupPolicyBackdoor"}
 	toolSharpGPOAbuse  = techniqueLink{"SharpGPOAbuse", "https://github.com/FSecureLABS/SharpGPOAbuse"}
 	mitreGPOModify     = techniqueLink{"MITRE ATT&CK T1484.001 — Group Policy Modification", "https://attack.mitre.org/techniques/T1484/001/"}
+	htRedis            = techniqueLink{"HackTricks — Pentesting Redis", "https://book.hacktricks.wiki/en/network-services-pentesting/6379-pentesting-redis.html"}
+	htSNMP             = techniqueLink{"HackTricks — Pentesting SNMP", "https://book.hacktricks.wiki/en/network-services-pentesting/pentesting-snmp/index.html"}
+	htIPMI             = techniqueLink{"HackTricks — IPMI (623/UDP)", "https://book.hacktricks.wiki/en/network-services-pentesting/623-udp-ipmi.html"}
+	htElastic          = techniqueLink{"HackTricks — Pentesting Elasticsearch", "https://book.hacktricks.wiki/en/network-services-pentesting/9200-pentesting-elasticsearch.html"}
+	htMongo            = techniqueLink{"HackTricks — Pentesting MongoDB", "https://book.hacktricks.wiki/en/network-services-pentesting/27017-27018-mongodb.html"}
+	htTelnet           = techniqueLink{"HackTricks — Pentesting Telnet", "https://book.hacktricks.wiki/en/network-services-pentesting/pentesting-telnet.html"}
+	htRDP              = techniqueLink{"HackTricks — Pentesting RDP", "https://book.hacktricks.wiki/en/network-services-pentesting/pentesting-rdp.html"}
+	toolOnesixtyone    = techniqueLink{"onesixtyone", "https://github.com/trailofbits/onesixtyone"}
+	toolRedisRogue     = techniqueLink{"redis-rogue-server", "https://github.com/n0b0dyCN/redis-rogue-server"}
+	mitreRDP           = techniqueLink{"MITRE ATT&CK T1021.001 — Remote Desktop Protocol", "https://attack.mitre.org/techniques/T1021/001/"}
+	mitreNetDeviceCfg  = techniqueLink{"MITRE ATT&CK T1602 — Data from Configuration Repository", "https://attack.mitre.org/techniques/T1602/"}
 	mitreRelay         = techniqueLink{"MITRE ATT&CK T1557.001 — LLMNR/NBT-NS Poisoning and SMB Relay", "https://attack.mitre.org/techniques/T1557/001/"}
 	mitreForcedAuth    = techniqueLink{"MITRE ATT&CK T1187 — Forced Authentication", "https://attack.mitre.org/techniques/T1187/"}
 	mitreSIDHistory    = techniqueLink{"MITRE ATT&CK T1134.005 — SID-History Injection", "https://attack.mitre.org/techniques/T1134/005/"}
@@ -78,19 +89,26 @@ var (
 // references did not. findingTechniqueReference consults it last.
 var additionalTechniqueLinks = map[string][]techniqueLink{
 	// Anonymous access and enumeration.
-	"ad_domain_policy_pso_weak":                  {thrSpraying, toolKerbrute, mitreSpraying},
-	"ad_gpo_control_by_non_admin":                {thrGPO, toolPyGPOAbuse, toolGPOBackdoor, toolSharpGPOAbuse, mitreGPOModify},
-	"network_poisoning_name_resolution":          {thrLLMNR, thrWPAD, toolResponder, thrNTLMRelay, toolImpacket, mitreRelay},
-	"network_poisoning_ipv6_dhcpv6":              {thrDHCPv6, thrWPAD, toolMitm6, thrNTLMRelay, toolImpacket, mitreAiTM},
-	"network_poisoning_wsus_http":                {thrWSUS, toolWsuks, toolPyWSUS, mitreAiTM},
-	"smb_signed_in_accounts":                     {thrLSASS, toolMimikatz, mitreLSASS},
-	"netexec_admin_reach":                        {thrLSASS, toolMimikatz, mitreLSASS},
-	"smb_null_session_accepted":                  {thrMSRPC, toolEnum4linuxNG, mitreAccountDisc},
-	"smb_null_session_enumeration":               {thrMSRPC, toolEnum4linuxNG, thrSpraying, toolKerbrute, mitreSpraying},
-	"smb_guest_session_mapped":                   {thrMSRPC, toolEnum4linuxNG},
-	"ad_domain_config_anonymous_ldap_operations": {thrLDAPRecon, toolLdapdomaindump, mitreAccountDisc},
-	"ad_domain_config_anonymous_ldap_read":       {thrLDAPRecon, toolLdapdomaindump, mitreAccountDisc},
-	"ad_domain_config_pre2000_compatible_access": {thrMSRPC, thrLDAPRecon, toolEnum4linuxNG},
+	"ad_domain_policy_pso_weak":                     {thrSpraying, toolKerbrute, mitreSpraying},
+	"ad_gpo_control_by_non_admin":                   {thrGPO, toolPyGPOAbuse, toolGPOBackdoor, toolSharpGPOAbuse, mitreGPOModify},
+	"network_service_telnet":                        {htTelnet},
+	"network_service_rdp_no_nla":                    {htRDP, mitreRDP},
+	"network_service_redis_unauthenticated":         {htRedis, toolRedisRogue},
+	"network_service_elasticsearch_unauthenticated": {htElastic},
+	"network_service_mongodb_unauthenticated":       {htMongo},
+	"network_service_snmp_default_community":        {htSNMP, toolOnesixtyone, mitreNetDeviceCfg},
+	"network_service_ipmi_exposed":                  {htIPMI},
+	"network_poisoning_name_resolution":             {thrLLMNR, thrWPAD, toolResponder, thrNTLMRelay, toolImpacket, mitreRelay},
+	"network_poisoning_ipv6_dhcpv6":                 {thrDHCPv6, thrWPAD, toolMitm6, thrNTLMRelay, toolImpacket, mitreAiTM},
+	"network_poisoning_wsus_http":                   {thrWSUS, toolWsuks, toolPyWSUS, mitreAiTM},
+	"smb_signed_in_accounts":                        {thrLSASS, toolMimikatz, mitreLSASS},
+	"netexec_admin_reach":                           {thrLSASS, toolMimikatz, mitreLSASS},
+	"smb_null_session_accepted":                     {thrMSRPC, toolEnum4linuxNG, mitreAccountDisc},
+	"smb_null_session_enumeration":                  {thrMSRPC, toolEnum4linuxNG, thrSpraying, toolKerbrute, mitreSpraying},
+	"smb_guest_session_mapped":                      {thrMSRPC, toolEnum4linuxNG},
+	"ad_domain_config_anonymous_ldap_operations":    {thrLDAPRecon, toolLdapdomaindump, mitreAccountDisc},
+	"ad_domain_config_anonymous_ldap_read":          {thrLDAPRecon, toolLdapdomaindump, mitreAccountDisc},
+	"ad_domain_config_pre2000_compatible_access":    {thrMSRPC, thrLDAPRecon, toolEnum4linuxNG},
 	// ADIDNS.
 	"ad_domain_config_dns_record_creation":      {thrADIDNS, toolKrbrelayx, toolAdidnsdump, mitreRelay},
 	"ad_domain_config_dns_zone_broad_write":     {thrADIDNS, toolKrbrelayx, toolAdidnsdump},

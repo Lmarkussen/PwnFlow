@@ -16,11 +16,11 @@ func TestDefaultEnumerationProfilePreservesBaseAndAddsAuthenticationChecks(t *te
 		"smb-server-info", "registry-sessions", "logged-on-users", "smb-gpp-autologin", "smb-gpp-password", "smb-aws-credentials", "get-info-users", "get-desc-users", "get-userPassword", "get-unixUserPassword",
 		"certipy-adcs-discovery", "rusthound-ce", "sccmhunter", "pxethief", "networkhound-topology", "networkhound-scope-validation", "relayking-target-assessment", "relayking-domain-audit", "gpoparser-remote", "ad-gpo-registry-policies",
 		"ftp-auth-check", "rdp-auth-check", "ssh-auth-check", "vnc-auth-check", "wmi-auth-check", "winrm-auth-check",
-		"sphunter-tenant-discovery", "ad-writable-objects", "ftp-anonymous-access", "smb-spider-plus", "smb-password-policy", "bloodyad-writable", "maq",
+		"sphunter-tenant-discovery", "ad-writable-objects", "ftp-anonymous-access", "network-service-exposure", "smb-spider-plus", "smb-password-policy", "bloodyad-writable", "maq",
 		"ad-directory-settings", "smb-null-session", "smb-spooler", "smb-webdav",
 	}
-	if len(defaultEnumerationModuleIDs) != 45 || len(want) != 45 {
-		t.Fatalf("Default Enumeration has %d entries, want 45", len(defaultEnumerationModuleIDs))
+	if len(defaultEnumerationModuleIDs) != 46 || len(want) != 46 {
+		t.Fatalf("Default Enumeration has %d entries, want 46", len(defaultEnumerationModuleIDs))
 	}
 	for index, id := range want {
 		if defaultEnumerationModuleIDs[index] != id {

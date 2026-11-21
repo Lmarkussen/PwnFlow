@@ -66,10 +66,15 @@ const (
 
 	// defaultPorts is NetworkHound's own default set of common ports; naming it
 	// keeps the scan bounded to what the module documents.
-	defaultPorts = "21,22,23,25,53,80,110,135,139,143,443,445,993,995,1433,1521,3306,3389,5432,5900,5985,8080,8443"
+	defaultPorts = "21,22,23,25,53,80,110,135,139,143,443,445,993,995,1433,1521,3306,3389,5432,5900,5985,6379,8080,8443,9200,27017"
 )
 
 const AutomaticServiceArtifactKey = automaticServiceArtifactKey
+
+// automaticPorts are the TCP ports a Default Enumeration scan checks on each
+// AD host: FTP and SMB for the anonymous FTP probe and spider_plus, and the
+// services the network service exposure probe asks for.
+const automaticPorts = "21,23,445,3389,6379,9200,27017"
 
 // options are the upstream options this package relies on. They are matched
 // against the installed checkout's own help output, so a revision that renames or
@@ -456,7 +461,7 @@ func (m Module) commandArgs(runtime *modules.Runtime, runDirectory string) []str
 		if runtime.AutomaticBatch {
 			targets, _ := topologyHostAddresses(runtime.BatchArtifacts["networkhound-topology"])
 			scope = strings.Join(targets, ",")
-			ports, scanTimeout, scanThreads = "21,445", "3", "10"
+			ports, scanTimeout, scanThreads = automaticPorts, "3", "10"
 		}
 		args := []string{
 			"--networks", scope,
@@ -592,7 +597,7 @@ func (m Module) Run(ctx context.Context, runtime *modules.Runtime, sink modules.
 			scope := strings.Join(addresses, ",")
 			smb, _ := OpenPortEndpoints(artifact, scope, 445)
 			ftp, _ := OpenPortEndpoints(artifact, scope, 21)
-			fmt.Fprintf(sink, "[i] AD-host service validation: %d scoped hosts; TCP/21, TCP/445; %d SMB endpoints, %d FTP endpoints\n", len(addresses), len(smb), len(ftp))
+			fmt.Fprintf(sink, "[i] AD-host service validation: %d scoped hosts; TCP %s; %d SMB endpoints, %d FTP endpoints\n", len(addresses), automaticPorts, len(smb), len(ftp))
 		} else {
 			runtime.BatchArtifacts[m.ID()] = artifact
 		}
@@ -740,6 +745,48 @@ func OpenPortEndpoints(path, scope string, wantedPort int) ([]string, error) {
 	}
 	walk(document)
 	return endpoints, nil
+}
+
+// ScannedHosts returns the literal, in-scope addresses NetworkHound recorded
+// a port scan for, whatever the result. UDP probes, which a TCP scan cannot
+// confirm, are sent to these hosts.
+func ScannedHosts(path, scope string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("NetworkHound artifact is invalid JSON: %w", err)
+	}
+	if err := validateScope(scope); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var hosts []string
+	var walk func(any)
+	walk = func(value any) {
+		switch item := value.(type) {
+		case []any:
+			for _, child := range item {
+				walk(child)
+			}
+		case map[string]any:
+			if _, ok := item["open_ports"]; ok {
+				for _, address := range literalAddresses(item) {
+					if addressInScope(address, scope) && !seen[address] {
+						seen[address] = true
+						hosts = append(hosts, address)
+					}
+				}
+			}
+			for _, child := range item {
+				walk(child)
+			}
+		}
+	}
+	walk(document)
+	return hosts, nil
 }
 
 func openPortValue(value any, wanted int) bool {
