@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -50,6 +53,9 @@ type Finding struct {
 	SourceModule        string
 	SourceModuleTool    string
 	SourceModuleRetired bool
+	// ChangeNote is a presentation label set when the Finding is listed as a
+	// change between runs ("new", "resolved", "severity low → medium").
+	ChangeNote string
 }
 
 // notReobservedExpression is true when a later, completed and analyzed
@@ -92,6 +98,9 @@ func (d *DB) ResetDerivedState(ctx context.Context, assessmentID int64) (int64, 
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_evidence WHERE finding_id IN (SELECT id FROM findings WHERE assessment_id=?)", assessmentID); err != nil {
 			return 0, err
 		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_history WHERE finding_id IN (SELECT id FROM findings WHERE assessment_id=?)", assessmentID); err != nil {
+			return 0, err
+		}
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM findings WHERE assessment_id=?", assessmentID); err != nil {
 			return 0, err
 		}
@@ -100,6 +109,9 @@ func (d *DB) ResetDerivedState(ctx context.Context, assessmentID int64) (int64, 
 		}
 	} else {
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_evidence"); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM finding_history"); err != nil {
 			return 0, err
 		}
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM findings"); err != nil {
@@ -123,12 +135,21 @@ func (d *DB) IngestFindings(ctx context.Context, inputs []FindingInput) error {
 			return err
 		}
 		observed := input.ObservedAt.UTC().Format(time.RFC3339Nano)
+		var previousSeverity string
+		if err := transaction.QueryRowContext(ctx, `SELECT severity FROM findings WHERE finding_key=?`, input.FindingKey).Scan(&previousSeverity); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		if _, err := transaction.ExecContext(ctx, `INSERT INTO findings(finding_key,assessment_id,source_tool,source_execution_id,finding_type,title,description,severity,confidence,affected_object_id,affected_object_name,related_object_id,related_object_name,evidence_json,artifact_path,artifact_ref,first_seen,last_seen,status,parser_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(finding_key) DO UPDATE SET source_tool=excluded.source_tool,source_execution_id=excluded.source_execution_id,finding_type=excluded.finding_type,title=excluded.title,description=excluded.description,severity=excluded.severity,confidence=excluded.confidence,affected_object_id=excluded.affected_object_id,affected_object_name=excluded.affected_object_name,related_object_id=excluded.related_object_id,related_object_name=excluded.related_object_name,evidence_json=excluded.evidence_json,artifact_path=excluded.artifact_path,artifact_ref=excluded.artifact_ref,last_seen=excluded.last_seen,status=excluded.status,parser_version=excluded.parser_version`, input.FindingKey, input.AssessmentID, input.SourceTool, nullableID(input.SourceExecution), input.FindingType, input.Title, input.Description, input.Severity, input.Confidence, input.AffectedObjectID, input.AffectedObject, input.RelatedObjectID, input.RelatedObject, input.EvidenceJSON, input.ArtifactPath, input.ArtifactRef, observed, observed, input.Status, input.ParserVersion); err != nil {
 			return err
 		}
 		var findingID int64
 		if err := transaction.QueryRowContext(ctx, `SELECT id FROM findings WHERE finding_key=?`, input.FindingKey).Scan(&findingID); err != nil {
 			return err
+		}
+		if previousSeverity != "" && !strings.EqualFold(previousSeverity, input.Severity) {
+			if _, err := transaction.ExecContext(ctx, `INSERT INTO finding_history(finding_id,observed_at,field,old_value,new_value) VALUES(?,?,?,?,?)`, findingID, observed, "severity", previousSeverity, input.Severity); err != nil {
+				return err
+			}
 		}
 		evidenceKey := evidenceKey(input)
 		if _, err := transaction.ExecContext(ctx, `INSERT INTO finding_evidence(finding_id,evidence_key,source_execution_id,artifact_path,artifact_ref,evidence_json,observed_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(evidence_key) DO NOTHING`, findingID, evidenceKey, nullableID(input.SourceExecution), input.ArtifactPath, input.ArtifactRef, input.EvidenceJSON, observed); err != nil {

@@ -105,7 +105,82 @@ func (d *DB) migrate() error {
 			return err
 		}
 	}
+	if version < 4 {
+		// finding_history records severity changes of a Finding between
+		// observations, so a run can report what changed.
+		if _, err := transaction.Exec(`CREATE TABLE IF NOT EXISTS finding_history (id INTEGER PRIMARY KEY, finding_id INTEGER NOT NULL, observed_at TEXT NOT NULL, field TEXT NOT NULL, old_value TEXT NOT NULL, new_value TEXT NOT NULL, FOREIGN KEY(finding_id) REFERENCES findings(id) ON DELETE CASCADE); CREATE INDEX IF NOT EXISTS finding_history_finding_idx ON finding_history(finding_id); INSERT INTO schema_migrations(version) VALUES(4);`); err != nil {
+			return err
+		}
+	}
 	return transaction.Commit()
+}
+
+// Run is one recorded Default Enumeration batch.
+type Run struct {
+	ID       int64
+	Started  time.Time
+	Finished time.Time
+	Status   string
+}
+
+// RecordRun stores a Default Enumeration batch and returns its id.
+func (d *DB) RecordRun(ctx context.Context, targetID int64, started, finished time.Time, status string) (int64, error) {
+	result, err := d.ExecContext(ctx, `INSERT INTO runs(target_id,started_at,finished_at,status) VALUES(?,?,?,?)`, targetID, started.UTC().Format(time.RFC3339Nano), finished.UTC().Format(time.RFC3339Nano), status)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// Runs lists the recorded batches of an assessment, newest first.
+func (d *DB) Runs(ctx context.Context, targetID int64) ([]Run, error) {
+	rows, err := d.QueryContext(ctx, `SELECT id,started_at,COALESCE(finished_at,''),status FROM runs WHERE target_id=? ORDER BY started_at DESC, id DESC`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []Run
+	for rows.Next() {
+		var run Run
+		var started, finished string
+		if err := rows.Scan(&run.ID, &started, &finished, &run.Status); err != nil {
+			return nil, err
+		}
+		run.Started, _ = time.Parse(time.RFC3339Nano, started)
+		if finished != "" {
+			run.Finished, _ = time.Parse(time.RFC3339Nano, finished)
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+// SeverityChange is a recorded change of a Finding's severity.
+type SeverityChange struct {
+	FindingID int64
+	Observed  time.Time
+	Old, New  string
+}
+
+// SeverityChanges returns the severity changes of an assessment's Findings
+// observed at or after since.
+func (d *DB) SeverityChanges(ctx context.Context, assessmentID int64, since time.Time) ([]SeverityChange, error) {
+	rows, err := d.QueryContext(ctx, `SELECT h.finding_id,h.observed_at,h.old_value,h.new_value FROM finding_history h JOIN findings f ON f.id=h.finding_id WHERE f.assessment_id=? AND h.field='severity' AND julianday(h.observed_at) >= julianday(?) ORDER BY h.id`, assessmentID, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var changes []SeverityChange
+	for rows.Next() {
+		var change SeverityChange
+		var observed string
+		if err := rows.Scan(&change.FindingID, &observed, &change.Old, &change.New); err != nil {
+			return nil, err
+		}
+		change.Observed, _ = time.Parse(time.RFC3339Nano, observed)
+		changes = append(changes, change)
+	}
+	return changes, rows.Err()
 }
 func (d *DB) UpsertTarget(ctx context.Context, domain, address string) error {
 	_, err := d.ExecContext(ctx, `INSERT INTO targets(domain,target_address,created_at) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM targets WHERE domain=? AND target_address=?)`, domain, address, time.Now().UTC().Format(time.RFC3339), domain, address)

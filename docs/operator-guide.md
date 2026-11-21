@@ -64,7 +64,17 @@ shows them, marked "not re-observed" with their last-seen time; `H` again hides
 them. Nothing is deleted: `--reset-findings` remains the way to clear history.
 
 `R` on the category screen writes the same report as `--report` (below) and
-shows its path in the status line.
+shows its path in the status line, and `D` lists the changes since the previous
+run (below).
+
+**Changes since the previous run.** Every Default Enumeration batch is recorded
+as a run. Once two runs have completed, the category screen summarizes what the
+latest run changed: new conditions, conditions it resolved (seen in the
+previous run, not re-observed now) and severity changes. `D` lists them, each
+marked new, resolved or with its old and new severity; the report has the same
+section. Conditions are matched by type, affected object and title, so an
+overview Finding that is re-created every run is not reported as a change.
+Aborted runs are not used as comparison points.
 
 **Collection gaps.** For every module, the latest execution is checked: a
 failure, timeout or abort, a completed NetExec run whose login the target

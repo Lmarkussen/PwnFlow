@@ -163,6 +163,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.collectionGaps = msg.gaps
+		m.runHistory = msg.history
 		m.setFindingRows(msg.rows)
 		m.findingsAnalysisStatus = msg.status
 		m.findingsLoaded = true
@@ -837,6 +838,20 @@ func (m *model) handleFindingsKey(key string) (tea.Model, tea.Cmd) {
 		case "r", "R":
 			if m.findingCategory == "" {
 				return m, m.writeReportCmd()
+			}
+		case "d", "D":
+			if m.findingCategory == "" && m.runDiffKnown && !m.runDiff.empty() {
+				if m.findingCursor >= 0 && m.findingCursor < len(m.findingCategories) {
+					m.findingCategorySelection = m.findingCategories[m.findingCursor].Key
+				}
+				m.findingCategoryTop = m.findingTop
+				m.findingCategory = "changes"
+				m.findingCategoryView = false
+				m.findingSubcategoryView = false
+				m.findingSubcategory = ""
+				m.findingCursor, m.findingTop = 0, 0
+				m.refreshFindings()
+				return m, nil
 			}
 		case "h", "H":
 			if m.findingCategory == "" {
@@ -1647,6 +1662,11 @@ func (m *model) recordBatchCommand(states []runner.BatchState, finished time.Tim
 						firstErr = err
 					}
 				}
+			}
+		}
+		if db != nil && name == "Default Enumeration" {
+			if err := recordDefaultEnumerationRun(ctx, db, targetID, states, finished); err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 		return batchRecordedMsg{batch: batch, executionIDs: executionIDs, name: name, count: len(states), finished: finished, err: firstErr}

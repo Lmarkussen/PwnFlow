@@ -34,7 +34,9 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 	if err != nil {
 		return "", err
 	}
-	content := RenderReport(rows, gaps, domain, target, resultsRoot, now)
+	marked := markRetiredSources(append([]storage.Finding(nil), rows...))
+	diff, known := computeRunDiff(marked, loadRunHistory(ctx, db, assessmentID))
+	content := renderReport(rows, gaps, diff, known, domain, target, resultsRoot, now)
 	dir := filepath.Join(resultsRoot, "reports")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -55,6 +57,10 @@ func WriteReport(ctx context.Context, db *storage.DB, assessmentID int64, domain
 // latest run of their module did not re-observe are listed in an appendix
 // and kept out of the summary, the Critical paths and the categories.
 func RenderReport(all []storage.Finding, gaps []collectionGap, domain, target, resultsRoot string, now time.Time) string {
+	return renderReport(all, gaps, runDiff{}, false, domain, target, resultsRoot, now)
+}
+
+func renderReport(all []storage.Finding, gaps []collectionGap, diff runDiff, diffKnown bool, domain, target, resultsRoot string, now time.Time) string {
 	var rows, stale []storage.Finding
 	for _, row := range markRetiredSources(append([]storage.Finding(nil), all...)) {
 		if row.NotReobserved {
@@ -98,6 +104,26 @@ func RenderReport(all []storage.Finding, gaps []collectionGap, domain, target, r
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+	if diffKnown {
+		fmt.Fprintf(&b, "## Changes since the previous run\n\n%s.\n\n", reportText(diff.summary()))
+		for _, group := range []struct {
+			heading string
+			rows    []storage.Finding
+		}{{"New", diff.New}, {"Severity changed", diff.Changed}, {"Resolved (not re-observed)", diff.Resolved}} {
+			if len(group.rows) == 0 {
+				continue
+			}
+			fmt.Fprintf(&b, "### %s (%d)\n\n", group.heading, len(group.rows))
+			for _, finding := range group.rows {
+				line := fmt.Sprintf("- **[%s] %s**", strings.ToUpper(fallbackText(finding.Severity, "informational")), reportText(finding.Title))
+				if finding.ChangeNote != "new" && finding.ChangeNote != "resolved" {
+					line += " (" + reportText(finding.ChangeNote) + ")"
+				}
+				b.WriteString(line + "\n")
+			}
+			b.WriteString("\n")
+		}
 	}
 	projection := findingengine.ProjectCritical(rows)
 	b.WriteString("## Critical findings\n\n")

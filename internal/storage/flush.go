@@ -110,6 +110,19 @@ func FlushAssessment(ctx context.Context, databasePath, domain, target, backupDi
 		{`DELETE FROM runs WHERE target_id=?`, []any{assessmentID}},
 		{`DELETE FROM endpoints WHERE domain=?`, []any{domain}},
 	}
+	// finding_history exists from schema version 4; older databases are
+	// flushed without it. SQLite rejects a DELETE on a missing table while
+	// preparing it, so the check has to happen here.
+	var historyTables int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='finding_history'`).Scan(&historyTables); err != nil {
+		return rollback(err)
+	}
+	if historyTables > 0 {
+		statements = append([]struct {
+			query string
+			args  []any
+		}{{`DELETE FROM finding_history WHERE finding_id IN (SELECT id FROM findings WHERE assessment_id=?)`, []any{assessmentID}}}, statements...)
+	}
 	for _, statement := range statements {
 		if _, err := transaction.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			return rollback(fmt.Errorf("flush %s: %w", statement.query[:minInt(len(statement.query), 32)], err))

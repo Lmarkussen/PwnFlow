@@ -56,6 +56,9 @@ type model struct {
 	showNotReobserved       bool
 	reportWriting           bool
 	collectionGaps          []collectionGap
+	runHistory              runHistory
+	runDiff                 runDiff
+	runDiffKnown            bool
 	notReobservedHidden     int
 	criticalProjection      findingengine.CriticalProjection
 	criticalNavigationLevel int
@@ -208,6 +211,7 @@ type findingsLoadedMsg struct {
 	generation uint64
 	rows       []storage.Finding
 	gaps       []collectionGap
+	history    runHistory
 	status     string
 	err        error
 }

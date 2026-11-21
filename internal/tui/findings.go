@@ -354,6 +354,7 @@ func (m *model) setFindingRows(rows []storage.Finding) {
 // they are left out of categories, counts and the Critical projection unless
 // the operator asks to see them.
 func (m *model) applyFindingRows() {
+	m.runDiff, m.runDiffKnown = computeRunDiff(m.findingLoadedRows, m.runHistory)
 	rows := make([]storage.Finding, 0, len(m.findingLoadedRows))
 	m.notReobservedHidden = 0
 	for _, row := range m.findingLoadedRows {
@@ -407,6 +408,7 @@ func (m *model) refreshFindings() {
 			return
 		}
 		m.collectionGaps, _ = loadCollectionGaps(m.ctx, m.db, m.targetID, m.cfg.ResultsRoot(), rows)
+		m.runHistory = loadRunHistory(m.ctx, m.db, m.targetID)
 		m.setFindingRows(rows)
 		m.findingsAnalysisStatus = findingsStatusLabel(m.db, m.ctx, m.targetID)
 		m.findingsLoaded = true
@@ -421,11 +423,14 @@ func (m *model) refreshFindings() {
 		}
 		rows = criticalProjectionRows(m.criticalProjection)
 	}
+	if m.findingCategory == "changes" {
+		rows = m.runDiff.rows()
+	}
 	m.findingViewMode = "all"
 	m.findingSeverity = ""
 	filtered := make([]storage.Finding, 0, len(rows))
 	for _, finding := range rows {
-		if m.findingCategory != "critical" && m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
+		if m.findingCategory != "critical" && m.findingCategory != "changes" && m.findingCategory != "" && findingCategoryKey(finding) != m.findingCategory {
 			continue
 		}
 		if m.findingCategory == "critical" && !m.findingCategoryView {
@@ -441,7 +446,9 @@ func (m *model) refreshFindings() {
 		}
 		filtered = append(filtered, finding)
 	}
-	if m.findingCategory == "critical" {
+	if m.findingCategory == "changes" {
+		// Keep the diff's own order: new, severity changed, resolved.
+	} else if m.findingCategory == "critical" {
 		sort.SliceStable(filtered, func(i, j int) bool {
 			leftState := findingengine.CriticalStateOf(filtered[i])
 			rightState := findingengine.CriticalStateOf(filtered[j])
@@ -1710,8 +1717,9 @@ func (m *model) beginFindingsLoad() tea.Cmd {
 			return findingsLoadedMsg{generation: generation, err: err}
 		}
 		gaps, _ := loadCollectionGaps(ctx, db, targetID, resultsRoot, rows)
+		history := loadRunHistory(ctx, db, targetID)
 		rows = append(rows, findingengine.DeriveInformationalFindings(ctx, rows)...)
-		return findingsLoadedMsg{generation: generation, rows: rows, gaps: gaps, status: findingsStatusLabel(db, ctx, targetID)}
+		return findingsLoadedMsg{generation: generation, rows: rows, gaps: gaps, history: history, status: findingsStatusLabel(db, ctx, targetID)}
 	}
 }
 
@@ -2223,6 +2231,11 @@ func findingDetailHeader(finding storage.Finding, width int) string {
 }
 
 func displayFindingTitle(finding storage.Finding) string {
+	if finding.ChangeNote != "" {
+		copy := finding
+		copy.ChangeNote, copy.NotReobserved = "", false
+		return displayFindingTitle(copy) + " · " + finding.ChangeNote
+	}
 	if finding.NotReobserved {
 		copy := finding
 		copy.NotReobserved = false
@@ -5287,6 +5300,13 @@ func (m *model) findingCategoryOverview(width int) string {
 			content.WriteString(warn.Render(truncateFinding(fmt.Sprintf("  %s (%s): %s", gap.Module, gap.Status, gap.Reason), max(20, width-4))) + "\n")
 		}
 	}
+	if m.runDiffKnown {
+		line := m.runDiff.summary()
+		if !m.runDiff.empty() {
+			line += "; D lists them."
+		}
+		content.WriteString(infoBlueStyle().Render(line) + "\n")
+	}
 	if m.notReobservedHidden > 0 {
 		content.WriteString(dim.Render(fmt.Sprintf("%d Finding(s) not re-observed by the latest run of their module are hidden; H shows them.", m.notReobservedHidden)) + "\n")
 	} else if m.showNotReobserved {
@@ -5314,7 +5334,7 @@ func (m *model) findingCategoryOverview(width int) string {
 	if len(m.findingCategories) == 0 {
 		content.WriteString("No findings categories are available.\n")
 	}
-	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    H Show/Hide Not Re-observed    R Write Report    Q Quit"))
+	content.WriteString(dim.Render("\n→/Enter Open Category    Esc Close    D Changes    H Show/Hide Not Re-observed    R Write Report    Q Quit"))
 	return paneStyle(false).Width(width).Render(content.String())
 }
 
