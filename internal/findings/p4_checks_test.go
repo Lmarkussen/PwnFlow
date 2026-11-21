@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pwnflow/pwnflow/internal/storage"
 	"time"
 )
 
@@ -374,5 +376,40 @@ func TestDelegationRisks(t *testing.T) {
 		if severity[key] != want {
 			t.Fatalf("%s = %q, want %q (all %v)", key, severity[key], want, severity)
 		}
+	}
+}
+
+func TestDirectorySettingsPasswordSettings(t *testing.T) {
+	dir := t.TempDir()
+	analyze := func(settings map[string]any) map[string]storage.FindingInput {
+		encoded, _ := json.Marshal(map[string]any{"schema_version": 1, "domain": "corp.example", "password_settings": settings})
+		path := filepath.Join(dir, "AD_directory_settings.json")
+		if err := os.WriteFile(path, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		inputs, err := AnalyzeDirectorySettings(context.Background(), path, 1, 2, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		byType := map[string]storage.FindingInput{}
+		for _, input := range inputs {
+			byType[input.FindingType] = input
+		}
+		return byType
+	}
+	byType := analyze(map[string]any{"status": "read", "policies": []map[string]any{
+		{"name": "Admins", "precedence": 1, "minimum_password_length": 15, "complexity_enabled": true, "lockout_threshold": 5, "applies_to": []string{"Domain Admins"}},
+		{"name": "Service Accounts", "precedence": 10, "minimum_password_length": 6, "complexity_enabled": false, "reversible_encryption_enabled": true, "lockout_threshold": 0, "applies_to": []string{"Svc Group"}},
+	}})
+	if !strings.Contains(byType["ad_domain_policy_pso_inventory"].EvidenceJSON, "Admins (precedence 1, applies to Domain Admins): min length 15") {
+		t.Fatalf("inventory %+v", byType["ad_domain_policy_pso_inventory"])
+	}
+	weak := byType["ad_domain_policy_pso_weak"]
+	if weak.Severity != "high" || !strings.Contains(weak.EvidenceJSON, "Service Accounts → Svc Group: minimum length 6; complexity not required; no account lockout; passwords stored with reversible encryption") || strings.Contains(weak.EvidenceJSON, "Admins →") {
+		t.Fatalf("weak %+v", weak)
+	}
+	hidden := analyze(map[string]any{"status": "none_visible", "detail": "no PSO was returned"})
+	if len(hidden) != 1 || hidden["ad_domain_policy_pso_not_visible"].Severity != "informational" {
+		t.Fatalf("not visible %+v", hidden)
 	}
 }

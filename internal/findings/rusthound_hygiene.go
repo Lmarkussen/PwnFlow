@@ -609,7 +609,7 @@ func passwordPolicyFindings(ctx hygieneContext, object collectedObject, domain s
 		result = append(result, storage.FindingInput{
 			FindingKey: stableSourceKey(ctx.assessmentID, "rusthound-password-policy-"+detector, object.ID, detector), AssessmentID: ctx.assessmentID,
 			SourceTool: "RustHound-CE", SourceExecution: ctx.executionID, FindingType: "ad_domain_policy_" + detector,
-			Title: title + " (" + domain + ")", Description: description + " Fine-grained password policies may override the default for selected users or groups; they were not evaluated.",
+			Title: title + " (" + domain + ")", Description: description + " Fine-grained password policies may override the default for selected users or groups; the ones the credentials can read are reported separately.",
 			Severity: severity, Confidence: "observed-domain-default-policy", AffectedObjectID: object.ID, AffectedObject: domain, EvidenceJSON: string(encoded),
 			ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/" + field, ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
 		})

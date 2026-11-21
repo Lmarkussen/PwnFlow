@@ -11,10 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -75,7 +77,11 @@ type Report struct {
 	DSHeuristics  Setting        `json:"ds_heuristics"`
 	AnonymousLDAP Probe          `json:"anonymous_ldap"`
 	DNSZones      []DNSZone      `json:"dns_zones"`
-	Errors        []string       `json:"errors,omitempty"`
+	// PasswordSettings holds the fine-grained password policies (PSOs) the
+	// credentials can see. By default only Domain Admins can read them, so
+	// an empty list does not show that none exist.
+	PasswordSettings PasswordSettings `json:"password_settings"`
+	Errors           []string         `json:"errors,omitempty"`
 }
 
 type NamingContexts struct {
@@ -100,6 +106,30 @@ type Probe struct {
 	Endpoint    string `json:"endpoint,omitempty"`
 	UserObjects int    `json:"user_objects,omitempty"`
 	Detail      string `json:"detail,omitempty"`
+}
+
+// PasswordSettings is the result of reading the Password Settings Container.
+type PasswordSettings struct {
+	Status   string `json:"status"` // read, none_visible, error
+	Detail   string `json:"detail,omitempty"`
+	Policies []PSO  `json:"policies"`
+}
+
+// PSO is one fine-grained password policy. Durations are in minutes; -1
+// means forever or never, and a nil field was not returned.
+type PSO struct {
+	Name                  string   `json:"name"`
+	DN                    string   `json:"dn"`
+	Precedence            *int64   `json:"precedence,omitempty"`
+	MinimumLength         *int64   `json:"minimum_password_length,omitempty"`
+	History               *int64   `json:"password_history_length,omitempty"`
+	ComplexityEnabled     *bool    `json:"complexity_enabled,omitempty"`
+	ReversibleEncryption  *bool    `json:"reversible_encryption_enabled,omitempty"`
+	LockoutThreshold      *int64   `json:"lockout_threshold,omitempty"`
+	LockoutDurationMin    *int64   `json:"lockout_duration_minutes,omitempty"`
+	ObservationWindowMin  *int64   `json:"lockout_observation_window_minutes,omitempty"`
+	MaximumPasswordAgeDay *int64   `json:"maximum_password_age_days,omitempty"`
+	AppliesTo             []string `json:"applies_to"`
 }
 
 type DNSZone struct {
@@ -191,7 +221,88 @@ func Collect(ctx context.Context, runtime *modules.Runtime, dir directory) Repor
 	report.AnonymousLDAP = probeAnonymous(ctx, dir, report.NamingContext.Default)
 	report.DNSZones, report.Errors = readDNSZones(ctx, dir, report.NamingContext, report.Errors)
 	resolveNames(ctx, dir, report.NamingContext.Default, report.DNSZones)
+	report.PasswordSettings = readPasswordSettings(ctx, dir, report.NamingContext.Default)
 	return report
+}
+
+// readPasswordSettings reads the PSOs in the domain's Password Settings
+// Container.
+func readPasswordSettings(ctx context.Context, dir directory, base string) PasswordSettings {
+	attributes := []string{"name", "msDS-PasswordSettingsPrecedence", "msDS-MinimumPasswordLength", "msDS-PasswordHistoryLength",
+		"msDS-PasswordComplexityEnabled", "msDS-PasswordReversibleEncryptionEnabled", "msDS-LockoutThreshold",
+		"msDS-LockoutDuration", "msDS-LockoutObservationWindow", "msDS-MaximumPasswordAge", "msDS-PSOAppliesTo"}
+	request := ldap.NewSearchRequest("CN=Password Settings Container,CN=System,"+base, ldap.ScopeSingleLevel, ldap.NeverDerefAliases, 0, 0, false,
+		"(objectClass=msDS-PasswordSettings)", attributes, nil)
+	result, err := dir.Search(ctx, request)
+	settings := PasswordSettings{Policies: []PSO{}}
+	switch {
+	case err != nil && ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject):
+		settings.Status, settings.Detail = "none_visible", "the Password Settings Container was not returned"
+		return settings
+	case err != nil:
+		settings.Status, settings.Detail = "error", safeError(err)
+		return settings
+	case len(result.Entries) == 0:
+		settings.Status, settings.Detail = "none_visible", "no PSO was returned; by default only Domain Admins can read PSOs, so this does not show that none exist"
+		return settings
+	}
+	settings.Status = "read"
+	for _, entry := range result.Entries {
+		pso := PSO{Name: entry.GetAttributeValue("name"), DN: entry.DN, AppliesTo: []string{}}
+		pso.Precedence = ldapInt(entry, "msDS-PasswordSettingsPrecedence")
+		pso.MinimumLength = ldapInt(entry, "msDS-MinimumPasswordLength")
+		pso.History = ldapInt(entry, "msDS-PasswordHistoryLength")
+		pso.ComplexityEnabled = ldapBool(entry, "msDS-PasswordComplexityEnabled")
+		pso.ReversibleEncryption = ldapBool(entry, "msDS-PasswordReversibleEncryptionEnabled")
+		pso.LockoutThreshold = ldapInt(entry, "msDS-LockoutThreshold")
+		pso.LockoutDurationMin = ldapInterval(entry, "msDS-LockoutDuration", 600000000)
+		pso.ObservationWindowMin = ldapInterval(entry, "msDS-LockoutObservationWindow", 600000000)
+		pso.MaximumPasswordAgeDay = ldapInterval(entry, "msDS-MaximumPasswordAge", 864000000000)
+		for _, dn := range entry.GetAttributeValues("msDS-PSOAppliesTo") {
+			name := dn
+			if parsed, parseErr := ldap.ParseDN(dn); parseErr == nil && len(parsed.RDNs) > 0 && len(parsed.RDNs[0].Attributes) > 0 {
+				name = parsed.RDNs[0].Attributes[0].Value
+			}
+			pso.AppliesTo = append(pso.AppliesTo, name)
+		}
+		settings.Policies = append(settings.Policies, pso)
+	}
+	return settings
+}
+
+func ldapInt(entry *ldap.Entry, name string) *int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(entry.GetAttributeValue(name)), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &value
+}
+
+func ldapBool(entry *ldap.Entry, name string) *bool {
+	switch strings.ToUpper(strings.TrimSpace(entry.GetAttributeValue(name))) {
+	case "TRUE":
+		value := true
+		return &value
+	case "FALSE":
+		value := false
+		return &value
+	}
+	return nil
+}
+
+// ldapInterval converts a negative 100-nanosecond interval to whole units;
+// the minimum int64 (forever/never) and 0 for durations mean -1.
+func ldapInterval(entry *ldap.Entry, name string, unit int64) *int64 {
+	raw := ldapInt(entry, name)
+	if raw == nil {
+		return nil
+	}
+	if *raw == math.MinInt64 {
+		value := int64(-1)
+		return &value
+	}
+	value := -*raw / unit
+	return &value
 }
 
 func readDSHeuristics(ctx context.Context, dir directory, configuration string) Setting {

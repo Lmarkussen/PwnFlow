@@ -197,3 +197,26 @@ func TestModuleIsReadOnlyActiveDirectoryEnumeration(t *testing.T) {
 		t.Fatalf("output %s", module.OutputFile())
 	}
 }
+
+func TestReadPasswordSettings(t *testing.T) {
+	container := "CN=Password Settings Container,CN=System,DC=corp,DC=example"
+	dir := &fakeDirectory{entries: map[string][]*ldap.Entry{container: {ldap.NewEntry("CN=Service Accounts,"+container, map[string][]string{
+		"name": {"Service Accounts"}, "msDS-PasswordSettingsPrecedence": {"10"}, "msDS-MinimumPasswordLength": {"6"},
+		"msDS-PasswordComplexityEnabled": {"FALSE"}, "msDS-PasswordReversibleEncryptionEnabled": {"TRUE"}, "msDS-LockoutThreshold": {"0"},
+		"msDS-LockoutDuration": {"-18000000000"}, "msDS-MaximumPasswordAge": {"-9223372036854775808"},
+		"msDS-PSOAppliesTo": {"CN=Service Accounts,OU=Groups,DC=corp,DC=example"},
+	})}}}
+	settings := readPasswordSettings(context.Background(), dir, "DC=corp,DC=example")
+	if settings.Status != "read" || len(settings.Policies) != 1 {
+		t.Fatalf("%+v", settings)
+	}
+	pso := settings.Policies[0]
+	if *pso.MinimumLength != 6 || *pso.ComplexityEnabled || !*pso.ReversibleEncryption || *pso.LockoutThreshold != 0 || *pso.LockoutDurationMin != 30 || *pso.MaximumPasswordAgeDay != -1 || pso.AppliesTo[0] != "Service Accounts" {
+		t.Fatalf("pso %+v", pso)
+	}
+	// Without read access the container answers with no entries.
+	empty := readPasswordSettings(context.Background(), &fakeDirectory{entries: map[string][]*ldap.Entry{container: {}}}, "DC=corp,DC=example")
+	if empty.Status != "none_visible" || !strings.Contains(empty.Detail, "does not show that none exist") {
+		t.Fatalf("%+v", empty)
+	}
+}

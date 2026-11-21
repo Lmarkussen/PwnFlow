@@ -52,6 +52,19 @@ type directorySettingsReport struct {
 			Inherited bool     `json:"inherited"`
 		} `json:"aces"`
 	} `json:"dns_zones"`
+	PasswordSettings struct {
+		Status   string `json:"status"`
+		Detail   string `json:"detail"`
+		Policies []struct {
+			Name                 string   `json:"name"`
+			Precedence           *int64   `json:"precedence"`
+			MinimumLength        *int64   `json:"minimum_password_length"`
+			ComplexityEnabled    *bool    `json:"complexity_enabled"`
+			ReversibleEncryption *bool    `json:"reversible_encryption_enabled"`
+			LockoutThreshold     *int64   `json:"lockout_threshold"`
+			AppliesTo            []string `json:"applies_to"`
+		} `json:"policies"`
+	} `json:"password_settings"`
 }
 
 // directorySettingsArtifact maps the module's text output to the JSON
@@ -203,7 +216,81 @@ func AnalyzeDirectorySettings(ctx context.Context, artifactPath string, assessme
 			"Principals other than the built-in administrators and DnsAdmins can add or change records in these DNS zones. Confirm each delegation is intended; nested group membership was not expanded.",
 			"low", "/dns_zones", map[string]any{"account": fmt.Sprintf("%d principal(s)", len(principals)), "flag": "delegated DNS write", "affected_objects": affected}))
 	}
-	return result, nil
+	return append(result, passwordSettingsFindings(report, finding)...), nil
+}
+
+// passwordSettingsFindings reports the fine-grained password policies the
+// credentials could read: an inventory of what overrides the default policy
+// for whom, and the PSOs whose settings are weak. When none were visible it
+// says so, because by default only Domain Admins can read PSOs.
+func passwordSettingsFindings(report directorySettingsReport, finding func(detector, identity, typ, title, description, severity, ref string, evidence map[string]any) storage.FindingInput) []storage.FindingInput {
+	domain := strings.ToUpper(report.Domain)
+	settings := report.PasswordSettings
+	switch settings.Status {
+	case "none_visible":
+		return []storage.FindingInput{finding("pso-not-visible", domain, "ad_domain_policy_pso_not_visible",
+			fmt.Sprintf("Fine-grained password policies not visible with these credentials (%s)", domain),
+			"No password settings object (PSO) was returned from the Password Settings Container. By default only Domain Admins can read PSOs, so this does not show that none exist: accounts may have a weaker or stronger policy than the domain default reports.",
+			"informational", "/password_settings", map[string]any{"account": "PSOs not readable or none present", "flag": settings.Detail})}
+	case "read":
+	default:
+		return nil
+	}
+	var inventory, weak []string
+	high := false
+	for _, pso := range settings.Policies {
+		applies := strings.Join(pso.AppliesTo, ", ")
+		if applies == "" {
+			applies = "nobody"
+		}
+		precedence := "?"
+		if pso.Precedence != nil {
+			precedence = fmt.Sprint(*pso.Precedence)
+		}
+		var traits, problems []string
+		if pso.MinimumLength != nil {
+			traits = append(traits, fmt.Sprintf("min length %d", *pso.MinimumLength))
+			if *pso.MinimumLength < domainPolicyWeakMinimumThreshold {
+				problems = append(problems, fmt.Sprintf("minimum length %d", *pso.MinimumLength))
+			}
+		}
+		if pso.ComplexityEnabled != nil {
+			traits = append(traits, fmt.Sprintf("complexity %t", *pso.ComplexityEnabled))
+			if !*pso.ComplexityEnabled {
+				problems = append(problems, "complexity not required")
+			}
+		}
+		if pso.LockoutThreshold != nil {
+			traits = append(traits, fmt.Sprintf("lockout after %d", *pso.LockoutThreshold))
+			if *pso.LockoutThreshold == 0 {
+				problems = append(problems, "no account lockout")
+			}
+		}
+		if pso.ReversibleEncryption != nil && *pso.ReversibleEncryption {
+			traits = append(traits, "reversible encryption")
+			problems = append(problems, "passwords stored with reversible encryption")
+			high = true
+		}
+		inventory = append(inventory, fmt.Sprintf("%s (precedence %s, applies to %s): %s", pso.Name, precedence, applies, strings.Join(traits, ", ")))
+		if len(problems) > 0 {
+			weak = append(weak, fmt.Sprintf("%s → %s: %s", pso.Name, applies, strings.Join(problems, "; ")))
+		}
+	}
+	result := []storage.FindingInput{finding("pso-inventory", domain, "ad_domain_policy_pso_inventory",
+		fmt.Sprintf("Fine-grained password policies (%s)", domain),
+		fmt.Sprintf("%d password settings object(s) override the default domain policy for the users and groups they apply to; the PSO with the lowest precedence wins for an account.", len(inventory)),
+		"informational", "/password_settings", map[string]any{"account": fmt.Sprintf("%d PSO(s)", len(inventory)), "affected_objects": inventory})}
+	if len(weak) > 0 {
+		severity := "medium"
+		if high {
+			severity = "high"
+		}
+		result = append(result, finding("pso-weak", domain, "ad_domain_policy_pso_weak",
+			fmt.Sprintf("Weak fine-grained password policies (%s)", domain),
+			"These password settings objects give the accounts they apply to a weaker policy than recommended - short or simple passwords, no lockout against guessing, or passwords stored reversibly - regardless of the default domain policy. Group membership behind the listed groups was not expanded.",
+			severity, "/password_settings", map[string]any{"account": fmt.Sprintf("%d PSO(s)", len(weak)), "affected_objects": weak}))
+	}
+	return result
 }
 
 func hasZoneWrite(rights []string) bool {

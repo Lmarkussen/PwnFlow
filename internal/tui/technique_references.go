@@ -78,6 +78,7 @@ var (
 // references did not. findingTechniqueReference consults it last.
 var additionalTechniqueLinks = map[string][]techniqueLink{
 	// Anonymous access and enumeration.
+	"ad_domain_policy_pso_weak":                  {thrSpraying, toolKerbrute, mitreSpraying},
 	"ad_gpo_control_by_non_admin":                {thrGPO, toolPyGPOAbuse, toolGPOBackdoor, toolSharpGPOAbuse, mitreGPOModify},
 	"network_poisoning_name_resolution":          {thrLLMNR, thrWPAD, toolResponder, thrNTLMRelay, toolImpacket, mitreRelay},
 	"network_poisoning_ipv6_dhcpv6":              {thrDHCPv6, thrWPAD, toolMitm6, thrNTLMRelay, toolImpacket, mitreAiTM},
