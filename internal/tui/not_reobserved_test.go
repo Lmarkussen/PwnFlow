@@ -57,3 +57,19 @@ func TestFindingsFromRetiredModulesAreTreatedAsNotReobserved(t *testing.T) {
 		t.Fatalf("registered or unknown module flagged: %+v %+v", rows[1], rows[2])
 	}
 }
+
+func TestAdditionalTechniqueLinksAreWellFormed(t *testing.T) {
+	for typ, links := range additionalTechniqueLinks {
+		if len(links) == 0 {
+			t.Errorf("%s has an empty link list", typ)
+		}
+		for _, link := range links {
+			if strings.TrimSpace(link.Label) == "" || !strings.HasPrefix(link.URL, "https://") || strings.ContainsAny(link.URL, " \n") {
+				t.Errorf("%s has a malformed link %+v", typ, link)
+			}
+		}
+	}
+	if got := findingTechniqueReference(storage.Finding{FindingInput: storage.FindingInput{FindingType: "smb_webclient_service_running"}}); !strings.Contains(got, "https://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/webclient") {
+		t.Fatalf("detail view does not use the additional links: %q", got)
+	}
+}

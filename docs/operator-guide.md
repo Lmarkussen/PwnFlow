@@ -79,9 +79,11 @@ Findings as a Markdown report to `results/<domain>/reports/`, named with the
 UTC generation time, and prints its path. It reads the database only and never
 starts a module. The report holds a severity summary, the Confirmed and
 Potential Critical paths with what was observed and what was not verified, and
-a collection-gap section, a fix list that groups Findings by remediation
-action (ordered by the most severe Finding each action resolves), and every
-Finding grouped by the same categories as the Findings browser, with
+a collection-gap section, and every Finding grouped by the same categories as
+the Findings browser, each with the technique references shown under
+`TECHNIQUES` in the detail view (write-ups such as The Hacker Recipes and
+Misconfiguration Manager, the tools that perform the technique, and the MITRE
+ATT&CK entry), with
 evidence references relative to the results directory. Evidence JSON is not
 copied: recovered secrets, such as GPP passwords, stay in the evidence store and
 the original artifacts. Findings that were not re-observed are listed in an

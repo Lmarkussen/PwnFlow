@@ -130,29 +130,18 @@ func TestFindingsViewReportKeyWritesReport(t *testing.T) {
 	}
 }
 
-func TestReportFixListGroupsByAction(t *testing.T) {
-	finding := func(typ, title, severity string) storage.Finding {
-		return storage.Finding{FindingInput: storage.FindingInput{FindingType: typ, Title: title, Severity: severity, SourceTool: "fixture", ArtifactPath: "a", ArtifactRef: "r", EvidenceJSON: "{}"}}
+func TestReportListsTechniqueLinks(t *testing.T) {
+	finding := storage.Finding{FindingInput: storage.FindingInput{FindingType: "smb_spooler_service_running", Title: "Print Spooler reachable: DC01", Severity: "medium", SourceTool: "NetExec (nxc)", ArtifactPath: "a", ArtifactRef: "r", EvidenceJSON: "{}"}}
+	report := RenderReport([]storage.Finding{finding}, nil, "corp.example", "192.0.2.10", "", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	for _, want := range []string{
+		"  - Technique: [Coercer](https://github.com/p0dalirius/Coercer)",
+		"  - Technique: [MITRE ATT&CK T1187 — Forced Authentication](https://attack.mitre.org/techniques/T1187/)",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
 	}
-	report := RenderReport([]storage.Finding{
-		finding("smb_signing_not_required", "SMB signing not required: WS01", "medium"),
-		finding("smb_signing_not_required", "SMB signing not required: WS02", "medium"),
-		finding("smb_signing_policy_not_required", "SMB server signing explicitly not required by policy", "medium"),
-		finding("netexec_gpp_password_exposure", "Recoverable Password Stored in Group Policy Preferences", "high"),
-		finding("ad_trust_none_observed", "No domain trusts observed", "informational"),
-	}, nil, "corp.example", "192.0.2.10", "", time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
-	start := strings.Index(report, "## Fix list (2)")
-	if start < 0 {
-		t.Fatalf("fix list missing:\n%s", report)
-	}
-	section := report[start:strings.Index(report, "## Findings by category")]
-	gpp := strings.Index(section, "1. **Remove GPP passwords** (up to HIGH, 1 Finding(s))")
-	smb := strings.Index(section, "2. **Require SMB signing** (up to MEDIUM, 3 Finding(s))")
-	// Three SMB Findings fit the three listed examples, so no "… and N more" line.
-	if gpp < 0 || smb < 0 || gpp > smb || strings.Contains(section, "… and") {
-		t.Fatalf("fix list grouping or order wrong:\n%s", section)
-	}
-	if !strings.Contains(report, "  - Fix: Enable 'Microsoft network server: Digitally sign communications (always)'") {
-		t.Fatalf("per-Finding fix line missing:\n%s", report)
+	if strings.Contains(report, "Fix list") || strings.Contains(report, "Fix:") {
+		t.Fatalf("report still contains remediation:\n%s", report)
 	}
 }

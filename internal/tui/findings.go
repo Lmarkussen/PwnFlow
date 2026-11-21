@@ -2906,7 +2906,7 @@ func findingTechniqueReference(finding storage.Finding) string {
 	if isGeneralACLInventory(finding) || strings.HasPrefix(strings.ToLower(finding.FindingType), "ad_acl_") {
 		return "The Hacker Recipes — DACL Abuse\nhttps://legacy.thehacker.recipes/a-d/movement/dacl\nBloodHound — GenericAll edge\nhttps://bloodhound.readthedocs.io/en/latest/data-analysis/edges.html"
 	}
-	return ""
+	return additionalTechniqueReference(finding.FindingType)
 }
 
 func certipyTechniqueReference(finding storage.Finding, typ string) string {
