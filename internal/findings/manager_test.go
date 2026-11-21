@@ -142,8 +142,10 @@ func TestDetectionCatalogueDeclaresUnsupportedProtocolChecks(t *testing.T) {
 	for _, item := range catalogue {
 		if item.ID == "protocol.ldap-signing" {
 			found = true
-			if item.Supported {
-				t.Fatal("LDAP signing must remain unsupported without explicit evidence")
+			// Explicit evidence is the configured Group Policy value; the
+			// NetExec banner observation has its own tool-reported entry.
+			if !item.Supported || item.Source != "gpoParser" || item.Confidence != "policy-configured" {
+				t.Fatalf("LDAP signing must be backed by explicit policy evidence: %+v", item)
 			}
 		}
 	}

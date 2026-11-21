@@ -75,6 +75,7 @@ var findingSubcategoryOrder = map[string][]struct{ Key, Name, Description string
 	"network": {
 		{"smb", "SMB Security", "SMB signing, SMBv1 and anonymous or guest session conditions"},
 		{"ldap", "LDAP Security", "LDAP signing and channel-binding conditions"},
+		{"ntlm_policy", "NTLM & Authentication Policy", "LM/NTLMv1, LM hash and WDigest settings configured by Group Policy"},
 		{"relay", "Relay Exposure", "Explicit relay-path evidence"},
 		{"mssql", "MSSQL Security", "MSSQL configuration and relationship observations"},
 		{"port_discovery", "Port Discovery", "Masscan open-port observations"},
@@ -154,7 +155,7 @@ func findingCategoryKey(finding storage.Finding) string {
 		return "pwntools"
 	case strings.HasPrefix(typ, "netexec_auth_"), strings.HasPrefix(typ, "netexec_privileged_"):
 		return "authentication"
-	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"):
+	case strings.HasPrefix(typ, "relay_") || strings.EqualFold(source, "relayking"), strings.HasPrefix(typ, "smb_"), strings.HasPrefix(typ, "ldap_"), strings.HasPrefix(typ, "ntlm_policy_"):
 		return "network"
 	case strings.EqualFold(source, "certipy") && strings.HasPrefix(typ, "certificate_"):
 		return "adcs"
@@ -177,6 +178,8 @@ func findingSubcategoryKey(finding storage.Finding) string {
 		return "domain_configuration"
 	case strings.HasPrefix(typ, "ad_trust_"):
 		return "trusts"
+	case strings.HasPrefix(typ, "ntlm_policy_"):
+		return "ntlm_policy"
 	case strings.HasPrefix(typ, "ad_writable_object_"):
 		return "ad_writable_objects"
 	case strings.HasPrefix(typ, "ad_protected_accounts_"):

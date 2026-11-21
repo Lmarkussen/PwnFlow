@@ -443,6 +443,15 @@ func potentialHygienePaths(row storage.Finding, metadata map[string]any, typ str
 			"a broad principal holds write rights on the DNS zone object",
 			"record changes, name resolution by victims and any follow-on relay are not verified",
 			"Any domain account can change existing records in this zone and redirect clients.")
+	case "ldap_signing_policy_not_required", "ldap_channel_binding_policy_not_required":
+		capability := "LDAP signing not required by policy"
+		if typ == "ldap_channel_binding_policy_not_required" {
+			capability = "LDAPS channel binding not required by policy"
+		}
+		return path("ntlm_relay", "", cpFirstString(metadata, "scope_dn", "scope"), "domain controllers (Group Policy)", capability,
+			"Group Policy linked to the Domain Controllers OU configures "+strings.ToLower(capability),
+			"WMI and security filtering, the hosts' registry, coercion, relayable privileged authentication and a successful relay are not verified",
+			"Relaying NTLM to LDAP on a domain controller is a known route to privileged directory changes when the policy does not require signing or channel binding.")
 	case "ldap_signing_not_enforced", "ldap_channel_binding_not_enforced":
 		capability := "LDAP signing not enforced"
 		if typ == "ldap_channel_binding_not_enforced" {

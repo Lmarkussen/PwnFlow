@@ -35,6 +35,10 @@ func TestHygieneFindingRouting(t *testing.T) {
 		{"ad_domain_config_anonymous_ldap_read", "Unauthenticated LDAP search answered (CORP.EXAMPLE)", "active_directory", "domain_configuration"},
 		{"smb_null_session_enumeration", "Anonymous SMB enumeration: DC01", "network", "smb"},
 		{"smb_v1_enabled", "SMBv1 enabled: DC01", "network", "smb"},
+		// Group Policy security options.
+		{"ldap_signing_policy_not_required", "LDAP signing not required by policy (Domain Controllers)", "network", "ldap"},
+		{"smb_signing_policy_not_required", "SMB server signing explicitly not required by policy (domain root)", "network", "smb"},
+		{"ntlm_policy_wdigest_enabled", "WDigest credential caching enabled by policy (domain root)", "network", "ntlm_policy"},
 		// Existing routing is unchanged.
 		{"ad_account_passwd_notreqd", "Password Not Required Account", "active_directory", "account_security"},
 		{"ad_domain_policy_password_policy_snapshot", "Domain Password Policy Snapshot", "active_directory", "domain_security_policy"},

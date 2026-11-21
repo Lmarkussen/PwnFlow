@@ -267,6 +267,9 @@ func parseGPO(data []byte, path string, assessmentID, executionID int64, now tim
 			}
 		}
 		walk(structured, "", nil)
+		if document, ok := structured.(map[string]any); ok {
+			findings = append(findings, gpoSecurityOptionFindings(document, path, assessmentID, executionID, now)...)
+		}
 		return findings, nil
 	}
 	var findings []storage.FindingInput

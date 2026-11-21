@@ -96,6 +96,7 @@ func TestProjectCriticalDirectoryHygiene(t *testing.T) {
 		row(9, "NetExec (nxc)", "ldap_signing_not_enforced", "medium", `{"target":"192.0.2.10","host":"DC01"}`),
 		row(10, "AD Directory Settings", "ad_domain_config_dns_record_creation", "medium", `{"zones":[]}`),
 		row(11, "NetExec (nxc)", "smb_null_session_enumeration", "high", `{"users_enumerated":5}`),
+		row(13, "gpoParser", "ldap_signing_policy_not_required", "medium", `{"scope_dn":"OU=DOMAIN CONTROLLERS,DC=CORP,DC=EXAMPLE"}`),
 	}
 	projection := ProjectCritical(rows)
 	if len(projection.Confirmed) != 1 || projection.Confirmed[0].Family != "credential_exposure" {
@@ -108,13 +109,13 @@ func TestProjectCriticalDirectoryHygiene(t *testing.T) {
 			t.Fatalf("%s lost its unverified prerequisites", path.Family)
 		}
 	}
-	want := map[string]int{"credential_exposure": 1, "sid_history": 1, "trust": 1, "ntlm_relay": 2}
+	want := map[string]int{"credential_exposure": 1, "sid_history": 1, "trust": 1, "ntlm_relay": 3}
 	for family, count := range want {
 		if families[family] != count {
 			t.Fatalf("family %s has %d potential paths, want %d (all %v)", family, families[family], count, families)
 		}
 	}
-	if len(projection.Potential) != 5 {
+	if len(projection.Potential) != 6 {
 		t.Fatalf("delegated LAPS/gMSA readers, ordinary sIDHistory, default DNS record creation or anonymous enumeration entered the projection: %v", families)
 	}
 
