@@ -519,8 +519,26 @@ print(v["commit_id"])
 ' 2>/dev/null
 }
 
-verify_enum_cve() {
-  local executable="$1" revision="$2" listing version line found=0 version_status=0
+# NetExec modules PwnFlow runs, as protocol:module. Every one must be listed
+# (and not [REMOVED]) by `nxc <protocol> -L` before a build is accepted.
+# TestInstallerNetExecModulesMatchRegistry keeps this list equal to the
+# module registry.
+PWNFLOW_NETEXEC_MODULES=(
+  ldap:adcs ldap:daclread ldap:dns-nonsecure ldap:dump-computers
+  ldap:entra-id ldap:find-computer ldap:get-desc-users ldap:get-info-users
+  ldap:get-network ldap:get-unixUserPassword ldap:get-userPassword
+  ldap:groupmembership ldap:laps ldap:maq ldap:obsolete ldap:sccm
+  ldap:subnets ldap:whoami mssql:enum_impersonate mssql:enum_links
+  mssql:enum_logins smb:aws-credentials smb:bitlocker smb:enum_av
+  smb:enum_ca smb:enum_dns smb:enum_interfaces smb:get_netconnections
+  smb:gpp_autologin smb:gpp_password smb:gpp_privileges smb:hyperv-host
+  smb:install_elevated smb:ioxidresolver smb:keepass_discover
+  smb:lockscreendoors smb:ntlmv1 smb:presence smb:reg-query smb:runasppl
+  smb:sccm-recon6 smb:spider_plus smb:spooler smb:uac smb:wcc smb:webdav
+)
+
+verify_netexec() {
+  local executable="$1" revision="$2" listing version line found=0 version_status=0 entry
   if ! "${executable}" --help >/dev/null 2>&1; then
     echo "NetExec startup verification failed: revision=${revision}, executable=${executable}" >&2
     return 1
@@ -534,18 +552,38 @@ verify_enum_cve() {
     echo "NetExec version verification failed: exit=${version_status}, revision=${revision}, executable=${executable}" >&2
     return 1
   fi
-  if ! listing="$("${executable}" smb -L 2>&1)"; then
-    echo "NetExec SMB discovery failed: revision=${revision}, executable=${executable}" >&2
+  local protocol module missing=() protocols=()
+  for entry in "${PWNFLOW_NETEXEC_MODULES[@]}"; do
+    protocol="${entry%%:*}"
+    [[ " ${protocols[*]} " == *" ${protocol} "* ]] || protocols+=("${protocol}")
+  done
+  for protocol in "${protocols[@]}"; do
+    if ! listing="$("${executable}" "${protocol}" -L 2>&1)"; then
+      echo "NetExec ${protocol} module discovery failed: revision=${revision}, executable=${executable}" >&2
+      return 1
+    fi
+    # An old NetExec workspace database makes `-L` print a schema warning
+    # instead of the modules. That is local state, not a missing module, so
+    # the protocol is reported and skipped, as PwnFlow's own probe does.
+    if [[ "${listing}" == *"Schema mismatch detected"* ]]; then
+      echo "NetExec ${protocol} workspace database has an old schema; its modules were not checked. NetExec's advice:" >&2
+      grep -E '^\[-\] (Optionally|Then)' <<< "${listing}" >&2 || true
+      continue
+    fi
+    for entry in "${PWNFLOW_NETEXEC_MODULES[@]}"; do
+      [[ "${entry%%:*}" == "${protocol}" ]] || continue
+      module="${entry#*:}" found=0
+      while IFS= read -r line; do
+        if [[ "${line}" =~ ^[[:space:]]*\[\*\][[:space:]]+([^[:space:]]+)([[:space:]]|$) && "${BASH_REMATCH[1]}" == "${module}" && "${line}" != *'[REMOVED]'* ]]; then found=1; break; fi
+      done <<< "${listing}"
+      [[ ${found} -eq 1 ]] || missing+=("${entry}")
+    done
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "NetExec modules unavailable: ${missing[*]}; revision=${revision}, executable=${executable}" >&2
     return 1
   fi
-  while IFS= read -r line; do
-    if [[ "${line}" =~ ^[[:space:]]*\[\*\][[:space:]]+enum_cve[[:space:]] && "${line}" != *'[REMOVED]'* ]]; then found=1; fi
-  done <<< "${listing}"
-  if [[ ${found} -ne 1 ]]; then
-    echo "NetExec enum_cve unavailable: revision=${revision}, executable=${executable}" >&2
-    return 1
-  fi
-  echo "NetExec verified: executable=${executable}, revision=${revision}, version=${version}; enum_cve available"
+  echo "NetExec verified: executable=${executable}, revision=${revision}, version=${version}; all ${#PWNFLOW_NETEXEC_MODULES[@]} PwnFlow modules available"
 }
 
 activate_netexec() {
@@ -600,7 +638,7 @@ install_netexec() {
     for alternative in "${alternatives[@]}"; do
       [[ "${alternative}" == /* && -x "${alternative}" && "${alternative}" != "${current}" ]] || continue
       alternative_revision="$(netexec_revision "${alternative}")" || continue
-      if [[ "${alternative_revision}" == "${desired}" ]] && verify_enum_cve "${alternative}" "${alternative_revision}"; then
+      if [[ "${alternative_revision}" == "${desired}" ]] && verify_netexec "${alternative}" "${alternative_revision}"; then
         echo "Found current official NetExec outside active PATH: ${alternative}"
         current="${alternative}"
         installed="${alternative_revision}"
@@ -608,7 +646,7 @@ install_netexec() {
       fi
     done
   fi
-  if [[ "${installed}" == "${desired}" ]] && verify_enum_cve "${current}" "${installed}"; then
+  if [[ "${installed}" == "${desired}" ]] && verify_netexec "${current}" "${installed}"; then
     if [[ -n "${PWNFLOW_NETEXEC:-}" ]]; then
       netexec_selected="${current}"
       echo "PwnFlow selected explicit NetExec: ${current}"
@@ -641,7 +679,7 @@ install_netexec() {
     return 1
   fi
   installed="$(netexec_revision "${candidate}/bin/nxc")" || installed="unknown"
-  if [[ "${installed}" != "${desired}" ]] || ! verify_enum_cve "${candidate}/bin/nxc" "${installed}"; then
+  if [[ "${installed}" != "${desired}" ]] || ! verify_netexec "${candidate}/bin/nxc" "${installed}"; then
     echo "NetExec verification failed: requested=${desired}, installed=${installed}, executable=${candidate}/bin/nxc; no activation." >&2
     printf '%s\n' "Verification failed: ${desired}" > "${root}/last-update-error"
     rm -rf -- "${candidate}"

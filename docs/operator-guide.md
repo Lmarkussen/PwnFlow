@@ -575,8 +575,12 @@ A candidate is installed from the official Git URL at the exact resolved commit
 in `NetExec/versions/<SHA>.<unique-id>` under the configured tools root. Python
 package `direct_url.json` must identify the official repository, Git VCS and
 exact commit. The candidate executable is invoked by its own full path for
-`--help`, `--version`, and `smb -L`; the listing must succeed and contain an
-active `enum_cve`, not a `[REMOVED]` entry. A version string alone is insufficient.
+`--help`, `--version`, and `nxc <protocol> -L` for SMB, LDAP and MSSQL; every
+NetExec module PwnFlow runs (`PWNFLOW_NETEXEC_MODULES` in `install.sh`, kept equal
+to the module registry by a test) must be listed and not marked `[REMOVED]`. A
+version string alone is insufficient. A listing that only reports an old NetExec
+workspace database schema is warned about and that protocol is skipped, since
+it is local state rather than a missing module.
 
 Upstream currently intentionally exits with status 1 after printing its valid
 version banner. The installer reports this compatibility note and accepts only

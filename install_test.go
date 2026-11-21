@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/pwnflow/pwnflow/internal/modules/netexec"
 )
 
 // The standalone installer is a repository-root file: that is the documented,
@@ -270,7 +273,7 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 	bin := t.TempDir()
 	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'ii  9.8.0~rc3-0kali1'`)
@@ -314,7 +317,7 @@ func TestInstallerDefaultChecksAllSupportedDependencies(t *testing.T) {
 func TestInstallerSkipsExistingNetExecWithoutAPT(t *testing.T) {
 	bin := t.TempDir()
 	mockNetExecUpstream(t, bin, true)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then echo working; exit 0; fi`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then echo working; exit 0; fi`)
 	writeExecutable(t, bin, "apt-get", `echo apt-should-not-run >&2; exit 99`)
 	output, err := runInstaller(t, bin, "--with-netexec")
 	if err != nil || !strings.Contains(output, "NetExec: Already current") {
@@ -452,7 +455,7 @@ func TestInstallerRejectsUnsupportedDistribution(t *testing.T) {
 func TestInstallerInstallsMissingGoAndMakeThenVerifiesThem(t *testing.T) {
 	bin := t.TempDir()
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "masscan", `if [ "$1" = "--version" ]; then echo 'masscan 1.3.2'; exit 0; fi; exit 1`)
@@ -478,7 +481,7 @@ func TestInstallerRejectsOldGoWithoutReplacingIt(t *testing.T) {
 	installSCCMToolLayouts(t, bin)
 	writeExecutable(t, bin, "go", `if [ "$1" = "version" ]; then echo 'go version go1.21.13 linux/amd64'; exit 0; fi`)
 	writeExecutable(t, bin, "make", `if [ "$1" = "--version" ]; then echo 'GNU Make 4.4'; exit 0; fi`)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then exit 0; fi; if [ "$1" = "--version" ]; then echo fake-nxc; exit 0; fi; exit 1`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "dpkg-query", `printf '%s\n' 'install ok installed'`)
@@ -544,7 +547,7 @@ func TestInstallerNeverInstallsOrStartsBloodHound(t *testing.T) {
 	bin := t.TempDir()
 	writeBuildToolMocks(t, bin)
 	installSCCMToolLayouts(t, bin)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeExecutable(t, bin, "rusthound-ce", `if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeCertipyADCSMock(t, bin, "certipy-ad")
 	writeExecutable(t, bin, "systemctl", `echo systemctl-should-not-run >&2; exit 99`)
@@ -1038,7 +1041,7 @@ func TestInstallerCertipyInstallRequiresApproval(t *testing.T) {
 func TestInstallerSkipsCertipyUnlessRequested(t *testing.T) {
 	bin := t.TempDir()
 	mockNetExecUpstream(t, bin, true)
-	writeExecutable(t, bin, "nxc", `if [ "$1" = "smb" ] && [ "$2" = "-L" ]; then echo "[*] enum_cve supported"; exit 0; fi; if [ "$1" = "--help" ]; then exit 0; fi`)
+	writeExecutable(t, bin, "nxc", mockNetExecListing()+`if [ "$1" = "--help" ]; then exit 0; fi`)
 	writeFailingPackageManagerMocks(t, bin)
 	output, err := runInstaller(t, bin, "--with-netexec")
 	if err != nil {
@@ -1383,13 +1386,13 @@ func TestInstallerBloodyADExistingDetailIdempotent(t *testing.T) {
 		}
 	}
 }
-func TestInstallerReportsMissingEnumCVE(t *testing.T) {
+func TestInstallerReportsMissingNetExecModules(t *testing.T) {
 	bin := t.TempDir()
 	mockNetExecUpstream(t, bin, false)
-	t.Setenv("MOCK_ENUM_CVE", "missing")
+	t.Setenv("MOCK_NETEXEC_MODULES", "missing")
 	writeExecutable(t, bin, "nxc", `echo 'old NetExec'; exit 0`)
 	output, err := runInstaller(t, bin, "--with-netexec")
-	if err == nil || !strings.Contains(output, "enum_cve unavailable") {
+	if err == nil || !strings.Contains(output, "NetExec modules unavailable") {
 		t.Fatalf("%v %s", err, output)
 	}
 }
@@ -1461,9 +1464,14 @@ exit 1`
 	nxcBody := `case "$*" in
  --help) exit 0;;
  --version) echo "${MOCK_NETEXEC_VERSION:-1.5.1 - mock-upstream - aaaaaaaa}"; exit "${MOCK_NETEXEC_VERSION_EXIT:-0}";;
- "smb -L") [ "$MOCK_ENUM_CVE" = missing ] && { echo '[*] enum_av only'; exit 0; }; [ "$MOCK_ENUM_CVE" = removed ] && { echo '[*] enum_cve [REMOVED]'; exit 0; }; [ "$MOCK_ENUM_CVE" = failure ] && exit 1; echo '[*] enum_cve Registry checks'; exit 0;;
- esac
-exit 1`
+  esac
+if [ "$2" = "-L" ]; then
+ [ "$MOCK_NETEXEC_MODULES" = failure ] && exit 1
+ if [ "$MOCK_NETEXEC_MODULES" = missing ] && [ "$1" = smb ]; then echo '[*] enum_av only'; exit 0; fi
+ if [ "$MOCK_NETEXEC_MODULES" = schema ] && [ "$1" = mssql ]; then echo "[-] Schema mismatch detected for table 'hosts' in protocol 'MSSQL'"; echo "[-] Then remove the MSSQL DB (rm -f mssql.db) and run nxc to initialize the new DB"; exit 0; fi
+ if [ "$MOCK_NETEXEC_MODULES" = removed ] && [ "$1" = smb ]; then echo '[*] spooler               [REMOVED] integrated elsewhere'; exit 0; fi
+fi
+` + mockNetExecListing() + `exit 1`
 	writeExecutable(t, templates, "python", pythonBody)
 	writeExecutable(t, templates, "nxc", nxcBody)
 	t.Setenv("MOCK_NETEXEC_TEMPLATE", templates)
@@ -1528,7 +1536,7 @@ func TestNetExecLatestUpstreamPolicy(t *testing.T) {
 			if err != nil || strings.TrimSpace(string(revision)) != mockNetExecSHA {
 				t.Fatalf("%s %v", revision, err)
 			}
-			if !strings.Contains(output, "enum_cve available") || !strings.Contains(output, filepath.Join(root, "current", "bin", "nxc")) {
+			if !strings.Contains(output, "PwnFlow modules available") || !strings.Contains(output, filepath.Join(root, "current", "bin", "nxc")) {
 				t.Fatal(output)
 			}
 			output, err = runInstaller(t, bin, "--with-netexec")
@@ -1558,11 +1566,11 @@ func TestNetExecUpgradeRollbackAndFailures(t *testing.T) {
 			case "pip":
 				t.Setenv("MOCK_UPDATE_FAIL", "1")
 			case "missing-module":
-				t.Setenv("MOCK_ENUM_CVE", "missing")
+				t.Setenv("MOCK_NETEXEC_MODULES", "missing")
 			case "removed-module":
-				t.Setenv("MOCK_ENUM_CVE", "removed")
+				t.Setenv("MOCK_NETEXEC_MODULES", "removed")
 			case "listing":
-				t.Setenv("MOCK_ENUM_CVE", "failure")
+				t.Setenv("MOCK_NETEXEC_MODULES", "failure")
 			case "offline":
 				t.Setenv("MOCK_UPSTREAM_OFFLINE", "1")
 			}
@@ -1575,6 +1583,9 @@ func TestNetExecUpgradeRollbackAndFailures(t *testing.T) {
 			} else {
 				if err == nil || active != original || !strings.Contains(output, "NetExec: Failed") {
 					t.Fatalf("failed update activated or misreported: %v %s", err, output)
+				}
+				if failure == "removed-module" && !strings.Contains(output, "smb:spooler") {
+					t.Fatalf("removed module not named: %s", output)
 				}
 				entries, _ := os.ReadDir(filepath.Join(root, "versions"))
 				if len(entries) != 1 {
@@ -1614,7 +1625,7 @@ func TestNetExecOfficialGitProvenance(t *testing.T) {
 	}
 	source := string(data)
 	start := strings.Index(source, "netexec_revision() {")
-	end := strings.Index(source[start:], "\nverify_enum_cve()") + start
+	end := strings.Index(source[start:], "\nverify_netexec()") + start
 	function := source[start:end]
 	for _, official := range []bool{true, false} {
 		t.Run(fmt.Sprint(official), func(t *testing.T) {
@@ -1745,5 +1756,80 @@ func TestNetExecCurrentPipxShadowedByDistribution(t *testing.T) {
 	data, _ := os.ReadFile(os.Getenv("MOCK_NETEXEC_LOG"))
 	if strings.Contains(string(data), "pip install") {
 		t.Fatalf("duplicated current environment: %s", data)
+	}
+}
+
+// pwnflowNetExecModules returns the registry's `-M` modules as sorted
+// "protocol:module" entries, the form install.sh lists them in.
+func pwnflowNetExecModules() []string {
+	seen := map[string]bool{}
+	var result []string
+	for _, registered := range netexec.RegisteredModules() {
+		module, ok := registered.(netexec.Module)
+		if !ok || module.ModuleName() == "" {
+			continue
+		}
+		entry := strings.ToLower(string(module.Protocol())) + ":" + module.ModuleName()
+		if !seen[entry] {
+			seen[entry] = true
+			result = append(result, entry)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+// mockNetExecListing is a shell fragment that answers `nxc <protocol> -L`
+// with every module PwnFlow needs for that protocol.
+func mockNetExecListing() string {
+	byProtocol := map[string][]string{}
+	for _, entry := range pwnflowNetExecModules() {
+		protocol, module, _ := strings.Cut(entry, ":")
+		byProtocol[protocol] = append(byProtocol[protocol], fmt.Sprintf("[*] %-24s mock module", module))
+	}
+	var b strings.Builder
+	b.WriteString(`if [ "$2" = "-L" ]; then case "$1" in `)
+	protocols := make([]string, 0, len(byProtocol))
+	for protocol := range byProtocol {
+		protocols = append(protocols, protocol)
+	}
+	sort.Strings(protocols)
+	for _, protocol := range protocols {
+		fmt.Fprintf(&b, "%s) printf '%%s\\n' '%s';; ", protocol, strings.Join(byProtocol[protocol], "' '"))
+	}
+	b.WriteString("esac; exit 0; fi; ")
+	return b.String()
+}
+
+// The installer must accept a NetExec build only if it offers every module
+// PwnFlow runs, so its list has to stay equal to the module registry.
+func TestInstallerNetExecModulesMatchRegistry(t *testing.T) {
+	data, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	start := strings.Index(source, "PWNFLOW_NETEXEC_MODULES=(")
+	if start < 0 {
+		t.Fatal("install.sh has no PWNFLOW_NETEXEC_MODULES list")
+	}
+	end := strings.Index(source[start:], "\n)") + start
+	listed := strings.Fields(source[start+len("PWNFLOW_NETEXEC_MODULES=(") : end])
+	sort.Strings(listed)
+	want := pwnflowNetExecModules()
+	if strings.Join(listed, " ") != strings.Join(want, " ") {
+		t.Fatalf("install.sh PWNFLOW_NETEXEC_MODULES differs from the registry:\n got: %v\nwant: %v", listed, want)
+	}
+}
+
+// An old NetExec workspace database is local state: the installer reports
+// it and does not reject the build as missing modules.
+func TestInstallerToleratesOldNetExecWorkspaceSchema(t *testing.T) {
+	bin := t.TempDir()
+	mockNetExecUpstream(t, bin, false)
+	t.Setenv("MOCK_NETEXEC_MODULES", "schema")
+	output, err := runInstaller(t, bin, "--with-netexec")
+	if err != nil || !strings.Contains(output, "mssql workspace database has an old schema") || !strings.Contains(output, "PwnFlow modules available") {
+		t.Fatalf("%v %s", err, output)
 	}
 }

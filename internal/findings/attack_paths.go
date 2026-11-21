@@ -101,6 +101,20 @@ func attackChainPaths(rows []storage.Finding) []CriticalPath {
 		}
 	}
 
+	// Register a name through ADIDNS and relay the authentication it attracts.
+	if dns, ok := first("ad_domain_config_dns_record_creation", "ad_domain_config_dns_zone_broad_write", "ad_domain_config_dns_nonsecure_updates"); ok {
+		if relayStep, relayOK := adidnsRelayStep(byType); relayOK {
+			paths = append(paths, attackChain("adidns-spoof-relay", "Spoof a name through ADIDNS and relay the authentication it attracts", dns.AffectedObject,
+				[]attackChainStep{
+					{"Register a DNS record in " + dns.AffectedObject + " (a wildcard, or a stale host name clients still look up) that points to the operator's host", dns},
+					{"Receive the NTLM authentication of clients that resolve the name and connect over SMB or HTTP", dns},
+					relayStep,
+				},
+				[]string{"clients actually look up the registered name (WPAD and ISATAP are on the DNS server's global query block list by default)", "the relayed account has rights worth using on the relay target", "relay succeeds from the operator's position"},
+				"Any domain account could add DNS records and a relay target that accepts NTLM was observed; spoofed names make clients authenticate to the operator, whose relay reaches that target."))
+		}
+	}
+
 	// Recovered or readable credentials of a privileged account.
 	privileged := privilegedAccountNames(byType)
 	for _, typ := range []string{"netexec_gpp_password_exposure", "ad_account_password_attribute_readable", "sccm_task_sequence_credentials_exposed"} {
@@ -120,6 +134,30 @@ func attackChainPaths(rows []storage.Finding) []CriticalPath {
 		}
 	}
 	return paths
+}
+
+// adidnsRelayStep picks the strongest observed relay target for captured
+// authentication: AD CS web enrollment, then LDAP without signing or channel
+// binding, then SMB without signing.
+func adidnsRelayStep(byType map[string][]storage.Finding) (attackChainStep, bool) {
+	if list := byType["adcs_esc_esc8"]; len(list) > 0 {
+		return attackChainStep{"Relay it to the HTTP web enrollment endpoint of " + list[0].AffectedObject + " and enroll a certificate as the relayed account", list[0]}, true
+	}
+	for _, typ := range []string{"ldap_signing_policy_not_required", "ldap_signing_not_enforced", "ldap_channel_binding_policy_not_required", "ldap_channel_binding_not_enforced"} {
+		if list := byType[typ]; len(list) > 0 {
+			return attackChainStep{"Relay HTTP authentication to LDAP on a domain controller that does not require signing or channel binding and act on the directory as the relayed account", list[0]}, true
+		}
+	}
+	for _, typ := range []string{"smb_signing_not_required", "smb_signing_policy_not_required"} {
+		if list := byType[typ]; len(list) > 0 {
+			target := list[0].AffectedObject
+			if others := len(list) - 1; others > 0 {
+				target += fmt.Sprintf(" (and %d other host(s))", others)
+			}
+			return attackChainStep{"Relay it to SMB on " + target + ", which does not require signing", list[0]}, true
+		}
+	}
+	return attackChainStep{}, false
 }
 
 // attackChain builds one stitched path from its steps.

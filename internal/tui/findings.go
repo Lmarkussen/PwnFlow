@@ -2889,7 +2889,7 @@ func findingTechniqueReference(finding storage.Finding) string {
 		case strings.Contains(typ, "credential_disclosure"):
 			return "The Hacker Recipes — SCCM / MECM\nhttps://www.thehacker.recipes/ad/movement/sccm-mecm/"
 		case strings.Contains(typ, "attack_chain"):
-			return "The Hacker Recipes — MITM and coerced authentications\nhttps://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications\nThe Hacker Recipes — NTLM relay\nhttps://www.thehacker.recipes/ad/movement/ntlm/relay\nThe Hacker Recipes — AD CS unsigned endpoints / ESC8\nhttps://www.thehacker.recipes/ad/movement/adcs/unsigned-endpoints\nThe Hacker Recipes — Kerberos delegations\nhttps://www.thehacker.recipes/ad/movement/kerberos/delegations\nCoercer\nhttps://github.com/p0dalirius/Coercer\nimpacket (ntlmrelayx.py)\nhttps://github.com/fortra/impacket"
+			return "The Hacker Recipes — MITM and coerced authentications\nhttps://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications\nThe Hacker Recipes — NTLM relay\nhttps://www.thehacker.recipes/ad/movement/ntlm/relay\nThe Hacker Recipes — AD CS unsigned endpoints / ESC8\nhttps://www.thehacker.recipes/ad/movement/adcs/unsigned-endpoints\nThe Hacker Recipes — Kerberos delegations\nhttps://www.thehacker.recipes/ad/movement/kerberos/delegations\nThe Hacker Recipes — ADIDNS spoofing\nhttps://www.thehacker.recipes/ad/movement/mitm-and-coerced-authentications/adidns-spoofing\nkrbrelayx (dnstool.py)\nhttps://github.com/dirkjanm/krbrelayx\nCoercer\nhttps://github.com/p0dalirius/Coercer\nimpacket (ntlmrelayx.py)\nhttps://github.com/fortra/impacket"
 		}
 	}
 	if strings.HasPrefix(typ, "adcs_esc_") {

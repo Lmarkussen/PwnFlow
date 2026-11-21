@@ -110,13 +110,15 @@ func TestProjectCriticalDirectoryHygiene(t *testing.T) {
 			t.Fatalf("%s lost its unverified prerequisites", path.Family)
 		}
 	}
-	want := map[string]int{"credential_exposure": 1, "sid_history": 1, "trust": 1, "ntlm_relay": 4}
+	// Default DNS record creation is not a path on its own; with LDAP that
+	// does not require signing it forms the one ADIDNS spoof-and-relay chain.
+	want := map[string]int{"credential_exposure": 1, "sid_history": 1, "trust": 1, "ntlm_relay": 4, "attack_chain": 1}
 	for family, count := range want {
 		if families[family] != count {
 			t.Fatalf("family %s has %d potential paths, want %d (all %v)", family, families[family], count, families)
 		}
 	}
-	if len(projection.Potential) != 7 {
+	if len(projection.Potential) != 8 {
 		t.Fatalf("delegated LAPS/gMSA readers, ordinary sIDHistory, default DNS record creation or anonymous enumeration entered the projection: %v", families)
 	}
 

@@ -53,8 +53,11 @@ Attack paths stitch current Findings into multi-step chains, grouped first under
 "Attack Paths": coercing the domain controller and relaying to AD CS web
 enrollment (ESC8); coercing it to an unconstrained-delegation principal;
 coercing a WebClient host over HTTP and relaying to LDAP that does not require
-signing or channel binding (with MachineAccountQuota when present); and a
-recovered or readable credential of a privileged account. Each step names the
+signing or channel binding (with MachineAccountQuota when present); registering
+a name through ADIDNS and relaying the authentication it attracts to the
+strongest observed target (AD CS web enrollment, then LDAP without signing,
+then SMB without signing); and a recovered or readable credential of a
+privileged account. Each step names the
 Finding it relies on, and a chain stays potential with its unverified
 conditions listed.
 

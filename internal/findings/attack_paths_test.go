@@ -56,6 +56,27 @@ func TestAttackChainTemplates(t *testing.T) {
 		t.Fatalf("relay chain %+v", relay)
 	}
 
+	// ADIDNS record creation plus a relay target gives the spoof-and-relay
+	// chain, which prefers AD CS web enrollment, then LDAP, then SMB.
+	dns := row("ad_domain_config_dns_record_creation", "CORP.EXAMPLE", "medium", "{}")
+	smbOnly := attackChainPaths([]storage.Finding{dns,
+		row("smb_signing_not_required", "SRV01", "medium", "{}"),
+		row("smb_signing_not_required", "SRV02", "medium", "{}"),
+	})
+	if len(smbOnly) != 1 || smbOnly[0].Capability != "adidns-spoof-relay" || smbOnly[0].Target != "CORP.EXAMPLE" || len(smbOnly[0].ConfirmedPrereqs) != 3 || !strings.Contains(smbOnly[0].ConfirmedPrereqs[2], "SMB on SRV01 (and 1 other host(s))") {
+		t.Fatalf("ADIDNS SMB chain %+v", smbOnly)
+	}
+	withCA := attackChainPaths([]storage.Finding{dns,
+		row("smb_signing_not_required", "SRV01", "medium", "{}"),
+		row("adcs_esc_esc8", "CORP-CA", "high", "{}"),
+	})
+	if len(withCA) != 1 || !strings.Contains(withCA[0].ConfirmedPrereqs[2], "web enrollment endpoint of CORP-CA") {
+		t.Fatalf("ADIDNS chain should prefer ESC8: %+v", withCA)
+	}
+	if got := attackChainPaths([]storage.Finding{dns}); len(got) != 0 {
+		t.Fatalf("ADIDNS without a relay target is not a path: %+v", got)
+	}
+
 	projection := ProjectCritical(rows)
 	found := false
 	for _, path := range projection.Potential {
