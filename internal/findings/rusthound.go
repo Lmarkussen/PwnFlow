@@ -231,6 +231,7 @@ func AnalyzeRustHound(ctx context.Context, inputPath string, assessmentID, execu
 	}
 	findings = append(findings, hygieneFindings(objects, assessmentID, executionID, now, collectedAt)...)
 	findings = append(findings, passwordReaderFindings(objects, aces, assessmentID, executionID, now)...)
+	findings = append(findings, shadowAdminFindings(objects, aces, privilegedMembership(objects), assessmentID, executionID, now)...)
 	for _, ace := range aces {
 		if err := ctx.Err(); err != nil {
 			return nil, report, err

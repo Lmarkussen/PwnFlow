@@ -211,3 +211,131 @@ func TestNoTrustsObservedOnlyWhenTrustsWereExported(t *testing.T) {
 		t.Fatalf("missing trust list reported as no trusts: %+v", missing)
 	}
 }
+
+func TestDefaultDomainPasswordPolicyFindings(t *testing.T) {
+	domain := func(props map[string]any) map[string]any {
+		properties := map[string]any{"name": "CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}
+		for key, value := range props {
+			properties[key] = value
+		}
+		return map[string]any{"ObjectIdentifier": hygieneDomainSID, "Properties": properties, "Trusts": []any{}}
+	}
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  map[string]string
+	}{
+		{"weak", map[string]any{"lockoutthreshold": 0, "pwdproperties": 0, "minpwdlength": 5}, map[string]string{"ad_domain_policy_no_account_lockout": "medium", "ad_domain_policy_complexity_disabled": "low"}},
+		{"lenient", map[string]any{"lockoutthreshold": 50, "pwdproperties": 1}, map[string]string{"ad_domain_policy_lenient_account_lockout": "low"}},
+		{"sound", map[string]any{"lockoutthreshold": 5, "pwdproperties": 1}, map[string]string{}},
+		{"unknown", map[string]any{}, map[string]string{}},
+	} {
+		inputs := analyzeHygiene(t, writeHygieneCollection(t, nil, nil, nil, []map[string]any{domain(tc.props)}))
+		got := map[string]string{}
+		for _, input := range inputs {
+			if strings.HasPrefix(input.FindingType, "ad_domain_policy_") {
+				got[input.FindingType] = input.Severity
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+		for typ, severity := range tc.want {
+			if got[typ] != severity {
+				t.Fatalf("%s: %s = %q, want %q", tc.name, typ, got[typ], severity)
+			}
+		}
+	}
+}
+
+func TestPrivilegedAccountWeaknesses(t *testing.T) {
+	member := func(ids ...string) []any {
+		list := []any{}
+		for _, id := range ids {
+			list = append(list, map[string]any{"ObjectIdentifier": id})
+		}
+		return list
+	}
+	groups := []map[string]any{
+		{"ObjectIdentifier": hygieneDomainSID + "-512", "Properties": map[string]any{"name": "DOMAIN ADMINS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Members": member(hygieneDomainSID + "-1900")},
+		{"ObjectIdentifier": hygieneDomainSID + "-1900", "Properties": map[string]any{"name": "TIER0-OPS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Members": member(hygieneDomainSID + "-1901")},
+		{"ObjectIdentifier": "CORP.EXAMPLE-S-1-5-32-544", "Properties": map[string]any{"name": "ADMINISTRATORS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Members": member(hygieneDomainSID + "-1902")},
+	}
+	users := []map[string]any{
+		hygieneUser("1901", "svc-sql-admin", map[string]any{"hasspn": true, "pwdneverexpires": true}),
+		hygieneUser("1902", "old-admin", map[string]any{"lastlogontimestamp": daysBefore(200), "pwdlastset": daysBefore(800)}),
+		hygieneUser("1903", "svc-web", map[string]any{"hasspn": true}),
+	}
+	inputs := analyzeHygiene(t, writeHygieneCollection(t, users, nil, groups, nil))
+	expect := map[string]string{
+		"ad_account_privileged_kerberoastable":    "SVC-SQL-ADMIN@CORP.EXAMPLE",
+		"ad_account_privileged_pwd_never_expires": "SVC-SQL-ADMIN@CORP.EXAMPLE",
+		"ad_account_privileged_stale":             "OLD-ADMIN@CORP.EXAMPLE",
+		"ad_account_privileged_old_password":      "OLD-ADMIN@CORP.EXAMPLE",
+	}
+	for typ, account := range expect {
+		found := findingsOfType(inputs, typ)
+		if len(found) != 1 {
+			t.Fatalf("%s: %d Findings", typ, len(found))
+		}
+		affected, _ := json.Marshal(evidenceOf(t, found[0])["affected_objects"])
+		if string(affected) != `["`+account+`"]` {
+			t.Fatalf("%s affects %s, want only %s", typ, affected, account)
+		}
+	}
+	if found := findingsOfType(inputs, "ad_account_privileged_kerberoastable"); found[0].Severity != "high" {
+		t.Fatalf("kerberoastable privileged severity %q", found[0].Severity)
+	}
+}
+
+func TestShadowAdminRights(t *testing.T) {
+	ace := func(principal, right string, extra ...string) map[string]any {
+		entry := map[string]any{"PrincipalSID": principal, "RightName": right, "IsInherited": false}
+		if len(extra) > 0 {
+			entry["Decision"] = extra[0]
+		}
+		return entry
+	}
+	helpdesk := hygieneDomainSID + "-2001"
+	daMember := hygieneDomainSID + "-2002"
+	replicator := hygieneDomainSID + "-2003"
+	groups := []map[string]any{
+		withACEs(map[string]any{"ObjectIdentifier": hygieneDomainSID + "-512", "Properties": map[string]any{"name": "DOMAIN ADMINS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Members": []any{map[string]any{"ObjectIdentifier": daMember}}},
+			ace(helpdesk, "AddMember"), ace(daMember, "GenericAll"), ace(helpdesk, "WriteDacl", "Deny"), ace(hygieneDomainSID+"-9999", "GenericAll")),
+		{"ObjectIdentifier": helpdesk, "Properties": map[string]any{"name": "HELPDESK@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}},
+		// A group nested in Administrators, whose membership a low-privileged
+		// user controls.
+		{"ObjectIdentifier": "CORP.EXAMPLE-S-1-5-32-544", "Properties": map[string]any{"name": "ADMINISTRATORS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Members": []any{map[string]any{"ObjectIdentifier": hygieneDomainSID + "-2010"}}},
+		withACEs(map[string]any{"ObjectIdentifier": hygieneDomainSID + "-2010", "Properties": map[string]any{"name": "SERVER-ADMINS@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}}, ace(hygieneDomainSID+"-2004", "AddMember")),
+	}
+	users := []map[string]any{
+		hygieneUser("2002", "da-user", nil),
+		withACEs(hygieneUser("2003", "svc-sync", nil)),
+		withACEs(hygieneUser("2004", "plain", nil), ace(replicator, "GetChangesAll")),
+	}
+	domains := []map[string]any{withACEs(map[string]any{"ObjectIdentifier": hygieneDomainSID, "Properties": map[string]any{"name": "CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}, "Trusts": []any{}}, ace(replicator, "GetChangesAll"))}
+	dir := writeHygieneCollection(t, users, nil, groups, domains)
+	writeExport(t, filepath.Join(dir, "20260601_containers.json"), "containers", []map[string]any{
+		withACEs(map[string]any{"ObjectIdentifier": "ADMINSDHOLDER-GUID", "Properties": map[string]any{"name": "ADMINSDHOLDER@CORP.EXAMPLE", "domain": "CORP.EXAMPLE"}}, ace("CORP.EXAMPLE-S-1-5-11", "WriteDacl")),
+	})
+	found := findingsOfType(analyzeHygiene(t, dir), "ad_shadow_admin_rights")
+	if len(found) != 1 || found[0].Severity != "high" {
+		t.Fatalf("got %+v", found)
+	}
+	evidence := evidenceOf(t, found[0])
+	affected, _ := json.Marshal(evidence["affected_objects"])
+	text := string(affected)
+	for _, want := range []string{"HELPDESK@CORP.EXAMPLE → AddMember on DOMAIN ADMINS@CORP.EXAMPLE (privileged group)", "SVC-SYNC@CORP.EXAMPLE → GetChangesAll on CORP.EXAMPLE (domain object)", "WriteDacl on ADMINSDHOLDER@CORP.EXAMPLE (AdminSDHolder)", "PLAIN@CORP.EXAMPLE → AddMember on SERVER-ADMINS@CORP.EXAMPLE (group nested in a privileged group)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing grant %q in %s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"DA-USER", "9999", "PLAIN → GETCHANGESALL"} {
+		if strings.Contains(strings.ToUpper(text), unwanted) {
+			t.Fatalf("excluded principal or target %s reported: %s", unwanted, text)
+		}
+	}
+	if !strings.Contains(found[0].Description, "broad principal") {
+		t.Fatalf("broad principal not called out: %s", found[0].Description)
+	}
+}

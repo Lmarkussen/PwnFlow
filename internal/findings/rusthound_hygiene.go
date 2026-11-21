@@ -86,6 +86,8 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 		}
 	}
 
+	privileged := privilegedMembership(objects)
+
 	var result []storage.FindingInput
 	grouped := map[string]map[string][]hygieneEntry{} // detector -> domain -> entries
 	add := func(detector string, object collectedObject, detail map[string]any) {
@@ -143,6 +145,27 @@ func hygieneFindings(objects map[string]collectedObject, assessmentID, execution
 			if types, known := encryptionTypes(props); known {
 				addEncryptionTypeConditions(add, object, types, rawBool(props, "hasspn"))
 			}
+			if groups := privileged[object.ID]; len(groups) > 0 && !isKRBTGT(object) {
+				detail := map[string]any{"privileged_groups": groups}
+				if rawBool(props, "hasspn") {
+					add("privileged_kerberoastable", object, detail)
+				}
+				if value, known := rawBoolValue(props, "pwdneverexpires"); known && value {
+					add("privileged_pwd_never_expires", object, detail)
+				}
+				if stale, isStale := staleLogon(ctx, props); isStale {
+					merged := map[string]any{"privileged_groups": groups}
+					for key, value := range stale {
+						merged[key] = value
+					}
+					add("privileged_stale", object, merged)
+				}
+				if set, known := rawIntValue(props, "pwdlastset"); known && set > 0 {
+					if age := ctx.reference.Sub(time.Unix(set, 0).UTC()); age > privilegedPasswordAge {
+						add("privileged_old_password", object, map[string]any{"privileged_groups": groups, "password_last_set": time.Unix(set, 0).UTC().Format("2006-01-02"), "password_age_days": int(age.Hours() / 24)})
+					}
+				}
+			}
 		case "computers":
 			if history := rawStringSlice(props, "sidhistory"); len(history) > 0 {
 				result = append(result, sidHistoryFinding(ctx, object, history))
@@ -199,6 +222,30 @@ type groupedDefinition struct {
 }
 
 var groupedDefinitions = map[string]groupedDefinition{
+	"privileged_kerberoastable": {
+		findingType: "ad_account_privileged_kerberoastable", title: "Kerberoastable privileged accounts", noun: "enabled privileged user(s) with an SPN",
+		condition:   "member of a privileged group with a service principal name",
+		description: "These enabled members of privileged groups (directly or through nested groups) have a service principal name, so any domain user can request a service ticket for them and guess the password offline. A cracked password gives the group's privileges. No ticket was requested.",
+		severity:    "high",
+	},
+	"privileged_pwd_never_expires": {
+		findingType: "ad_account_privileged_pwd_never_expires", title: "Privileged accounts with non-expiring passwords", noun: "enabled privileged user(s)",
+		condition:   "privileged group member with DONT_EXPIRE_PASSWORD",
+		description: "These enabled members of privileged groups have DONT_EXPIRE_PASSWORD set, so a disclosed or cracked password stays valid indefinitely.",
+		severity:    "medium",
+	},
+	"privileged_stale": {
+		findingType: "ad_account_privileged_stale", title: "Stale privileged accounts", noun: "enabled privileged user(s)",
+		condition:   "privileged group member without a logon in 90 days",
+		description: "These enabled members of privileged groups have not logged on within 90 days of collection. Unused privileged accounts are rarely monitored and their passwords rarely rotated.",
+		severity:    "medium",
+	},
+	"privileged_old_password": {
+		findingType: "ad_account_privileged_old_password", title: "Privileged accounts with old passwords", noun: "enabled privileged user(s)",
+		condition:   "privileged group member whose password is older than a year",
+		description: "These enabled members of privileged groups last changed their password more than a year before collection, so any password exposed in that time may still work.",
+		severity:    "low",
+	},
 	"kerberos_des_enabled": {
 		findingType: "ad_account_kerberos_des_enabled", title: "Accounts allowing DES Kerberos encryption", noun: "enabled account(s)",
 		condition:   "DES in msDS-SupportedEncryptionTypes",
@@ -486,14 +533,27 @@ func isWindowsOrUnknownOS(props map[string]json.RawMessage) bool {
 	return system == "" || strings.Contains(strings.ToLower(system), "windows")
 }
 
+// groupMemberIDs reads a group's Members, which RustHound exports as
+// {"ObjectIdentifier": ...} objects; plain SID strings are accepted too.
 func groupMemberIDs(object collectedObject) []string {
-	var members []map[string]json.RawMessage
-	if raw, ok := object.Top["Members"]; ok {
-		_ = json.Unmarshal(raw, &members)
+	raw, ok := object.Top["Members"]
+	if !ok {
+		return nil
+	}
+	var members []json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return nil
 	}
 	ids := make([]string, 0, len(members))
-	for _, member := range members {
-		if id := rawString(member, "ObjectIdentifier"); id != "" {
+	for _, item := range members {
+		var id string
+		if json.Unmarshal(item, &id) != nil {
+			var member map[string]json.RawMessage
+			if json.Unmarshal(item, &member) == nil {
+				id = rawString(member, "ObjectIdentifier")
+			}
+		}
+		if id != "" {
 			ids = append(ids, id)
 		}
 	}
@@ -531,6 +591,49 @@ func domainConfigurationFindings(ctx hygieneContext, object collectedObject) []s
 			Severity:    "medium", Confidence: "observed-directory-property", AffectedObjectID: object.ID, AffectedObject: domain, EvidenceJSON: string(evidence),
 			ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/dsheuristics", ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
 		})
+	}
+	return append(result, passwordPolicyFindings(ctx, object, domain)...)
+}
+
+// passwordPolicyFindings reads the default domain password policy RustHound
+// exports with the domain object. Values that are absent are unknown and
+// produce nothing. Fine-grained password policies can override the default
+// for selected users and groups; they are not collected here.
+func passwordPolicyFindings(ctx hygieneContext, object collectedObject, domain string) []storage.FindingInput {
+	props := object.Properties
+	var result []storage.FindingInput
+	add := func(detector, title, description, severity, field string, evidence map[string]any) {
+		evidence["domain"] = domain
+		evidence["policy_scope"] = "default domain policy"
+		encoded, _ := json.Marshal(evidence)
+		result = append(result, storage.FindingInput{
+			FindingKey: stableSourceKey(ctx.assessmentID, "rusthound-password-policy-"+detector, object.ID, detector), AssessmentID: ctx.assessmentID,
+			SourceTool: "RustHound-CE", SourceExecution: ctx.executionID, FindingType: "ad_domain_policy_" + detector,
+			Title: title + " (" + domain + ")", Description: description + " Fine-grained password policies may override the default for selected users or groups; they were not evaluated.",
+			Severity: severity, Confidence: "observed-domain-default-policy", AffectedObjectID: object.ID, AffectedObject: domain, EvidenceJSON: string(encoded),
+			ArtifactPath: object.Artifact, ArtifactRef: object.RefPrefix + "/" + field, ObservedAt: ctx.now, Status: "open", ParserVersion: hygieneParserVersion,
+		})
+	}
+	if threshold, ok := rawIntValue(props, "lockoutthreshold"); ok {
+		switch {
+		case threshold == 0:
+			add("no_account_lockout", "No account lockout",
+				"The default domain policy has an account lockout threshold of 0: accounts are never locked out, so passwords can be guessed against every account without limit. Password spraying and online guessing are unconstrained.",
+				"medium", "lockoutthreshold", map[string]any{"lockout_threshold": threshold})
+		case threshold > 10:
+			add("lenient_account_lockout", "Lenient account lockout threshold",
+				fmt.Sprintf("The default domain policy locks an account only after %d failed attempts, which allows that many guesses per account per observation window.", threshold),
+				"low", "lockoutthreshold", map[string]any{"lockout_threshold": threshold})
+		}
+	}
+	if properties, ok := rawIntValue(props, "pwdproperties"); ok && properties&1 == 0 {
+		evidence := map[string]any{"pwd_properties": properties, "complexity_required": false}
+		if length, known := rawIntValue(props, "minpwdlength"); known {
+			evidence["minimum_password_length"] = length
+		}
+		add("complexity_disabled", "Password complexity not required",
+			"The default domain policy does not require complex passwords (DOMAIN_PASSWORD_COMPLEX is not set in pwdProperties), so single-class passwords such as dictionary words are accepted.",
+			"low", "pwdproperties", evidence)
 	}
 	return result
 }
@@ -657,6 +760,49 @@ func trustAttributeNames(attributes int64) []string {
 		}
 	}
 	return names
+}
+
+// privilegedPasswordAge is when a privileged account's password counts as old.
+const privilegedPasswordAge = 365 * 24 * time.Hour
+
+// privilegedMembership maps each principal to the privileged groups it
+// belongs to, directly or through nested groups. Privileged groups are
+// identified by well-known RID (Domain Admins, Enterprise Admins, Schema
+// Admins, Administrators, Account/Server/Backup Operators).
+func privilegedMembership(objects map[string]collectedObject) map[string][]string {
+	privilegedGroupRIDs := map[string]bool{"512": true, "518": true, "519": true, "544": true, "548": true, "549": true, "551": true}
+	result := map[string][]string{}
+	for _, object := range objects {
+		if !strings.EqualFold(object.Type, "groups") {
+			continue
+		}
+		rid := object.ID[strings.LastIndexByte(object.ID, '-')+1:]
+		if !privilegedGroupRIDs[rid] {
+			continue
+		}
+		name := objectLabel(object)
+		visited := map[string]bool{object.ID: true}
+		queue := groupMemberIDs(object)
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			member, known := objects[id]
+			// A nested group is recorded too: controlling its membership is
+			// controlling the privileged group's.
+			result[id] = appendUniqueString(result[id], name)
+			if known && strings.EqualFold(member.Type, "groups") {
+				queue = append(queue, groupMemberIDs(member)...)
+			}
+		}
+	}
+	for id := range result {
+		sort.Strings(result[id])
+	}
+	return result
 }
 
 // encryptionTypes returns the Kerberos encryption types RustHound exported
